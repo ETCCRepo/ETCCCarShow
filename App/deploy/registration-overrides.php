@@ -74,5 +74,28 @@ if ($action === 'upsert') {
     exit;
 }
 
+// Drops this row's stored edits entirely, so regenerate() re-derives it
+// straight from the CSV again — the "Revert to CSV" escape hatch for a row
+// whose override holds bad data.
+if ($action === 'delete') {
+    $key = (string)($input['key'] ?? '');
+    if ($key === '') {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Missing key.']);
+        exit;
+    }
+    $map = ro_read_map($file);
+    unset($map[$key]);
+    // Force object shape — an emptied map would otherwise serialize as [],
+    // which ro_read_map()/the app would then read back as a list, not a map.
+    if (!carshow_write_json($file, (object)$map)) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => 'Could not save.']);
+        exit;
+    }
+    echo json_encode(['ok' => true, 'overrides' => $map]);
+    exit;
+}
+
 http_response_code(400);
 echo json_encode(['ok' => false, 'error' => 'Unknown action.']);

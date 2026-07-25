@@ -112,10 +112,6 @@
                                // Registration tab's checkbox/bulk-delete — filled by
                                // ingestDeletedRegistrations(); excluded from state.result.registrations
                                // in regenerate(), so they stay gone across reloads/re-imports too
-    deletedSponsorIds: {},    // csvSponsorId(rec) -> true, for CSV-auto-synced sponsor rows (Individual
-                               // Sponsorship activity) removed from the Sponsors tab — filled by
-                               // ingestDeletedSponsors(); checked by syncSponsorsFromRegistrations() so
-                               // a deleted sponsor doesn't just get re-created on the next page load
     regSelected: {},           // rowKey(r) -> true, for the Registration tab's row checkboxes
     deleteRegSelectedOpen: false, // "Delete selected registrations" confirmation modal
     regDeleteSyncError: null,  // set when persisting a CSV-row deletion fails
@@ -383,7 +379,6 @@
       var fee = rec["Individual Sponsorship"];
       if (fee === "" || fee == null || Number(fee) <= 0) return;
       var id = csvSponsorId(rec);
-      if (state.deletedSponsorIds[id]) return;
       var existing = byId[id];
       if (existing) {
         // Backfill Reg Date / Ind. Spon. Text on sponsors synced before those
@@ -874,6 +869,20 @@
       renderViews();
     });
   }
+  function pushRegistrationOverrideDeleteToServer(key) {
+    if (!SITE_CONFIG.registrationOverridesApiUrl) return;
+    fetch(SITE_CONFIG.registrationOverridesApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "delete", key: key })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      state.detailEditError = null;
+    }).catch(function () {
+      state.detailEditError = "Could not clear that row's edits on the server — they'll come back if the page is reloaded before this succeeds. Check your connection and try again.";
+      renderViews();
+    });
+  }
   function renderDeleteRegSelectedConfirm() {
     var host = $("#confirmHost");
     if (!host) return;
@@ -1113,8 +1122,15 @@
     return li(c, v == null || v === "" ? "—" : String(v));
   }
 
-  function saveDetailEdit(fieldEls) {
-    var r = state.detailRow;
+  // targetRow is the record these fieldEls were rendered for, captured at
+  // render time — NOT re-read from state.detailRow when the save actually
+  // fires. The autosave below is debounced 1500ms, so a Prev/Next step (or a
+  // close) can land first; resolving the row late wrote the record the user
+  // had been editing on top of whichever record was selected when the timer
+  // fired. Since the patch carries every editable field, that silently
+  // overwrote a whole registration with another one's data.
+  function saveDetailEdit(fieldEls, targetRow) {
+    var r = targetRow || state.detailRow;
     if (!r) return;
     var patch = {};
     Object.keys(EDITABLE_FIELDS).forEach(function (c) {
@@ -1144,10 +1160,32 @@
         });
       }
     }
-    state.detailRow = merged;
+    // Only re-point/redraw the modal when it's still showing the row we just
+    // saved — a late autosave for a row the user has already stepped away from
+    // must persist, but must not yank the modal back to it.
+    if (state.detailRow === r) {
+      state.detailRow = merged;
+      renderDetailModal();
+    }
     syncPaidRegistrationsCache();
-    renderDetailModal();
     if (state.tab === "reg") renderRegBody();
+  }
+
+  // Throws away every stored detail-modal edit for this CSV-derived row and
+  // rebuilds it from the CSV. regenerate() re-runs the whole pipeline, which
+  // also re-runs syncSponsorsFromRegistrations() — so a row whose Individual
+  // Sponsorship had been clobbered reappears on the Sponsors tab immediately.
+  function revertDetailOverride() {
+    var r = state.detailRow;
+    if (!r || r.id) return;
+    var key = csvRegKey(r);
+    delete state.csvOverrides[key];
+    pushRegistrationOverrideDeleteToServer(key);
+    closeDetail();
+    // Preserve the existing "CSVs loaded:" stamp — this is a re-derive of
+    // already-loaded data, not a fresh import.
+    regenerate(state.result && state.result.meta ? state.result.meta.generatedAt : null);
+    renderViews();
   }
 
   function deleteDetailRow() {
@@ -1214,17 +1252,24 @@
       : [el("li", { class: "hint", text: "No shirts on this registration." })];
     body.appendChild(el("div", { class: "modal-section" }, [el("h4", { text: "Shirts" }), el("ul", { class: "meta-list" }, shirtItems)]));
 
-    var autoSaveDetail = debounce(function () { saveDetailEdit(fieldEls); }, 1500);
+    var autoSaveDetail = debounce(function () { saveDetailEdit(fieldEls, r); }, 1500);
     Object.keys(fieldEls).forEach(function (key) {
       fieldEls[key].addEventListener("input", autoSaveDetail);
       fieldEls[key].addEventListener("change", autoSaveDetail);
     });
 
     var saveBtn = el("button", { class: "btn primary" }, ["Save"]);
-    saveBtn.addEventListener("click", function () { saveDetailEdit(fieldEls); });
+    saveBtn.addEventListener("click", function () { saveDetailEdit(fieldEls, r); });
     var cancelBtn = el("button", { class: "btn" }, ["Cancel"]);
     cancelBtn.addEventListener("click", closeDetail);
     var actions = [saveBtn, cancelBtn];
+    // Only meaningful for a CSV-derived row that actually has stored edits —
+    // a walk-in row (r.id) has no CSV original to fall back to.
+    if (!r.id && state.csvOverrides[csvRegKey(r)]) {
+      var revertBtn = el("button", { class: "btn" }, ["Revert to CSV"]);
+      revertBtn.addEventListener("click", revertDetailOverride);
+      actions.push(revertBtn);
+    }
     if (r.id) {
       var delBtn = el("button", { class: "btn", style: "color:var(--warn)" }, ["Delete"]);
       delBtn.addEventListener("click", deleteDetailRow);
@@ -1751,33 +1796,15 @@
   }
   // CSV-auto-synced sponsors (id shape "csvind_..." — see csvSponsorId()) have
   // no server record of their own to delete; sponsor-submissions.php's
-  // "delete" is a no-op for them. Without also recording the id as deleted,
-  // syncSponsorsFromRegistrations() would just re-create the row on the very
-  // next page load, since the underlying registration's Individual
-  // Sponsorship fee is still there. Web-submitted/manually-added sponsors
-  // don't need this — they're never re-synced, so a plain server delete is
-  // permanent for them already.
+  // "delete" is a no-op for them, and syncSponsorsFromRegistrations() always
+  // re-creates the row on the next page load as long as the underlying
+  // registration's Individual Sponsorship fee is still there — deleting one
+  // from this tab is not meant to be permanent, it should always reflect
+  // the current import. Web-submitted/manually-added sponsors aren't
+  // re-synced, so a plain server delete is permanent for them.
   function removeSponsor(id) {
     state.sponsors = state.sponsors.filter(function (s) { return s.id !== id; });
     pushSponsorToServer("delete", { id: id });
-    if (String(id).indexOf("csvind_") === 0) {
-      state.deletedSponsorIds[id] = true;
-      pushDeletedSponsorsToServer([id]);
-    }
-  }
-  function pushDeletedSponsorsToServer(ids) {
-    if (!SITE_CONFIG.deletedSponsorsApiUrl) return;
-    fetch(SITE_CONFIG.deletedSponsorsApiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "add", ids: ids })
-    }).then(function (res) {
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      state.sponsorSyncError = null;
-    }).catch(function () {
-      state.sponsorSyncError = "Could not save that deletion to the server — it'll reappear if the page is reloaded before this succeeds. Check your connection and try again.";
-      if (state.tab === "sponsors") renderViews();
-    });
   }
 
   // ---------- walk-in registrations (Registration tab's "+ Add Registration") ----------
@@ -1912,15 +1939,10 @@
     };
     Promise.all([
       fetchJson(SITE_CONFIG.sponsorsApiUrl, "list"),
-      fetchJson(SITE_CONFIG.deletedSponsorsApiUrl, "list"),
       fetchJson(SITE_CONFIG.sponsorPaymentsApiUrl, "list")
     ]).then(function (results) {
-      var sponsorsRes = results[0], deletedRes = results[1], paymentsRes = results[2];
+      var sponsorsRes = results[0], paymentsRes = results[1];
       if (sponsorsRes && sponsorsRes.ok) state.sponsors = Array.isArray(sponsorsRes.sponsors) ? sponsorsRes.sponsors : [];
-      if (deletedRes && deletedRes.ok) {
-        state.deletedSponsorIds = {};
-        (Array.isArray(deletedRes.ids) ? deletedRes.ids : []).forEach(function (id) { state.deletedSponsorIds[id] = true; });
-      }
       if (paymentsRes && paymentsRes.ok) state.payments = Array.isArray(paymentsRes.payments) ? paymentsRes.payments : [];
       syncSponsorsFromRegistrations();
       if (paymentsRes && paymentsRes.ok) backfillPaymentDefaults();
@@ -1937,18 +1959,11 @@
   function openClearSponsorsConfirm() { state.clearSponsorsOpen = true; renderClearSponsorsConfirm(); }
   function closeClearSponsorsConfirm() { state.clearSponsorsOpen = false; renderClearSponsorsConfirm(); }
   function clearAllSponsors() {
-    // Same csvind_-tombstoning removeSponsor() does for a single delete —
-    // otherwise every CSV-auto-synced sponsor would just reappear on the next
-    // page load (see removeSponsor()'s comment).
-    var csvIds = state.sponsors
-      .map(function (s) { return s.id; })
-      .filter(function (id) { return String(id).indexOf("csvind_") === 0; });
+    // CSV-auto-synced sponsors (id shape "csvind_...") reappear on the next
+    // sync — see removeSponsor()'s comment — so this doesn't need to tombstone
+    // them separately.
     state.sponsors = [];
     pushSponsorToServer("clear", {});
-    if (csvIds.length) {
-      csvIds.forEach(function (id) { state.deletedSponsorIds[id] = true; });
-      pushDeletedSponsorsToServer(csvIds);
-    }
     renderViews();
   }
   function renderClearSponsorsConfirm() {
@@ -4397,13 +4412,6 @@
     ingestSponsors: function (list) {
       state.sponsors = Array.isArray(list) ? list : [];
       renderViews();
-    },
-    // Called by index.php's boot script, BEFORE ingestRows() (which triggers
-    // syncSponsorsFromRegistrations()), with the set of CSV-auto-synced
-    // sponsor ids previously deleted from the Sponsors tab.
-    ingestDeletedSponsors: function (ids) {
-      state.deletedSponsorIds = {};
-      (Array.isArray(ids) ? ids : []).forEach(function (id) { state.deletedSponsorIds[id] = true; });
     },
     // Called by index.php's boot script with the Walk-In registrations list
     // read fresh from the server on this page load.
