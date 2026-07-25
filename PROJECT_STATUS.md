@@ -1,6 +1,28 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-07-20 (end of session, latest). **This session built a brand-new
+Last updated: 2026-07-25 (end of session, latest). **This session tracked down a real
+data-corruption bug in the Registration detail modal.** Reported symptom was narrow — one
+individual sponsor (Bill Greene) missing from the Sponsors tab — but the cause turned out
+to be that his *registration record itself had been silently overwritten with another
+registrant's data*, including `Individual Sponsorship` → `0`, which is why the sponsor
+sync skipped him. Root cause: the detail modal's **1500ms debounced autosave** read its
+values from the inputs captured at render time but resolved its *target row* from
+`state.detailRow` when the timer fired — so clicking **Next ›** within that window landed
+the pending save on the newly-selected record, overwriting every editable field on it.
+Fixed by binding the save to the row its inputs were rendered for, plus a new **"Revert to
+CSV"** escape hatch (modal button + `delete` action on `registration-overrides.php`) to
+repair rows already damaged. **An earlier diagnosis this session was wrong and is
+explicitly superseded** — the `deletedSponsorIds` sponsor-tombstone mechanism was removed
+first on the theory it was hiding Greene; it wasn't, but the user then confirmed that
+removal as intended policy ("sponsors should always be deleted and refreshed from the
+import regardless of what happened in the past"), so it stands on its own merits. One
+full `/ETCCCarShowCheckpoint`: `9748d20d`, pushed to `origin/main`; live site is **v3.9**
+and reflects everything through that commit. `/ETCCCarShowTest` was **not** run (not
+requested) — last known-good 60/60 (2026-07-17). **Still open**: Bill Greene's row is
+still corrupted on the live site and needs a manual **Revert to CSV** click; other rows
+paged through mid-edit may be damaged the same way. See "Known follow-ups" below.
+
+Previous session (2026-07-20): **built a brand-new
 standalone public "Sponsor List" page** (`App/deploy/sponsor-list.php`, live at
 `https://etccapps.com/apps/carshow/sponsor-list.php`, no login required — same pattern
 as SilentAuctionManager's `starting-bid-list.php`) showing Sponsor Name/Type/T-Shirt
@@ -22,6 +44,152 @@ unlinked — Claude's attempt to delete it via a one-off FTP `DELE` command was 
 the auto-mode safety classifier (deleting a live server file is treated as destructive),
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
+
+## This session's work (2026-07-25)
+
+**Reported symptom**: "row 21 bill greene is an individual sponsor but does not show up in
+sponsor tab", against `Z:\Backup\ETCC\Car Show\Exports\activity_registrant_data20260725.csv`.
+Row 21 of that export is a valid `Individual Sponsorship` / `$100.00` / `Paid` activity row
+for Bill Greene (member #426, reg date `7/10/2026 1:08:00 PM`). The Sponsors tab showed
+"12 of 12 sponsors" and he was not among them.
+
+**1. First diagnosis — WRONG, but the resulting change was kept deliberately.** The
+initial theory was the `deletedSponsorIds` tombstone list: `syncSponsorsFromRegistrations()`
+skipped any registrant whose `csvSponsorId()` appeared in `deleted-sponsors.json`, so a
+CSV-derived sponsor deleted once from the Sponsors tab could never re-sync. The user then
+stated the desired policy outright — **"sponsors should always be deleted and refreshed
+from the import regardless of what happened in the past"** — so the whole tombstone
+mechanism was removed rather than worked around:
+- `App/src/app.js`: dropped `state.deletedSponsorIds`, the skip check in
+  `syncSponsorsFromRegistrations()`, `pushDeletedSponsorsToServer()`, the `csvind_`
+  tombstoning inside `removeSponsor()` and `clearAllSponsors()`, the
+  `deletedSponsorsApiUrl` fetch in `refreshSponsorsFromServer()`, and the public
+  `ingestDeletedSponsors()` API.
+- `App/deploy/index.php`: removed the `ingestDeletedSponsors(...)` boot-script call and
+  the `deletedSponsorsApiUrl` entry from the injected `window.__carshowSite` config.
+- **Net effect (current truth)**: deleting a CSV-synced sponsor from the Sponsors tab is
+  now only a *local/for-now* removal — it reappears on the next sync/page load as long as
+  the underlying registration still carries an `Individual Sponsorship` fee. Sponsors
+  added via the web forms or by hand are unaffected (they're never re-synced, so their
+  server delete is still permanent).
+- **This did not fix Bill Greene.** After deploying, the live bundle was verified to
+  contain the fix (`curl`-ed `app-bundle.html`, confirmed zero `deletedSponsorIds`
+  references) and he was *still* missing — which is what forced the real investigation.
+  **Watch for this trap**: the tombstone list was a plausible-looking cause that
+  explained the symptom shape (one record missing, neighbours fine), and it was changed
+  before the underlying data was ever confirmed. Confirm the record's actual field values
+  first.
+
+**2. Real root cause — detail-modal autosave wrote edits onto the wrong registration.**
+The decisive evidence was a screenshot of Greene's detail modal: correct title
+("Greene, Bill") and correct Reg Date, but the body held **Alvin Crown's** data —
+`knoxvillecrowns@yahoo.com`, `(702) 580-0284`, `6708 Worthington Ln`, Total Fee `65`,
+Spouse "Susane", and a 2007 Velocity Yellow C6 Convertible. Greene's real CSV values are
+`OldHDBiker@aol.com`, `865-919-1058`, `4631 Topsail Way`, Total Fee `140`, 2016 Torch Red
+Z51 Coupe. Critically, **`Individual Sponsorship` showed `0`** — which is exactly what
+made `syncSponsorsFromRegistrations()` skip him.
+- **The mechanism** (`App/src/app.js`): detail fields autosave via
+  `debounce(function () { saveDetailEdit(fieldEls); }, 1500)`. `saveDetailEdit()` read its
+  *values* from the `fieldEls` DOM captured when the modal rendered, but resolved its
+  *target row* from `state.detailRow` **at fire time**. Clicking **Next ›** (or closing)
+  within 1500ms of an edit let `stepDetail()` move `state.detailRow` first, so the pending
+  timer then wrote the previous record's values under the *new* record's `csvRegKey()`.
+  Because the patch is built from **every** `EDITABLE_FIELDS` entry (not just changed
+  ones), a single stray keystroke overwrote an entire registration with another one's data.
+- **Why it stayed invisible**: the corrupted row still renders normally on the Registration
+  tab — it has a plausible name, reg date and fee. Nothing points at the Sponsors tab. The
+  only outward sign was the missing sponsor.
+- **Order-of-operations detail worth knowing**: `regenerate()` applies `state.csvOverrides`
+  patches to each record **before** calling `syncSponsorsFromRegistrations()`, so an
+  override that zeroes `Individual Sponsorship` silently removes that person from the
+  Sponsors tab. The CSV itself is never modified.
+
+**3. The fix** (`App/src/app.js`):
+- `saveDetailEdit(fieldEls, targetRow)` now takes the row its `fieldEls` were rendered
+  for; both the debounced autosave and the Save button pass `r` from `renderDetailModal()`.
+  A late-firing save therefore still persists to the record the user actually edited.
+- The tail of `saveDetailEdit()` only re-points `state.detailRow` and calls
+  `renderDetailModal()` **when `state.detailRow === r`** — so a late autosave for a row the
+  user has already stepped away from saves quietly without yanking the modal back to it.
+
+**4. New "Revert to CSV" repair path** — the fix above prevents *new* corruption but can't
+undo existing damage, and `registration-overrides.php` had no way to remove an entry
+(only `list` and `upsert`), so a damaged row could otherwise only be repaired by retyping
+every field by hand.
+- `App/deploy/registration-overrides.php`: new **`delete`** action (unsets one key, writes
+  back). Note it casts to `(object)` before writing — an emptied PHP map would otherwise
+  serialize as `[]` and be read back as a list rather than a map.
+- `App/src/app.js`: new `pushRegistrationOverrideDeleteToServer(key)` and
+  `revertDetailOverride()`. The latter drops the row's entry from `state.csvOverrides`,
+  pushes the delete, closes the modal, then calls `regenerate(...)` — which re-derives the
+  row straight from the CSV *and* re-runs `syncSponsorsFromRegistrations()`, so a row whose
+  `Individual Sponsorship` had been clobbered reappears on the Sponsors tab immediately.
+  It passes `state.result.meta.generatedAt` through so the "CSVs loaded:" stamp isn't reset
+  to "now" by what is really a re-derive of already-loaded data.
+- The **"Revert to CSV"** button renders in the detail modal only for a CSV-derived row
+  (`!r.id`) that actually has a stored override — a walk-in row has no CSV original to fall
+  back to.
+
+**5. Useful diagnostic technique for a future session**: `src/config.js` and `src/logic.js`
+both support `require()` in Node, so the real pipeline can be run headlessly against the
+live export CSVs to see exactly what `generate()` produces for one person —
+`require('./src/config.js'); require('./src/logic.js'); globalThis.CarShowLogic.generate(reg, act, {})`
+with `papaparse`. That's how the CSV was cleared of suspicion (it yields Greene with
+`"Individual Sponsorship": 100` and all his correct contact/vehicle values), which localised
+the corruption to the override layer. **Do not point `test/run-tests.js` at the Exports
+folder** to do this — that's a documented trap in this repo; write a throwaway `node -e`
+script instead.
+
+**Checkpoint this session**: one full `/ETCCCarShowCheckpoint` run (build/version bump →
+FTP deploy → commit → push):
+- `9748d20d` — "Fix detail-modal autosave writing edits onto the wrong registration"
+  (5 files: `App/src/app.js`, `App/deploy/registration-overrides.php`,
+  `App/deploy/index.php`, plus built `App/ETCCCarShow.html`/`App/version.json`;
+  159 insertions / 126 deletions). Pushed to `origin/main`, working tree clean.
+- **Three builds and three FTP deploys ran this session** (the two earlier ones under the
+  standing "always deploy on any change" rule, which the user re-confirmed this session).
+  `version.json` started at minor `7`; builds stamped v3.7, v3.8 and **v3.9**, leaving
+  `version.json` at minor `10` for next time. **The live footer reads v3.9** — the usual
+  one-ahead `version.json` offset described in the 2026-07-20 section, not a bug.
+- Git printed `failed to perform geometric repack` during the commit. That's background
+  object-maintenance, **not** a commit failure — the commit was created, the push
+  succeeded, and `git status` came back clean afterwards. Harmless if seen again.
+
+**Tests**: `/ETCCCarShowTest` was **not** run this session (not requested, and the
+checkpoint skill explicitly doesn't run it). Last known-good run: 2026-07-17 session,
+60/60. Per this repo's standing rule, the test files (`src/regression-tests.js`,
+`test/dom-test.js`) were **not** touched — they have no coverage for the detail-modal
+autosave path at all.
+
+## Known follow-ups / things a new session might need to know (2026-07-25 session)
+
+- **Bill Greene's registration row is still corrupted on the live site.** The deployed fix
+  stops new corruption but does not undo the existing bad override. **Action needed**: open
+  his row on the Registration tab and click the new **Revert to CSV** button. His real
+  values return and he should appear on the Sponsors tab immediately. As of this write-up
+  it is unconfirmed whether that's been done.
+- **Other registrations may be silently corrupted the same way.** Any row paged through
+  with Prev/Next while editing is a candidate, and the corruption is not visually obvious.
+  Fastest tells are **Total Fee** and **Individual Sponsorship** disagreeing with the CSV,
+  or contact/vehicle details that belong to a different registrant. A sweep comparing
+  `registration-overrides.json` against the raw export (using the `node -e` technique in
+  item 5 above) would find them all; that wasn't done this session.
+- **`deleted-sponsors.php` and `deleted-sponsors.json` are now orphaned.** Nothing in the
+  app references them after item 1, but `ftp-deploy.sh` still uploads the PHP file and both
+  still sit on the server (`deleted-sponsors.json` still holds its old ids). They were left
+  in place deliberately — inert, not deleted, and safe to ignore. If a future session wants
+  to clean up, remove the `upload "deleted-sponsors.php"` line from `ftp-deploy.sh` and
+  delete the two server files by hand (the deploy script only uploads, never deletes —
+  same orphan situation as `sponsor-form.php` from the 2026-07-20 session, which is also
+  still unconfirmed as removed).
+- **Deleting a sponsor from the Sponsors tab is no longer permanent for CSV-synced rows**
+  (item 1). If a future request is "this sponsor keeps coming back", that's now working as
+  designed — the fix is to remove/zero the `Individual Sponsorship` fee on the underlying
+  registration, not to re-add a tombstone.
+- **The autosave fix has no automated test coverage**, and the regression suite wasn't
+  re-run this session to re-confirm the 60/60 baseline. A `/ETCCCarShowTest` pass covering
+  `saveDetailEdit()`'s row-binding (edit row A → step to row B → assert row B is unchanged)
+  would be well worth adding — it's the exact scenario that corrupted live data.
 
 ## This session's work (2026-07-20)
 
