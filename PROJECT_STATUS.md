@@ -1493,7 +1493,10 @@ directly. See "This session's work" for the full list of what was deleted.
 ## Repo / paths
 
 - **Git repo root:** `Z:\Backup\Websites\CarShow` (this file's directory)
-- **Remote:** `https://github.com/BWERepo/ETCCCarShow.git` — **this is a PUBLIC repo.**
+- **Remote:** `https://github.com/ETCCRepo/ETCCCarShow.git` (transferred from
+  `BWERepo/ETCCCarShow` on 2026-07-20 — if any older doc text below still says
+  `BWERepo/ETCCCarShow`, that's a historical reference to what was true at the time,
+  not the current remote) — **this is a PUBLIC repo.**
   Never commit real credentials, password hashes, or files containing real member PII.
   Everything sensitive is gitignored — see `.gitignore` at the repo root.
 - **Branch:** `main`. Latest commit as of this doc: `12177b1`.

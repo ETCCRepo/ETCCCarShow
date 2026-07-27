@@ -3532,7 +3532,7 @@
   // from the public GitHub repo's REST API (no server endpoint of our own
   // needed) and shows the same repo-stats + commit-table shape. Re-fetched
   // fresh every time the modal opens, same as SAM.
-  var CHANGELOG_OWNER = "BWERepo";
+  var CHANGELOG_OWNER = "ETCCRepo";
   var CHANGELOG_REPO = "ETCCCarShow";
   var CHANGELOG_FTP = "ftp.etccapps.com → /apps/carshow/";
   // Basenames ftp-deploy.sh actually uploads (see that file) — used to count
