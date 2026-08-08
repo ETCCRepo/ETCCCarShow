@@ -507,7 +507,7 @@
 
     var cancelBtn = el("button", { class: "btn" }, ["Cancel"]);
     cancelBtn.addEventListener("click", function () { location.href = "logout.php"; });
-    var continueBtn = el("button", { class: "btn primary" }, ["Continue"]);
+    var continueBtn = el("button", { class: "btn primary", style: "background:#1a6fd1;border-color:#144f96" }, ["Continue"]);
     continueBtn.addEventListener("click", function () { state.splashOpen = false; renderViews(); });
 
     // No banner built here anymore — the splash page no longer covers the
