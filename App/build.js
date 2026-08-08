@@ -83,7 +83,7 @@ var html =
 '<style>\n' + css + '\n</style>\n</head>\n<body>\n' +
 '<header class="app">\n' +
 '  <div class="hdr-left"><img src="' + logoDataUri + '" alt="ETCC Logo" class="hdr-logo"></div>\n' +
-'  <div class="hdr-center"><h1>Car Show Manager</h1></div>\n' +
+'  <div class="hdr-center"><h1>2026 Carshow Manager</h1></div>\n' +
 '  <div class="hdr-right"></div>\n' +
 '</header>\n' +
 '<div class="wrap">\n' +

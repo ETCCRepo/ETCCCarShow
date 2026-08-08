@@ -4000,7 +4000,7 @@
       leftKids.push(closeBtn);
     }
     if (logoImg) leftKids.push(logoImg);
-    var centerKids = [el("h2", { text: "Car Show Manager", style: "margin: 0" })];
+    var centerKids = [el("h2", { text: "2026 Carshow Manager", style: "margin: 0" })];
     if (pageTitle) centerKids.push(el("h3", { text: pageTitle, style: "margin: 4px 0 0; color: var(--muted); font-weight: 600" }));
     var rightKids = [];
     if (printCallback) {
