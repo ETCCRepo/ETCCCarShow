@@ -34,6 +34,18 @@ if (!carshow_authed($PASSWORD_HASH, $_POST['password'] ?? '')) {
     exit;
 }
 
+// Per-show: each year gets its own window card, saved as
+// window-card-<year>.pdf. Unlike the JSON data files this stays flat at the
+// web root rather than moving under data/, because it's the one file the
+// browser fetches directly over HTTP (app.js fills its AcroForm client-side
+// with pdf-lib) — see carshow_window_card_name() in lib.php.
+$year = carshow_valid_year($_GET['year'] ?? '');
+if ($year === null) {
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'error' => 'Missing or invalid show year.']);
+    exit;
+}
+
 if (empty($_FILES['pdf']) || $_FILES['pdf']['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($_FILES['pdf']['tmp_name'])) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'No PDF uploaded, or the upload failed.']);
@@ -56,7 +68,7 @@ if ($mime !== 'application/pdf') {
     exit;
 }
 
-$newFilename = 'window-card.pdf';
+$newFilename = carshow_window_card_name($year);
 
 if (!move_uploaded_file($file['tmp_name'], __DIR__ . '/' . $newFilename)) {
     http_response_code(500);
@@ -64,7 +76,15 @@ if (!move_uploaded_file($file['tmp_name'], __DIR__ . '/' . $newFilename)) {
     exit;
 }
 
-$settingsFile = __DIR__ . '/app-settings.json';
+$settingsFile = carshow_show_file($year, 'app-settings.json');
+if ($settingsFile === null) {
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'PDF saved, but could not open the data directory for ' . $year . '.']);
+    exit;
+}
+// Intentionally NOT the full default set from app-settings.php: this only
+// needs enough to write a valid file back, and array_merge below preserves
+// every key already present in $raw regardless of whether it's listed here.
 $defaults = [
     'walkinFirstNonMember' => 2000,
     'walkInCarShowFee' => 50,

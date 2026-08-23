@@ -29,13 +29,9 @@ var fixturesScript = "window.CarShowFixtures = { regCsv: " +
 // Hostinger deploy's login screen (deploy/ftp-deploy.sh uploads it there).
 var logoDataUri = "data:image/png;base64," + fs.readFileSync(path.join(HERE, "assets/ETCClogoWhiteBackground.png")).toString("base64");
 
-// Splash page banner image — embedded the same way, but exposed to app.js as
-// a global (rather than baked into a static <img> tag here) since the splash
-// screen is built dynamically by app.js.
-var splashBannerDataUri = "data:image/jpeg;base64," + fs.readFileSync(path.join(HERE, "assets/splash-banner.jpg")).toString("base64");
-var splashBannerScript = "window.__carshowSplashBanner = " + JSON.stringify(splashBannerDataUri) + ";";
-
-// Reports tab banner image — same embedding pattern as the splash banner.
+// Reports tab banner image — embedded the same way as the logo above, but
+// exposed to app.js as a global (rather than baked into a static <img> tag
+// here) since the Reports tab is built dynamically by app.js.
 var reportsBannerDataUri = "data:image/jpeg;base64," + fs.readFileSync(path.join(HERE, "assets/reports-banner.jpg")).toString("base64");
 var reportsBannerScript = "window.__carshowReportsBanner = " + JSON.stringify(reportsBannerDataUri) + ";";
 
@@ -49,7 +45,6 @@ var scripts = [
   read("src/excel.js"),
   read("src/regression-tests.js"),
   fixturesScript,
-  splashBannerScript,
   reportsBannerScript,
   read("src/app.js")
 ].map(safeJs);

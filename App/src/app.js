@@ -14,7 +14,19 @@
     sortDir: 1,
     search: "",
     statusFilter: { paid: true, notpaid: false, cancelled: false, empty: false },
-    splashOpen: true, // full-page splash shown on every app load, until Continue is clicked
+    // ---- Car shows (one per year) ----
+    // The app holds a completely separate dataset per show year, stored
+    // server-side under data/<year>/. index.php inlines the registry and
+    // which show (if any) this session has open via ingestShows(). Until a
+    // show is open, renderViews() shows the Car Shows picker and nothing
+    // else - the same hard gate SilentAuctionManager puts in front of its
+    // workflow screens.
+    shows: [],            // [{ year, name, status, created }], newest year first
+    currentShow: null,    // the show THIS session has open, or null
+    publicShowYear: null, // the show the PUBLIC pages write into (shows.json's "current")
+    showsError: null,     // last shows.php failure, shown on the picker
+    showsBusy: false,     // a shows.php call is in flight
+    showPendingDelete: null, // show awaiting delete confirmation, or null
     inCarShowFilter: false, // Registration tab toolbar's "In Car Show" checkbox — when checked, only rows with In Car Show? = Yes are shown
     tab: "sum",
     detailRow: null,  // registration row currently shown in the detail modal, or null
@@ -430,8 +442,13 @@
     var app = $("#app");
     app.innerHTML = "";
 
-    if (state.splashOpen) {
-      app.appendChild(buildSplashPage());
+    // The Car Shows picker is the landing screen: every session starts here
+    // and stays here until a show is opened. Nothing below this point makes sense
+    // without one: every tab reads data belonging to a specific year, and
+    // index.php deliberately ships none of it until a show is selected.
+    if (!state.currentShow) {
+      app.appendChild(buildShowsPage());
+      renderDeleteShowConfirm();
       return;
     }
 
@@ -489,37 +506,245 @@
     return el("div", { class: "tabs no-print" }, [mk("sum", "Summary"), mk("reg", "Registration"), mk("sponsors", "Sponsors"), mk("tsh", "T-Shirts"), mk("reports", "Reports")]);
   }
 
-  // ---------- Splash page (shown on every app load, before the tabs) ----------
-  // Blocks the rest of the app until Continue is clicked. Cancel logs out
-  // (same destination as the hamburger menu's Logout). The empty div below
-  // the welcome text is deliberate room for additional copy in a later
-  // session — leave it in place even if it renders empty for now.
-  // Splash copy — plain text, no markdown/bold.
-  var SPLASH_COPY = [
-    "The ETCC Car Show Manager is a comprehensive application designed to manage every aspect of the ETCC Annual Car Show from a single, centralized system. It streamlines event administration by providing organizers with the tools needed to efficiently coordinate participants, sponsors, registrations, merchandise sales, payments, and reporting throughout the entire event lifecycle.",
-    "The system supports both pre-registration and walk-in registration, allowing participants to register before the event or on show day. It maintains detailed records for each participant and vehicle, simplifying check-in, reducing paperwork, and ensuring accurate tracking of entrants. Organizers can quickly search, update, and manage participant information while monitoring registration activity in real time."
-  ];
+  // ---------- Car Shows picker (the landing screen, shown before the tabs) ----------
+  // Modeled on SilentAuctionManager's home auctions list. Opening a show is a
+  // full page load (?year=NNNN) rather than a client-side swap: index.php
+  // re-inlines every dataset from scratch on each request, so a reload gets
+  // the new year's data with no chance of one show's records lingering in
+  // memory alongside another's.
 
-  function buildSplashPage() {
-    var bannerImg = window.__carshowSplashBanner
-      ? el("img", { src: window.__carshowSplashBanner, class: "splash-banner", alt: "ETCC Car Show" })
-      : null;
+  // The header bar and browser tab both name the show that's open, so it's
+  // obvious at a glance which year is being edited — the single most
+  // important thing to get wrong now that there's more than one. Both fall
+  // back to the plain product name on the picker, where no show is open.
+  // build.js ships that plain name as the static markup, so this only ever
+  // needs to write over it.
+  function applyShowTitle() {
+    var year = state.currentShow ? String(state.currentShow.year) : "";
+    var heading = year ? year + " Car Show Manager" : "Car Show Manager";
+    var h1 = document.querySelector("header.app h1");
+    if (h1) h1.textContent = heading;
+    document.title = year ? year + " ETCC Car Show — Registration" : "ETCC Car Show — Registration";
+  }
 
-    var cancelBtn = el("button", { class: "btn" }, ["Cancel"]);
-    cancelBtn.addEventListener("click", function () { location.href = "logout.php"; });
-    var continueBtn = el("button", { class: "btn primary" }, ["Continue"]);
-    continueBtn.addEventListener("click", function () { state.splashOpen = false; renderViews(); });
+  function openShow(year) { location.href = "?year=" + encodeURIComponent(year); }
+  function closeShow() { location.href = "?year="; }
 
-    // No banner built here anymore — the splash page no longer covers the
-    // real header.app bar (see .splash-page in styles.css), so that same
-    // hamburger+logo+"Car Show Manager" bar every tab already shows is
-    // what's visible above the splash content, instead of a re-built copy.
+  // Every mutation goes through shows.php and then adopts the list it returns,
+  // rather than patching state locally the way the sponsor/walk-in pushes do.
+  // The registry is tiny, these actions are rare and deliberate, and a wrong
+  // local guess here would show the officer a car show that doesn't exist (or
+  // hide one that does).
+  function pushShowAction(payload, onDone) {
+    if (!SITE_CONFIG.showsApiUrl) return;
+    state.showsBusy = true;
+    state.showsError = null;
+    renderViews();
+    fetch(SITE_CONFIG.showsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (res) {
+      return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+    }).then(function (r) {
+      state.showsBusy = false;
+      if (!r.ok || !r.data || !r.data.ok) {
+        state.showsError = (r.data && r.data.error) || "That did not work - please try again.";
+        renderViews();
+        return;
+      }
+      state.shows = Array.isArray(r.data.shows) ? r.data.shows : [];
+      state.publicShowYear = r.data.current ? String(r.data.current) : null;
+      renderViews();
+      if (onDone) onDone(r.data);
+    }).catch(function () {
+      state.showsBusy = false;
+      state.showsError = "Could not reach the server - check your connection and try again.";
+      renderViews();
+    });
+  }
+
+  function createShow() {
+    var year = prompt("What year is this car show?", String(new Date().getFullYear()));
+    if (year === null) return;
+    year = LOGIC.validShowYear(year);
+    if (year === null) {
+      state.showsError = "Enter a four-digit year, for example 2027.";
+      renderViews();
+      return;
+    }
+    var name = prompt("Name for this car show:", year + " Car Show");
+    if (name === null) return;
+    // Land straight in the new show rather than making the officer click it -
+    // creating one is only ever a prelude to working in it.
+    pushShowAction({ action: "create", year: year, name: String(name).trim() }, function () {
+      openShow(year);
+    });
+  }
+
+  function renameShow(show) {
+    var name = prompt("Name for this car show:", show.name || "");
+    if (name === null || !String(name).trim()) return;
+    pushShowAction({ action: "rename", year: show.year, name: String(name).trim() });
+  }
+
+  // Archiving is presentational here (it labels the row) - unlike
+  // SilentAuctionManager an archived show is NOT read-only, because a past
+  // show's records still get corrected after the fact.
+  function setShowStatus(show, archived) {
+    pushShowAction({ action: archived ? "archive" : "unarchive", year: show.year });
+  }
+
+  // Which show the PUBLIC pages write into: the sponsor sign-up forms and the
+  // public sponsor list have no session and no ?year=, so this is how they
+  // know where a walk-up submission belongs. Deliberately independent of
+  // which show this officer has open, so reviewing last year's numbers can't
+  // silently redirect this year's submissions.
+  function setPublicShow(show) {
+    pushShowAction({ action: "set_current", year: show.year });
+  }
+
+  function confirmDeleteShow(show) { state.showPendingDelete = show; renderViews(); }
+  function cancelDeleteShow() { state.showPendingDelete = null; state.showsError = null; renderViews(); }
+  function deleteShow(show, devPassword) {
+    pushShowAction({ action: "delete", year: show.year, devPassword: devPassword }, function () {
+      state.showPendingDelete = null;
+      renderViews();
+    });
+  }
+
+  function buildShowsPage() {
     var kids = [];
-    if (bannerImg) kids.push(bannerImg);
-    kids.push(el("div", { class: "splash-extra" }, SPLASH_COPY.map(function (p) { return el("p", { text: p }); })));
-    kids.push(el("div", { class: "splash-actions" }, [cancelBtn, continueBtn]));
 
-    return el("div", { class: "splash-page" }, [el("div", { class: "splash-inner" }, kids)]);
+    var newBtn = el("button", { class: "btn primary" }, ["+ New Car Show"]);
+    newBtn.addEventListener("click", createShow);
+    if (state.showsBusy) newBtn.setAttribute("disabled", "disabled");
+    kids.push(el("div", { class: "shows-head" }, [
+      el("h3", { text: "Car Shows" }),
+      el("span", { class: "spacer" }),
+      newBtn
+    ]));
+
+    if (state.showsError && !state.showPendingDelete) {
+      kids.push(el("div", { class: "messages", style: "margin-bottom:10px" }, [state.showsError]));
+    }
+
+    if (!state.shows.length) {
+      kids.push(el("div", { class: "empty-state" },
+        ["No car shows yet - click + New Car Show to set up the first one."]));
+      return el("div", { class: "panel shows-panel" }, kids);
+    }
+
+    var head = el("tr", {}, [
+      el("th", { text: "Car Show" }),
+      el("th", { text: "Status" }),
+      el("th", { text: "Public sign-ups" }),
+      el("th", { text: "" })
+    ]);
+
+    var rows = state.shows.map(function (s) {
+      var year = String(s.year);
+      var archived = s.status === "archived";
+      var isPublic = state.publicShowYear === year;
+
+      var nameLink = el("a", { class: "show-open", href: "#", text: s.name || (year + " Car Show") });
+      nameLink.addEventListener("click", function (e) { e.preventDefault(); openShow(year); });
+
+      var statusBadge = el("span", {
+        class: "badge " + (archived ? "badge-muted" : "badge-ok"),
+        text: archived ? "ARCHIVED" : "ACTIVE"
+      });
+
+      var publicCell;
+      if (isPublic) {
+        publicCell = el("span", { class: "badge badge-accent", text: "CURRENT" });
+      } else {
+        publicCell = el("button", { class: "btn btn-sm" }, ["Make current"]);
+        publicCell.addEventListener("click", function () { setPublicShow(s); });
+        if (state.showsBusy) publicCell.setAttribute("disabled", "disabled");
+      }
+
+      var openBtn = el("button", { class: "btn btn-sm" }, ["Open"]);
+      openBtn.addEventListener("click", function () { openShow(year); });
+      var renameBtn = el("button", { class: "btn btn-sm" }, ["Rename"]);
+      renameBtn.addEventListener("click", function () { renameShow(s); });
+      var archiveBtn = el("button", { class: "btn btn-sm" }, [archived ? "Unarchive" : "Archive"]);
+      archiveBtn.addEventListener("click", function () { setShowStatus(s, !archived); });
+      var deleteBtn = el("button", { class: "btn btn-sm btn-warn" }, ["Delete"]);
+      deleteBtn.addEventListener("click", function () { confirmDeleteShow(s); });
+      if (state.showsBusy) {
+        [renameBtn, archiveBtn, deleteBtn].forEach(function (b) { b.setAttribute("disabled", "disabled"); });
+      }
+
+      return el("tr", {}, [
+        el("td", {}, [nameLink]),
+        el("td", {}, [statusBadge]),
+        el("td", {}, [publicCell]),
+        el("td", { class: "show-actions" }, [openBtn, renameBtn, archiveBtn, deleteBtn])
+      ]);
+    });
+
+    kids.push(el("table", { class: "grid shows-grid" }, [
+      el("thead", {}, [head]),
+      el("tbody", {}, rows)
+    ]));
+    kids.push(el("div", { class: "shows-note" }, [
+      "Each car show keeps its own registrations, sponsors, payments and t-shirt orders. " +
+      "The show marked CURRENT is the one the public sponsor sign-up forms and the public " +
+      "sponsor list use."
+    ]));
+
+    return el("div", { class: "panel shows-panel" }, kids);
+  }
+
+  // Deleting a show throws away a whole year of records and cannot be undone,
+  // so it takes the Developer password - the same second credential
+  // SilentAuctionManager requires before deleting an auction. The server
+  // checks it too (shows.php); this is not the gate, just where it's asked.
+  function renderDeleteShowConfirm() {
+    var host = $("#confirmHost");
+    if (!host) return;
+    host.innerHTML = "";
+    var show = state.showPendingDelete;
+    if (!show) return;
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", cancelDeleteShow);
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: "Delete " + (show.name || show.year) + "?" }),
+      el("span", { class: "spacer" }),
+      closeBtn
+    ]);
+
+    var pw = el("input", { type: "password", placeholder: "Developer password", autocomplete: "off" });
+    var yesBtn = el("button", { class: "btn primary", style: "background:var(--warn);border-color:var(--red-dark)" },
+      ["Yes, Delete This Car Show"]);
+    yesBtn.addEventListener("click", function () { deleteShow(show, pw.value); });
+    var noBtn = el("button", { class: "btn" }, ["Cancel"]);
+    noBtn.addEventListener("click", cancelDeleteShow);
+    if (state.showsBusy) yesBtn.setAttribute("disabled", "disabled");
+    // Enter submits, so the password field behaves like the login prompt.
+    pw.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); deleteShow(show, pw.value); }
+    });
+
+    var body = el("div", { class: "modal-body" }, [
+      el("p", {}, ["This permanently deletes every registration, sponsor, payment and t-shirt " +
+        "record for " + (show.name || show.year) + ". This cannot be undone."]),
+      el("p", {}, ["Enter the Developer password to confirm:"]),
+      pw
+    ]);
+    if (state.showsError) {
+      body.appendChild(el("div", { class: "messages", style: "margin-top:10px" }, [state.showsError]));
+    }
+    body.appendChild(el("div", { class: "settings-actions" }, [yesBtn, noBtn]));
+
+    var modal = el("div", { class: "modal" }, [head, body]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", cancelDeleteShow);
+    host.appendChild(backdrop);
+    pw.focus();
   }
 
   // CSVs are (re)ingested synchronously right before regenerate() runs, so
@@ -1639,13 +1864,13 @@
     { key: "lastPaymentType", label: "Type" },
     { key: "lastPaymentCheckNum", label: "Check #" },
     { key: "lastPaymentAmount", label: "Paid" },
+    { key: "shirtSize", label: "T-Shirt" },
     { key: "contactPerson", label: "Contact Person" },
     { key: "phone", label: "Phone" },
     { key: "email", label: "Email" },
     { key: "address", label: "Address" },
     { key: "website", label: "Website" },
-    { key: "individualSponsorshipText", label: "T-Shirt Text" },
-    { key: "shirtSize", label: "T-Shirt" }
+    { key: "individualSponsorshipText", label: "T-Shirt Text" }
   ];
   function sponsorTypeLabel(key) {
     var t = CONFIG.SPONSOR_TYPES.filter(function (x) { return x.key === key; })[0];
@@ -1937,9 +2162,8 @@
   // Re-fetches sponsors, their deleted-CSV-sponsor tombstones, and payments —
   // the three pieces of server state the Sponsors tab depends on — and
   // re-renders in place. Deliberately NOT a location.reload(): a full reload
-  // re-runs the whole app boot, which shows the splash screen first (see
-  // init()), which is jarring for what's meant to be a quick "did someone
-  // else just add a sponsor" check. Registrations/CSV data is NOT re-fetched
+  // re-runs the whole app boot, which is a lot of churn for what's meant to
+  // be a quick "did someone else just add a sponsor" check. Registrations/CSV data is NOT re-fetched
   // here (there's no live endpoint for it — see index.php's boot script) so
   // syncSponsorsFromRegistrations() re-runs against whatever CSV is already
   // loaded in this tab, same as it would on a normal page load.
@@ -2087,10 +2311,9 @@
     // ClubExpress/the club's main site) — see its post-submit redirect.
     var addBtn = el("button", { class: "btn primary" }, ["+ Add Sponsor"]);
     addBtn.addEventListener("click", function () { window.open("member-sponsor-form.php?from=app", "_blank", "noopener"); });
-    // Re-fetches just the sponsor-related data in place — NOT a page reload
-    // (that briefly shows the splash screen, since every full load starts
-    // there). Picks up whatever another officer (or the public sign-up form)
-    // has added/changed since this tab was opened.
+    // Re-fetches just the sponsor-related data in place — NOT a page reload.
+    // Picks up whatever another officer (or the public sign-up form) has
+    // added/changed since this tab was opened.
     var refreshBtn = el("button", { class: "btn", title: "Reload sponsor data from the server" },
       [state.sponsorsRefreshing ? "Refreshing…" : "🔄 Refresh"]);
     if (state.sponsorsRefreshing) refreshBtn.setAttribute("disabled", "disabled");
@@ -3247,7 +3470,19 @@
     menu.innerHTML = "";
     var logoutItem = el("a", { class: "hdr-menu-item", href: "logout.php" }, ["🚪 Logout"]);
     logoutItem.addEventListener("click", closeMenu);
-    var items = [logoutItem].concat(buildDeveloperMenuItems());
+    var items = [];
+    // Only offered when a show is open - from the picker itself there is
+    // nothing to change back to.
+    if (state.currentShow) {
+      var changeShowItem = el("a", { class: "hdr-menu-item", href: "#" }, ["🗓️ Change Car Show"]);
+      changeShowItem.addEventListener("click", function (e) {
+        e.preventDefault();
+        closeMenu();
+        closeShow();
+      });
+      items.push(changeShowItem);
+    }
+    items = items.concat([logoutItem], buildDeveloperMenuItems());
     items.forEach(function (it) { menu.appendChild(it); });
   }
 
@@ -4397,11 +4632,9 @@
     // member-sponsor-form.php redirects here with #sponsors after a successful
     // submission (opened in its own tab from the Sponsors tab's "+ Add
     // Sponsor" button) — land on a fresh Sponsors tab, already showing the
-    // new submission, instead of the default Summary tab. Also skip the
-    // splash screen in this case — it's the same tab the officer was
-    // already using, not a fresh app load, so there's nothing to welcome
-    // them back to.
-    if (location.hash === "#sponsors") { state.tab = "sponsors"; state.splashOpen = false; }
+    // new submission, instead of the default Summary tab. The show itself is
+    // still whatever the session had open, so this lands in the right year.
+    if (location.hash === "#sponsors") state.tab = "sponsors";
     buildHeaderMenu();
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && state.settingsOpen) { closeSettings(); return; }
@@ -4413,6 +4646,7 @@
       if (e.key === "Escape" && state.tshirtPurchasePageOpen) { closeTshirtPurchasePage(); return; }
       if (e.key === "Escape" && state.sponsorEditing) { closeSponsorForm(); return; }
       if (e.key === "Escape" && state.addRegOpen) { closeAddRegistration(); return; }
+      if (e.key === "Escape" && state.showPendingDelete) { cancelDeleteShow(); return; }
       if (e.key === "Escape" && state.clearSponsorsOpen) { closeClearSponsorsConfirm(); return; }
       if (e.key === "Escape" && state.deleteSelectedOpen) { closeDeleteSelectedConfirm(); return; }
       if (e.key === "Escape" && state.deleteRegSelectedOpen) { closeDeleteRegSelectedConfirm(); return; }
@@ -4437,6 +4671,28 @@
     },
     // Called by index.php's boot script with the sponsor list read fresh
     // from the server on this page load.
+    // MUST be called before every other ingest (index.php emits it first):
+    // until the app knows which show is open it can't decide whether to
+    // render the picker or the tabs, and CONFIG.title has to be right before
+    // ingestRows() bakes it into state.result.meta.title.
+    ingestShows: function (shows, publicYear, openYear) {
+      state.shows = (Array.isArray(shows) ? shows.slice() : []).sort(function (a, b) {
+        return (Number(b.year) || 0) - (Number(a.year) || 0);
+      });
+      state.publicShowYear = publicYear ? String(publicYear) : null;
+      var open = null;
+      if (openYear) {
+        var wanted = String(openYear);
+        state.shows.forEach(function (s) { if (String(s.year) === wanted) open = s; });
+      }
+      state.currentShow = open;
+      applyShowTitle();
+      // One assignment covers every place the event name surfaces - the
+      // Summary panel heading, all four print report headers and both Excel
+      // exports read it through state.result.meta.title.
+      if (open) CONFIG.title = LOGIC.showRegistrationTitle(open);
+      renderViews();
+    },
     ingestSponsors: function (list) {
       state.sponsors = Array.isArray(list) ? list : [];
       renderViews();

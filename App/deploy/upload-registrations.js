@@ -10,6 +10,13 @@
 // With no path args, picks the newest registration_data*.csv /
 // activity_registrant_data*.csv in the Exports folder, same as
 // build-snapshot.js did.
+//
+// The app holds one dataset per car show year, so the upload has to name the
+// year it's for. Set CARSHOW_YEAR (e.g. CARSHOW_YEAR=2026); it defaults to
+// the current calendar year, which is right for an in-season refresh and
+// wrong only if you're backfilling a past show — in which case set it
+// explicitly. The server rejects an unknown/invalid year outright rather
+// than filing the CSVs under the wrong show.
 var fs = require("fs");
 var path = require("path");
 var https = require("https");
@@ -30,9 +37,14 @@ var regCsvPath = process.argv[2] || newestMatching(EXPORTS_DIR, "registration_da
 var actCsvPath = process.argv[3] || newestMatching(EXPORTS_DIR, "activity_registrant_data");
 var url = process.argv[4] || DEFAULT_URL;
 var password = process.env.CARSHOW_SITE_PASSWORD;
+var year = process.env.CARSHOW_YEAR || String(new Date().getFullYear());
 
 if (!password) {
   console.error("Set CARSHOW_SITE_PASSWORD to the site's login password before running this.");
+  process.exit(1);
+}
+if (!/^[0-9]{4}$/.test(year)) {
+  console.error("CARSHOW_YEAR must be a four-digit car show year (got: " + year + ").");
   process.exit(1);
 }
 
@@ -43,7 +55,7 @@ var actCsv = fs.readFileSync(actCsvPath, "utf8");
 // the newer of the two files' mtimes, not upload time.
 var generatedAtMs = Math.max(fs.statSync(regCsvPath).mtimeMs, fs.statSync(actCsvPath).mtimeMs);
 
-var payload = JSON.stringify({ regCsv: regCsv, actCsv: actCsv, generatedAt: generatedAtMs, password: password });
+var payload = JSON.stringify({ regCsv: regCsv, actCsv: actCsv, generatedAt: generatedAtMs, password: password, year: year });
 var u = new URL(url);
 
 var req = https.request({
@@ -57,6 +69,7 @@ var req = https.request({
   res.on("end", function () {
     console.log("Status: " + res.statusCode);
     console.log(body);
+    console.log("Uploaded into car show: " + year);
     console.log("Uploaded from:");
     console.log("  " + regCsvPath);
     console.log("  " + actCsvPath);

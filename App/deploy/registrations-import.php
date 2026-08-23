@@ -25,7 +25,18 @@ if (empty($_SESSION['carshow_authenticated'])) {
     exit;
 }
 
-$REG_FILE = __DIR__ . '/registrations-data.json';
+// Imports into the show the officer currently has open (index.php puts the
+// selected year in the session). Without one there is nothing to import
+// into — bounce back rather than guessing a year.
+$year = carshow_valid_year($_SESSION['carshow_year'] ?? '');
+if ($year === null) {
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!doctype html><meta charset="utf-8"><body style="font:15px sans-serif;padding:40px;text-align:center">' .
+        '<p>Open a car show first, then try the import again.</p>' .
+        '<p><a href="index.php">Back to the app</a></p></body>';
+    exit;
+}
+$REG_FILE = carshow_show_file($year, 'registrations-data.json');
 $errors = [];
 $imported = null; // ['regRows' => int, 'actRows' => int] on success
 

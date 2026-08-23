@@ -56,7 +56,13 @@
 
   var CONFIG = {
     // --- Variables (Configuration sheet: Variables table) ---
-    title: "2026 Car Show Registration List",
+    // Fallback only. The app manages one dataset per car show year, and
+    // app.js's ingestShows() overwrites this with "<show name> Registration
+    // List" as soon as a show is opened — so every report header, the Summary
+    // panel heading and both Excel exports name the right year. This value is
+    // what shows in the offline tool and the regression fixtures, where there
+    // is no server-side show registry to read a name from.
+    title: "Car Show Registration List",
     firstNonMember: 8001,
 
     // --- Reg Type column values (first column in the Registration table) ---

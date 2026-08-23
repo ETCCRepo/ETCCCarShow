@@ -72,7 +72,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'shirtSize' => $values['shirtSize'],
             'submittedAt' => gmdate('c'),
         ];
-        $file = __DIR__ . '/sponsor-submissions.json';
+        // This page is public — no login, no session, and no ?year= in the URL we
+        // hand out — so it follows the CURRENT show from data/shows.json. That's
+        // what makes the published link stable across years: the club sets the
+        // current show once from the Car Shows screen and every public URL keeps
+        // working. Same pattern as SilentAuctionManager's starting-bid-list.php.
+        carshow_migrate_to_multi_show();
+        $currentShowYear = carshow_read_shows()['current'];
+        $file = $currentShowYear === null ? null
+            : carshow_show_file($currentShowYear, 'sponsor-submissions.json');
         if (carshow_append_json_list($file, $record)) {
             // Email a copy of this submission, in addition to the JSON save
             // above, if configured (Developer > Settings > New Sponsor
@@ -81,7 +89,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 // app-settings.json is a JSON object (not a list), so read it
                 // directly rather than via carshow_read_json_list().
-                $rawSettings = is_file(__DIR__ . '/app-settings.json') ? json_decode(file_get_contents(__DIR__ . '/app-settings.json'), true) : [];
+                $settingsFile = carshow_show_file($currentShowYear, 'app-settings.json');
+                $rawSettings = ($settingsFile !== null && is_file($settingsFile)) ? json_decode(file_get_contents($settingsFile), true) : [];
                 $s = is_array($rawSettings) ? $rawSettings : [];
                 // Settings > New Sponsor Confirmation Email's "To" is the override;
                 // if it's left blank, default to the sponsor's own submitted email

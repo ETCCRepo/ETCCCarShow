@@ -15,7 +15,15 @@ $SPONSOR_TYPES = [
     'individual' => 'Individual ($100)',
 ];
 
-$sponsors = carshow_read_json_list(__DIR__ . '/sponsor-submissions.json');
+// This page is public — no login, no session, and no ?year= in the URL we
+// hand out — so it follows the CURRENT show from data/shows.json. That's
+// what makes the published link stable across years: the club sets the
+// current show once from the Car Shows screen and every public URL keeps
+// working. Same pattern as SilentAuctionManager's starting-bid-list.php.
+carshow_migrate_to_multi_show();
+$currentShowYear = carshow_read_shows()['current'];
+$sponsors = $currentShowYear === null ? []
+    : carshow_read_json_list(carshow_show_file($currentShowYear, 'sponsor-submissions.json'));
 
 usort($sponsors, function ($a, $b) {
     $order = ['premier' => 0, 'corporate' => 1, 'individual' => 2];

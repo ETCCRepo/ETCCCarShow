@@ -71,7 +71,23 @@ if (!carshow_authed($PASSWORD_HASH, $input['password'] ?? ($_POST['password'] ??
     exit;
 }
 
-$file = __DIR__ . '/app-settings.json';
+// Per-show data: every request must name the car show year it belongs to.
+// index.php appends ?year= to this endpoint's URL in window.__carshowSite;
+// callers with no query string (upload-registrations.js) may send it in the
+// JSON body instead. An invalid/missing year is a hard 400 rather than a
+// default, because guessing would write one show's data into another's.
+$year = carshow_valid_year($_GET['year'] ?? ($input['year'] ?? ''));
+if ($year === null) {
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'error' => 'Missing or invalid show year.']);
+    exit;
+}
+$file = carshow_show_file($year, 'app-settings.json');
+if ($file === null) {
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'Could not open the data directory for ' . $year . '.']);
+    exit;
+}
 $action = (string)($input['action'] ?? 'get');
 $defaults = [
     'walkinFirstNonMember' => 2000,
@@ -90,10 +106,11 @@ $defaults = [
 if ($action === 'get') {
     $raw = is_file($file) ? json_decode(file_get_contents($file), true) : [];
     $settings = array_merge($defaults, is_array($raw) ? $raw : []);
-    if (empty($settings['externalApiKey'])) {
-        $settings['externalApiKey'] = bin2hex(random_bytes(16));
-        carshow_write_json($file, $settings);
-    }
+    // externalApiKey is global (data/api-key.json), not part of this year's
+    // settings — it's merged in on the way out so the client still sees one
+    // flat settings object, exactly as before multi-show.
+    unset($settings['externalApiKey']);
+    $settings['externalApiKey'] = carshow_api_key();
     echo json_encode(['ok' => true, 'settings' => $settings]);
     exit;
 }
@@ -105,13 +122,16 @@ if ($action === 'save') {
         echo json_encode(['ok' => false, 'error' => 'Missing settings.']);
         exit;
     }
+    unset($incoming['externalApiKey']);   // global — see the 'get' action
     $raw = is_file($file) ? json_decode(file_get_contents($file), true) : [];
     $settings = array_merge($defaults, is_array($raw) ? $raw : [], $incoming);
+    unset($settings['externalApiKey']);
     if (!carshow_write_json($file, $settings)) {
         http_response_code(500);
         echo json_encode(['ok' => false, 'error' => 'Could not save.']);
         exit;
     }
+    $settings['externalApiKey'] = carshow_api_key();
     echo json_encode(['ok' => true, 'settings' => $settings]);
     exit;
 }
@@ -122,12 +142,14 @@ if ($action === 'save') {
 if ($action === 'rotate_api_key') {
     $raw = is_file($file) ? json_decode(file_get_contents($file), true) : [];
     $settings = array_merge($defaults, is_array($raw) ? $raw : []);
-    $settings['externalApiKey'] = bin2hex(random_bytes(16));
-    if (!carshow_write_json($file, $settings)) {
+    unset($settings['externalApiKey']);
+    $key = carshow_rotate_api_key();
+    if ($key === '') {
         http_response_code(500);
         echo json_encode(['ok' => false, 'error' => 'Could not save.']);
         exit;
     }
+    $settings['externalApiKey'] = $key;
     echo json_encode(['ok' => true, 'settings' => $settings]);
     exit;
 }

@@ -409,7 +409,26 @@
     };
   }
 
-  var API = { generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault };
+  // ---- Car shows (one per year) ----
+  // Mirrors carshow_valid_year() in deploy/lib.php. The SERVER is the real
+  // gate — every endpoint re-validates and 400s on a bad year — but having
+  // the same rule here lets the UI reject a typo before the round trip, and
+  // puts the contract under the regression suite.
+  function validShowYear(raw) {
+    var y = String(raw == null ? "" : raw).trim();
+    return /^[0-9]{4}$/.test(y) ? y : null;
+  }
+
+  // The event name shown by the Summary panel heading, all four print report
+  // headers and both Excel exports — they all read it through
+  // state.result.meta.title, which generate() copies from CONFIG.title.
+  // app.js's ingestShows() assigns this the moment a show is opened.
+  function showRegistrationTitle(show) {
+    var name = (show && show.name) ? String(show.name).trim() : "";
+    return name ? name + " Registration List" : CONFIG.title;
+  }
+
+  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault };
   root.CarShowLogic = API;
   if (typeof module !== "undefined" && module.exports) module.exports = API;
 })(typeof globalThis !== "undefined" ? globalThis : this);

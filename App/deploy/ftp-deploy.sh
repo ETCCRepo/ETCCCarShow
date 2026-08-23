@@ -99,6 +99,7 @@ upload "lib.php"
 upload "member-sponsor-form.php"
 upload "public-sponsor-form.php"
 upload "sponsor-list.php"
+upload "shows.php"
 upload "sponsor-submissions.php"
 upload "walkin-registrations.php"
 upload "sponsor-payments.php"
@@ -131,12 +132,14 @@ upload ".htaccess"
 # repo. To push a manually-generated hash (openssl passwd, see README.md) instead
 # of using the reset flow, upload it by hand:
 #   curl -sS --netrc-file "$NETRC" --ftp-ssl -k --ftp-pasv -T deploy/secrets.php "$BASE/secrets.php"
-# sponsor-submissions.json, walkin-registrations.json, app-settings.json,
-# deleted-registrations.json, registration-overrides.json, registrations-data.json,
-# members-data.json, password-reset.json, paid-registrations-cache.json,
-# tshirt-purchases.json, and window-card.pdf (the fillable template
-# currently uploaded, via window-card-pdf.php) are likewise deliberately
-# never uploaded here —
+# The whole data/ tree (data/shows.json, data/api-key.json and every
+# data/<year>/*.json — sponsor-submissions, walkin-registrations,
+# app-settings, deleted-registrations, deleted-sponsors, registration-overrides,
+# registrations-data, sponsor-payments, tshirt-purchases,
+# paid-registrations-cache), plus the global members-data.json,
+# password-reset.json, dev-password-reset.json, and the per-year
+# window-card-<year>.pdf templates (uploaded via window-card-pdf.php), are
+# deliberately never uploaded here —
 # they're live, server-accumulated data with no meaningful
 # local copy to overwrite them with. See upload-registrations.js, members-import.php, and the Sponsors/Registration
 # tabs (including its Developer > Settings) for how those actually get

@@ -41,6 +41,23 @@ if (!carshow_authed($PASSWORD_HASH, $input['password'] ?? ($_POST['password'] ??
     exit;
 }
 
+// Per-show data: every request must name the car show year it belongs to.
+// index.php appends ?year= to this endpoint's URL in window.__carshowSite;
+// callers with no query string (upload-registrations.js) may send it in the
+// JSON body instead. An invalid/missing year is a hard 400 rather than a
+// default, because guessing would write one show's data into another's.
+$year = carshow_valid_year($_GET['year'] ?? ($input['year'] ?? ''));
+if ($year === null) {
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'error' => 'Missing or invalid show year.']);
+    exit;
+}
+$cacheFile = carshow_show_file($year, 'paid-registrations-cache.json');
+if ($cacheFile === null) {
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'Could not open the data directory for ' . $year . '.']);
+    exit;
+}
 $action = (string)($input['action'] ?? 'save');
 if ($action !== 'save') {
     http_response_code(400);
@@ -60,7 +77,7 @@ $data = [
     'registrations' => array_values($registrations),
 ];
 
-if (!carshow_write_json(__DIR__ . '/paid-registrations-cache.json', $data)) {
+if (!carshow_write_json($cacheFile, $data)) {
     http_response_code(500);
     echo json_encode(['ok' => false, 'error' => 'Could not save.']);
     exit;

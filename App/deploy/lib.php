@@ -18,7 +18,7 @@ function carshow_authed($passwordHash, $providedPassword) {
 }
 
 function carshow_read_json_list($file) {
-    if (!is_file($file)) return [];
+    if ($file === null || !is_file($file)) return [];
     $raw = file_get_contents($file);
     $decoded = $raw ? json_decode($raw, true) : [];
     return is_array($decoded) ? $decoded : [];
@@ -27,6 +27,7 @@ function carshow_read_json_list($file) {
 // Lock-guarded overwrite so a public form submission and an officer's edit
 // landing at nearly the same moment can't clobber each other.
 function carshow_write_json($file, $value) {
+    if ($file === null) return false;
     $fh = fopen($file, 'c+');
     if (!$fh || !flock($fh, LOCK_EX)) {
         if ($fh) fclose($fh);
@@ -44,6 +45,7 @@ function carshow_write_json($file, $value) {
 // Appends one record to a JSON-array file under the same lock (read +
 // modify + write as one atomic step, so a concurrent append can't be lost).
 function carshow_append_json_list($file, $record) {
+    if ($file === null) return false;
     $fh = fopen($file, 'c+');
     if (!$fh || !flock($fh, LOCK_EX)) {
         if ($fh) fclose($fh);
@@ -200,4 +202,229 @@ function carshow_send_mail($to, $subject, $body, $cc = '', $bcc = '', $html = fa
     $write('QUIT');
     fclose($sock);
     return $ok;
+}
+
+// ---------------------------------------------------------------------------
+// Multi-show (per-year) data paths
+// ---------------------------------------------------------------------------
+// Every car show year gets its own directory under data/, so 2026's sponsors,
+// registrations, payments etc. are completely independent of 2027's. Nothing
+// outside these three helpers is allowed to build a data path — a single
+// choke point is what keeps a bad ?year= from ever reaching the filesystem.
+
+// Strict 4-digit validation. Returns the year as a string, or null. A caller
+// that gets null MUST fail the request outright: silently defaulting to some
+// other year would write one show's data into another show's files, which is
+// far worse than a visible 400.
+function carshow_valid_year($raw) {
+    $y = trim((string)$raw);
+    return preg_match('/^[0-9]{4}$/', $y) === 1 ? $y : null;
+}
+
+// data/ itself. Created on demand, with a deny-all .htaccess dropped in the
+// first time — so the JSON under it is protected even if the parent
+// directory's .htaccess rules are ever lost or overridden by the host.
+function carshow_data_root() {
+    $root = __DIR__ . '/data';
+    if (!is_dir($root) && !@mkdir($root, 0755, true) && !is_dir($root)) return null;
+    $deny = $root . '/.htaccess';
+    if (!is_file($deny)) {
+        @file_put_contents($deny,
+            "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n" .
+            "<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n");
+    }
+    return $root;
+}
+
+// data/<year>/, created on demand. Returns null if the year is invalid or the
+// directory can't be created (e.g. no write permission on the FTP root) —
+// callers surface that as an error rather than writing somewhere unexpected.
+function carshow_show_dir($year) {
+    $y = carshow_valid_year($year);
+    if ($y === null) return null;
+    $root = carshow_data_root();
+    if ($root === null) return null;
+    $dir = $root . '/' . $y;
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) return null;
+    return $dir;
+}
+
+// Full path to one per-year data file, e.g.
+// carshow_show_file('2026', 'sponsor-submissions.json').
+function carshow_show_file($year, $name) {
+    $dir = carshow_show_dir($year);
+    return $dir === null ? null : $dir . '/' . $name;
+}
+
+// The shows registry: { "current": 2026, "shows": [ {year,name,status,created}, ... ] }.
+// An object rather than a list, so it gets its own reader (same reason
+// registration-overrides.php has one).
+function carshow_shows_path() {
+    $root = carshow_data_root();
+    return $root === null ? null : $root . '/shows.json';
+}
+
+function carshow_read_shows() {
+    $path = carshow_shows_path();
+    $raw = ($path !== null && is_file($path)) ? json_decode(file_get_contents($path), true) : null;
+    if (!is_array($raw)) $raw = [];
+    $shows = isset($raw['shows']) && is_array($raw['shows']) ? array_values($raw['shows']) : [];
+    $current = carshow_valid_year($raw['current'] ?? '');
+    return ['shows' => $shows, 'current' => $current];
+}
+
+function carshow_write_shows($registry) {
+    $path = carshow_shows_path();
+    if ($path === null) return false;
+    return carshow_write_json($path, [
+        'current' => $registry['current'] ?? null,
+        'shows'   => array_values($registry['shows'] ?? [])
+    ]);
+}
+
+// True if $year names a show that actually exists in the registry. Opening a
+// year that was never created (or was deleted) must not silently conjure an
+// empty one, so index.php checks this before honouring ?year=.
+function carshow_show_exists($year, $registry = null) {
+    $y = carshow_valid_year($year);
+    if ($y === null) return false;
+    if ($registry === null) $registry = carshow_read_shows();
+    foreach ($registry['shows'] as $s) {
+        if (carshow_valid_year($s['year'] ?? '') === $y) return true;
+    }
+    return false;
+}
+
+// The externalApiKey is deliberately NOT per-year: paid-registrations-api.php
+// is an external integration whose credential must stay stable when the club
+// rolls over to a new show. Lives in data/api-key.json, generated on first use.
+function carshow_api_key() {
+    $root = carshow_data_root();
+    if ($root === null) return '';
+    $file = $root . '/api-key.json';
+    $raw = is_file($file) ? json_decode(file_get_contents($file), true) : null;
+    if (is_array($raw) && !empty($raw['externalApiKey'])) return (string)$raw['externalApiKey'];
+    $key = bin2hex(random_bytes(16));
+    carshow_write_json($file, ['externalApiKey' => $key]);
+    return $key;
+}
+
+// Per-year window card. Unlike everything else here this stays flat at the
+// FTP root rather than moving under data/, because it's the one file that is
+// deliberately fetchable over plain HTTP (the app pulls it with fetch() and
+// fills its AcroForm client-side with pdf-lib) — putting it behind the data/
+// deny rule would mean writing a PHP reader for no benefit.
+function carshow_window_card_name($year) {
+    $y = carshow_valid_year($year);
+    return $y === null ? null : 'window-card-' . $y . '.pdf';
+}
+
+// ---------------------------------------------------------------------------
+// One-shot migration: flat single-show layout -> data/<year>/
+// ---------------------------------------------------------------------------
+// The app shipped for its whole life with one show's data as flat *.json in
+// this directory. This folds that into data/2026/ the first time the
+// multi-show build runs, and is then permanently a no-op.
+//
+// Deliberately non-destructive: every legacy file is COPIED, never moved or
+// deleted, so redeploying the previous build finds its data exactly where it
+// left it. Guarded on data/shows.json's existence (the same guard style as
+// SilentAuctionManager's migrateToMultiAuction) so it can never run twice —
+// note the guard is the registry file, not the data directory, because a
+// half-created data/ from a failed run must still be completable.
+
+define('CARSHOW_LEGACY_YEAR', '2026');
+
+// The per-show data files. This list is the definition of "what belongs to a
+// show" — members-data.json (club roster), password-reset.json and
+// dev-password-reset.json (auth) are global and deliberately absent.
+function carshow_show_files() {
+    return [
+        'sponsor-submissions.json',
+        'sponsor-payments.json',
+        'deleted-sponsors.json',
+        'deleted-registrations.json',
+        'walkin-registrations.json',
+        'tshirt-purchases.json',
+        'registration-overrides.json',
+        'registrations-data.json',
+        'paid-registrations-cache.json',
+        'app-settings.json'
+    ];
+}
+
+function carshow_migrate_to_multi_show() {
+    $path = carshow_shows_path();
+    if ($path === null) return false;          // data/ not creatable — caller reports it
+    if (is_file($path)) return true;           // already migrated; the common case
+
+    $year = CARSHOW_LEGACY_YEAR;
+    $dir = carshow_show_dir($year);
+    if ($dir === null) return false;
+
+    $migrated = false;
+    foreach (carshow_show_files() as $name) {
+        $legacy = __DIR__ . '/' . $name;
+        $target = $dir . '/' . $name;
+        if (is_file($legacy) && !is_file($target)) {
+            @copy($legacy, $target);
+            $migrated = true;
+        }
+    }
+
+    // The window card is per-year but flat (see carshow_window_card_name).
+    // The settings key that names it has to be rewritten to match, or the
+    // migrated show would keep pointing at the pre-multi-show filename.
+    $legacyCard = __DIR__ . '/window-card.pdf';
+    $cardName = carshow_window_card_name($year);
+    $targetCard = __DIR__ . '/' . $cardName;
+    if (is_file($legacyCard) && !is_file($targetCard)) @copy($legacyCard, $targetCard);
+
+    // externalApiKey becomes global — lift it out of the migrated per-year
+    // settings so the external feed's credential survives a show rollover,
+    // and drop it from the copy so the two can't drift apart later.
+    $settingsFile = $dir . '/app-settings.json';
+    if (is_file($settingsFile)) {
+        $settings = json_decode(file_get_contents($settingsFile), true);
+        if (is_array($settings)) {
+            $dirty = false;
+            if (!empty($settings['externalApiKey'])) {
+                $root = carshow_data_root();
+                if ($root !== null && !is_file($root . '/api-key.json')) {
+                    carshow_write_json($root . '/api-key.json', ['externalApiKey' => $settings['externalApiKey']]);
+                }
+                unset($settings['externalApiKey']);
+                $dirty = true;
+            }
+            if (($settings['windowCardPdf'] ?? '') === 'window-card.pdf' && is_file($targetCard)) {
+                $settings['windowCardPdf'] = $cardName;
+                $dirty = true;
+            }
+            if ($dirty) carshow_write_json($settingsFile, $settings);
+        }
+    }
+
+    // Always write the registry, even when there was nothing to copy (a fresh
+    // install) — writing it is what makes this run exactly once, ever.
+    carshow_write_shows([
+        'current' => $year,
+        'shows' => [[
+            'year'    => (int)$year,
+            'name'    => $year . ' Car Show',
+            'status'  => 'active',
+            'created' => gmdate('c'),
+            'migrated' => $migrated
+        ]]
+    ]);
+    return true;
+}
+
+// Replaces the global external API key. Separate action rather than a special
+// case of the settings save, so the client never round-trips the old value.
+function carshow_rotate_api_key() {
+    $root = carshow_data_root();
+    if ($root === null) return '';
+    $key = bin2hex(random_bytes(16));
+    carshow_write_json($root . '/api-key.json', ['externalApiKey' => $key]);
+    return $key;
 }

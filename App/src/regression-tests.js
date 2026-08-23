@@ -103,6 +103,7 @@
 
     manualRegistrationAssertions(results);
     pickLatestPaymentAssertions(results);
+    multiShowAssertions(results);
 
     return { out: out, results: results };
   }
@@ -176,6 +177,51 @@
     eq(results, LOGIC.pickLatestPayment(sameDayPayments).id, "pay2",
       "pickLatestPayment: same-day payments resolved by recordedAt, not date");
     eq(results, LOGIC.pickLatestPayment([]), null, "pickLatestPayment: empty list returns null");
+  }
+
+  // ---- Car shows (one per year) ----
+  // The app keeps a separate dataset per show year under data/<year>/ on the
+  // server, and the year travels as ?year= on every endpoint URL. Two rules
+  // hold that together, and both live in logic.js so this suite and the app
+  // exercise the same code:
+  //   validShowYear()          — mirrors carshow_valid_year() in deploy/lib.php
+  //   showRegistrationTitle()  — what every report header/export is named
+  // The server re-validates independently (each endpoint 400s on a bad year),
+  // so a regression here is a usability bug, not a security hole — but the
+  // strict 4-digit shape is what keeps a year from ever becoming a path
+  // segment it shouldn't be, so it's worth pinning down.
+  function multiShowAssertions(results) {
+    var valid = LOGIC.validShowYear;
+    eq(results, valid("2026"), "2026", "show year: a plain four-digit year is accepted");
+    eq(results, valid(2026), "2026", "show year: a number is accepted and normalized to a string");
+    eq(results, valid("  2026  "), "2026", "show year: surrounding whitespace is trimmed");
+    eq(results, valid(""), null, "show year: empty is rejected");
+    eq(results, valid(null), null, "show year: null is rejected");
+    eq(results, valid(undefined), null, "show year: undefined is rejected");
+    eq(results, valid("20x6"), null, "show year: non-digits are rejected");
+    eq(results, valid("202"), null, "show year: three digits are rejected");
+    eq(results, valid("20266"), null, "show year: five digits are rejected");
+    // The path-traversal shapes specifically — data/<year>/ is built by
+    // string concatenation server-side, so these must never survive.
+    eq(results, valid("../2026"), null, "show year: a relative path is rejected");
+    eq(results, valid("2026/.."), null, "show year: a trailing path segment is rejected");
+    eq(results, valid("2026 2027"), null, "show year: two years are rejected");
+
+    var title = LOGIC.showRegistrationTitle;
+    eq(results, title({ year: 2026, name: "2026 Car Show" }), "2026 Car Show Registration List",
+      "show title: derived from the show's name");
+    eq(results, title({ year: 2027, name: "  2027 Car Show  " }), "2027 Car Show Registration List",
+      "show title: the show name is trimmed");
+    // With no show (or an unnamed one) the title falls back to CONFIG.title,
+    // which is what the offline tool and these fixtures run with.
+    eq(results, title(null), CONFIG.title, "show title: falls back to CONFIG.title with no show");
+    eq(results, title({ year: 2026, name: "" }), CONFIG.title, "show title: falls back when the name is blank");
+
+    // CONFIG.title must stay year-free: it's only a fallback now, and a
+    // hardcoded year there would silently mislabel every report in any show
+    // whose name failed to load.
+    eq(results, /\b(19|20)[0-9]{2}\b/.test(CONFIG.title), false,
+      "CONFIG.title carries no hardcoded year (it's a fallback; ingestShows sets the real one)");
   }
 
   // Excel export round-trip (build a workbook, reload it, check shape).

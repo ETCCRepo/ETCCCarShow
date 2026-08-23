@@ -37,7 +37,10 @@ if (!$subject || !$body) {
 
 $recipient = $to;
 if (!$recipient) {
-    $settingsFile = __DIR__ . '/app-settings.json';
+    // Per-show: the vendor address is part of a given year's setup.
+    // Falls back to no default address if the year is missing/invalid, which
+    // just means the caller's explicit "to" is required.
+    $settingsFile = carshow_show_file(carshow_valid_year($_GET['year'] ?? ($input['year'] ?? '')), 'app-settings.json');
     $defaults = [
         'walkinFirstNonMember' => 2000,
         'walkInCarShowFee' => 50,
@@ -48,7 +51,7 @@ if (!$recipient) {
         'tshirtEventPurchaseCost' => 0,
         'externalApiKey' => ''
     ];
-    $raw = is_file($settingsFile) ? json_decode(file_get_contents($settingsFile), true) : [];
+    $raw = ($settingsFile !== null && is_file($settingsFile)) ? json_decode(file_get_contents($settingsFile), true) : [];
     $settings = array_merge($defaults, is_array($raw) ? $raw : []);
     $recipient = $settings['tshirtVendorEmail'] ?? '';
 }
