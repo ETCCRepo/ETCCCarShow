@@ -1,6 +1,28 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-07-25 (end of session, latest). **This session tracked down a real
+Last updated: 2026-08-23 (end of session, latest). **This session added multi-year car
+show support** — the app previously assumed exactly one event; it now holds a separate,
+independently-persisted show per year (2026, 2027, ...), selected from a new Car Shows
+picker screen that is the landing page after login. Server data moved from flat JSON
+files in the FTP root to `data/<year>/` subdirectories, with a strict year-validation
+choke point (`carshow_valid_year()` in `lib.php`) guarding every path built from a
+`?year=` param. A one-shot, non-destructive migration folded the existing flat 2026 data
+into `data/2026/` on first live request; it already ran (confirmed via the deploy's file
+listing — `window-card-2026.pdf` now exists alongside the old flat `window-card.pdf`).
+The old splash/welcome page was removed entirely (nothing rendered it once the picker
+became the landing screen) along with its ~250KB embedded banner image, trimming the
+built bundle from ~2199KB to ~1951KB. Two full `/ETCCCarShowCheckpoint` runs this
+session: `5f1127ae` (a version-bump-only rebuild, unrelated to the multi-year work — see
+below) and **`594d171`**, pushed to `origin/main`; live site is **v3.24** and reflects
+everything through that commit. `/ETCCCarShowTest` was run and updated as part of this
+session (multi-show assertions were added to the suite, which is explicitly in scope for
+that skill) — **77 passed, 0 failed**, the new baseline. **Still open**: only 2026 has
+been exercised on the live site — creating a second show (e.g. 2027), verifying its data
+stays fully isolated from 2026, and confirming the public sponsor forms follow the
+"current show" pointer correctly have not yet been done by a human. See "Known
+follow-ups" below.
+
+Previous update: 2026-07-25 (end of session). **That session tracked down a real
 data-corruption bug in the Registration detail modal.** Reported symptom was narrow — one
 individual sponsor (Bill Greene) missing from the Sponsors tab — but the cause turned out
 to be that his *registration record itself had been silently overwritten with another
@@ -44,6 +66,197 @@ unlinked — Claude's attempt to delete it via a one-off FTP `DELE` command was 
 the auto-mode safety classifier (deleting a live server file is treated as destructive),
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
+
+## This session's work (2026-08-23)
+
+**Request**: "modify the car show manager to support multiple car shows by first
+selecting the specific year of the car show. Use the current data for 2026. persist the
+data for each car show" — explicitly modeled on `Z:\Backup\Websites\SilentAuctionManager`'s
+existing multi-auction architecture. Planned in plan mode (two parallel Explore agents
+surveyed SilentAuctionManager's `sam_current_auction`/`sam_{id}_*` localStorage+MySQL
+namespacing scheme and CarShow's own flat-JSON persistence before any code was written),
+approved, then implemented directly with Bash/node one-off scripts rather than the
+Edit tool (large mechanical multi-file patches were faster and safer to write as small
+Node scripts operating on file content than as many individual Edit calls). The plan file
+is `C:\Users\Admin\.claude\plans\using-the-silent-auction-linear-dove.md` if a future
+session wants the full design rationale.
+
+**1. Server-side: a directory per car show year, guarded by one validation choke point.**
+- New helpers in `App/deploy/lib.php`: `carshow_valid_year($raw)` (strict `^[0-9]{4}$`,
+  returns the year string or `null` — **nothing else in the codebase is allowed to build a
+  data path**; every endpoint treats a failed validation as a hard HTTP 400, never a
+  silent fallback, because guessing would risk writing one show's data into another's),
+  `carshow_data_root()` (creates `data/` on demand, drops its own deny-all `.htaccess`
+  inside it the first time), `carshow_show_dir($year)`, `carshow_show_file($year, $name)`.
+- New `App/deploy/shows.php` — the registry API for `data/shows.json`
+  (`{ "current": 2026, "shows": [{year, name, status, created}, ...] }`). Actions: `list`,
+  `create`, `rename`, `archive`/`unarchive`, `set_current`, `delete` (requires the
+  **Developer password**, checked server-side against `$DEV_PASSWORD_HASH` — a whole
+  year of data is unrecoverable once deleted, so this uses the stronger of the app's two
+  credentials, not the ordinary session-or-password `carshow_authed()` check every other
+  endpoint uses).
+- **All ten per-show data endpoints** (`sponsor-submissions.php`, `sponsor-payments.php`,
+  `deleted-sponsors.php`, `deleted-registrations.php`, `registration-overrides.php`,
+  `walkin-registrations.php`, `tshirt-purchases.php`, `paid-registrations-cache.php`,
+  `app-settings.php`, `registrations-upload.php`) now require `?year=` (or a `year` key
+  in the JSON body, for `registrations-upload.js` which posts no query string) and 400 if
+  it's missing/invalid. `window-card-pdf.php` also year-scoped, but the PDF itself stays
+  **flat** at the FTP root as `window-card-<year>.pdf` rather than moving under `data/` —
+  it's the one file deliberately fetched over plain HTTP (app.js fills its AcroForm
+  client-side with pdf-lib), so putting it behind the `data/` deny rule would need a new
+  PHP reader for no benefit.
+- `App/deploy/index.php` resolves the year from `?year=` into `$_SESSION['carshow_year']`
+  (re-validated against the live registry on **every** request, not just when `?year=` is
+  present, so a show deleted in another tab can't stay "open" in this one), then appends
+  `?year=<year>` to all eleven per-show URLs it injects into `window.__carshowSite` — this
+  is the single decision that kept the client diff small, since app.js's ~15 hand-built
+  `fetch()` call sites needed **zero changes**; they were already hitting
+  `SITE_CONFIG.sponsorsApiUrl` etc., which is now just year-scoped. Switching shows is a
+  full page load (`?year=2027`), not a client-side refetch — index.php already re-inlines
+  every dataset from scratch per request, so a reload is free correctness with no
+  cache-invalidation logic needed.
+- **Global (not per-show)**: `members-data.json` (club roster), `password-reset.json`/
+  `dev-password-reset.json` (auth), and the `externalApiKey` — moved out of
+  `app-settings.json` into `data/api-key.json` (`carshow_api_key()`/
+  `carshow_rotate_api_key()` in `lib.php`) specifically so rotating it, or rolling over to
+  a new show year, can't silently break the external paid-registrations feed for whoever
+  is consuming it. `paid-registrations-api.php` now serves the **current** show
+  (`shows.json`'s `current`, overridable with `?year=`) since an external caller has no
+  session and can't otherwise say which year it wants.
+- **Public pages follow the server-side "current show"**, independent of whichever year an
+  officer happens to have open in their own browser tab: `member-sponsor-form.php`,
+  `public-sponsor-form.php`, and `sponsor-list.php` all resolve
+  `carshow_read_shows()['current']` and read/write that year's `sponsor-submissions.json`.
+  This means the public URLs (`https://etccapps.com/apps/carshow/sponsor-list.php` etc.)
+  **never change** — no links to update anywhere — and reviewing a past year's numbers in
+  the app can't accidentally redirect live walk-up sign-ups.
+- **One-shot, non-destructive migration** — `carshow_migrate_to_multi_show()` in
+  `lib.php`, called from `index.php` and `shows.php` on every request but guarded on
+  `data/shows.json`'s existence so it only ever does real work once. It **copies** (never
+  moves/deletes) the ten legacy flat files into `data/2026/`, copies
+  `window-card.pdf` → `window-card-2026.pdf` and rewrites the migrated
+  `app-settings.json`'s `windowCardPdf` key to match, and splits `externalApiKey` out into
+  `data/api-key.json`. The flat originals are left untouched at the FTP root as a
+  rollback path if anything needed reverting. **This already ran on the live site** —
+  confirmed via the FTP deploy's final directory listing showing both
+  `window-card-2026.pdf` (new) and `window-card.pdf` (original, untouched) present.
+- `App/deploy/.htaccess` gained a blanket `<FilesMatch "\.json$">` deny rule (belt-and-
+  suspenders alongside the existing per-filename `<Files>` blocks and the `data/`-local
+  `.htaccess` PHP writes) so any *future* data file is denied by default rather than only
+  once someone remembers to name it explicitly.
+- `App/deploy/ftp-deploy.sh` now uploads `shows.php`; the whole `data/` tree (and the
+  per-year `window-card-<year>.pdf` files) are explicitly documented as never-uploaded,
+  server-accumulated data, same convention as the pre-existing flat JSON exclusions.
+- `App/deploy/upload-registrations.js` (the CLI CSV uploader) gained a `CARSHOW_YEAR` env
+  var (defaults to the current calendar year) sent as `year` in its POST body.
+
+**2. Client-side: the Car Shows picker is now the app's landing screen.**
+- `App/src/app.js`: new `state.shows`/`state.currentShow`/`state.publicShowYear`/
+  `state.showsError`/`state.showsBusy`/`state.showPendingDelete`. New
+  `window.__carshow.ingestShows(shows, publicYear, openYear)` — **must run before every
+  other ingest** (and does, first in `index.php`'s boot script) since the app can't decide
+  whether to render the picker or the tabs until it knows whether a show is open, and it
+  sets `CONFIG.title` from the open show's name before `ingestRows()` bakes that into
+  `state.result.meta.title` (the single source every report header, the Summary panel
+  heading, and both Excel exports already read).
+- New `buildShowsPage()` — lists shows newest-year-first with ACTIVE/ARCHIVED badges, a
+  CURRENT badge (or a "Make current" button) for whichever show the public forms are
+  wired to, and Open/Rename/Archive/Delete actions per row. `+ New Car Show` prompts for
+  a year and a name and lands directly in the new show. Deleting asks for the Developer
+  password in a modal (`renderDeleteShowConfirm()`, rendered into the existing
+  `#confirmHost`, same pattern as `renderClearSponsorsConfirm()`).
+- **The old splash/welcome page is gone.** `renderViews()`'s very first check used to be
+  `if (state.splashOpen)`; it's now `if (!state.currentShow)` → the Car Shows picker.
+  Once a show is open, tabs render as before. This was a follow-up user request mid-
+  session ("make this screen the opening screen... The car show year should be in the
+  title of the page") after the picker had initially been built as a second screen shown
+  only once no show was open, sitting behind the pre-existing splash. Removed:
+  `state.splashOpen`, `buildSplashPage()`, `SPLASH_COPY`, the `.splash-page`/
+  `.splash-inner`/`.splash-banner`/`.splash-extra`/`.splash-actions` CSS rules, and
+  `build.js`'s embedding of `assets/splash-banner.jpg` as `window.__carshowSplashBanner`
+  (the ~250KB base64 image is no longer in the bundle at all — `assets/splash-banner.jpg`
+  is still on disk and in git history if it's ever wanted again, e.g. as decoration on the
+  picker itself, which nobody has asked for).
+- New `applyShowTitle()` sets **both** the header `<h1>` and `document.title` from the
+  open show's year — `"<year> Car Show Manager"` in the header bar, `"<year> ETCC Car
+  Show — Registration"` in the browser tab; falls back to the plain "Car Show Manager" /
+  "ETCC Car Show — Registration" on the picker screen where nothing is open yet.
+- Hamburger menu gained a **"🗓️ Change Car Show"** item (only shown when a show is open)
+  that does `location.href = "?year="` — same full-reload-to-deselect pattern SAM uses.
+- `App/src/config.js`'s `CONFIG.title` is now explicitly documented as a **fallback
+  only** (used by the offline tool and the regression fixtures, where there's no server
+  registry to read a show name from) — the real value is always overwritten by
+  `ingestShows()` once a show is open.
+
+**3. Shared validation logic + regression coverage.** Two small pure functions moved into
+`App/src/logic.js` (not duplicated between the client and the test suite):
+`LOGIC.validShowYear(raw)` (mirrors `carshow_valid_year()` — the server is still the real
+security boundary; this just lets the UI reject a typo before the round trip) and
+`LOGIC.showRegistrationTitle(show)`. `App/src/regression-tests.js` gained an 18-assertion
+`multiShowAssertions()` suite covering year-string edge cases (whitespace, wrong digit
+counts, path-traversal shapes like `"../2026"`) and title derivation, wired into the
+suite that both `test/run-tests.js` and the in-app Developer → Run Regression Tests panel
+share. Per this project's standing "don't touch test files without an explicit test
+trigger" rule, this was flagged to the user as a deviation at the time (the plan the user
+approved named the file directly, which was treated as sufficient authorization) — worth
+knowing if a future session sees test-file edits attributed to a session that wasn't a
+`/ETCCCarShowTest` run.
+
+**4. Build/deploy mechanics.** `node build.js` run twice this session (once for the
+initial multi-show work landing at v3.21/deployed, once more after the splash-removal/
+title follow-up landing at v3.22/deployed); `bash deploy/ftp-deploy.sh` run after each.
+`/ETCCCarShowTest` was invoked explicitly partway through the session (separately from
+the checkpoint) — ran clean at 77/77 with no stale assertions or real bugs found, since
+the multi-show suite had already been written alongside the feature. `/ETCCCarShowCheckpoint`
+was then run: `node build.js` bumped to v3.24, `bash deploy/ftp-deploy.sh` succeeded (its
+directory listing is what confirmed the migration had already executed live), and the
+commit/push landed as `594d171` — 31 files changed (`App/deploy/shows.php` new; the other
+29 pre-existing `App/deploy/*.php`, `App/src/*`, `App/build.js`, `App/ETCCCarShow.html`,
+`App/version.json` modified). One earlier commit this session, `5f1127ae`
+("Rebuild and deploy v3.16 (no source changes)"), was an **unrelated** version-bump-only
+checkpoint run *before* the multi-year work started (in response to a since-reverted
+"change Sponsors heading to 2026 Car Show Sponsors" experiment) — mentioned here only so
+it isn't mistaken for part of the multi-year change set if someone's scanning `git log`.
+
+## Known follow-ups / things a new session might need to know (2026-08-23 session)
+
+- **Only 2026 has been exercised live.** The migration ran and 2026 renders correctly
+  (confirmed by the user's own screenshots mid-session: Summary tab, Sponsors tab all
+  showing real data under the new picker flow), but creating a genuinely second show
+  (e.g. 2027), confirming its tabs start completely empty, adding data to it, and then
+  switching back to 2026 to confirm nothing leaked between the two has **not** been done
+  by a human yet. The user's screenshot did show a 2027 row already present in the picker
+  (ACTIVE, not current) — unclear from context whether that was created deliberately to
+  explore the UI or is leftover test data; worth asking before assuming either way.
+- **The "current show" (public sign-ups) vs. "open show" (what an officer is viewing)
+  distinction is new and easy to get backwards.** The picker's CURRENT badge/"Make
+  current" button controls where `member-sponsor-form.php`/`public-sponsor-form.php`/
+  `sponsor-list.php` write and read — **not** which show clicking "Open" puts you into.
+  If a future report is "a sponsor signed up but I can't find them," check which show is
+  marked CURRENT before assuming a data-loss bug.
+- **`assets/splash-banner.jpg` is now unused** (still on disk, no longer embedded by
+  `build.js`). Nobody asked for it to be deleted from the repo, and it's harmless sitting
+  there, but a future cleanup pass could remove it along with `reports-banner.jpg`'s
+  neighbor comment references if truly dead — didn't verify whether `reports-banner.jpg`
+  (still actively used) has any accidental cross-references to the splash banner.
+- **No PHP was available locally to lint the new/changed `.php` files** (`shows.php` and
+  the year-guard patches to the ten existing endpoints) — they were reviewed by eye and
+  by grepping for the expected patterns post-patch, but were only truly exercised for the
+  first time by the live FTP deploy + migration run. Nothing has surfaced as broken, but
+  if something behaves oddly in a per-show endpoint, that's the first place with zero
+  automated coverage to double-check.
+- **Deleting a show (`shows.php`'s `delete` action / the picker's Delete button) has never
+  been exercised**, live or in tests — it does a flat, non-recursive delete of the ten
+  known filenames inside `data/<year>/` plus the year's window card, then removes the
+  registry entry. If a future session needs to delete a real show, watch for any stray
+  file left in that directory that isn't one of the ten known names (there shouldn't be
+  one, but the delete code deliberately does NOT recurse/glob, so it wouldn't be cleaned
+  up if it existed).
+- **`App/deploy/window-card.pdf` (the pre-migration flat file) and the orphaned
+  `sponsor-form.php`/`deleted-sponsors.php` files from earlier sessions (see the
+  2026-07-25 and 2026-07-20 follow-up notes below) are all still sitting on the live
+  server, unused but harmless** — none of this session's work removed them, and cleaning
+  up old orphans was out of scope.
 
 ## This session's work (2026-07-25)
 
