@@ -1,6 +1,15 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-08-23 (end of session, latest). **This session added multi-year car
+Last updated: 2026-08-24 (end of session, latest). **This session added a small,
+self-contained feature: a Member Report on the Reports tab.** Lists every club member on
+the imported roster (`state.members`, from Developer > Import Members) — Last Name, First
+Name, Reg # (the member's Member Number) — sorted by last name, independent of any loaded
+registration CSV. One full `/ETCCCarShowCheckpoint`: **`b0d3209`**, pushed to
+`origin/main`; live site is **v3.25** and reflects everything through that commit.
+`/ETCCCarShowTest` was **not** run (not requested) — last known-good 77/77
+(2026-08-23 session, unaffected by this change).
+
+Previous update: 2026-08-23 (end of session). **That session added multi-year car
 show support** — the app previously assumed exactly one event; it now holds a separate,
 independently-persisted show per year (2026, 2027, ...), selected from a new Car Shows
 picker screen that is the landing page after login. Server data moved from flat JSON
@@ -11,12 +20,13 @@ into `data/2026/` on first live request; it already ran (confirmed via the deplo
 listing — `window-card-2026.pdf` now exists alongside the old flat `window-card.pdf`).
 The old splash/welcome page was removed entirely (nothing rendered it once the picker
 became the landing screen) along with its ~250KB embedded banner image, trimming the
-built bundle from ~2199KB to ~1951KB. Two full `/ETCCCarShowCheckpoint` runs this
+built bundle from ~2199KB to ~1951KB. Two full `/ETCCCarShowCheckpoint` runs that
 session: `5f1127ae` (a version-bump-only rebuild, unrelated to the multi-year work — see
-below) and **`594d171`**, pushed to `origin/main`; live site is **v3.24** and reflects
-everything through that commit. `/ETCCCarShowTest` was run and updated as part of this
+below) and **`594d171`**, pushed to `origin/main`; live site was **v3.24** as of that
+session (now v3.25, see above). `/ETCCCarShowTest` was run and updated as part of that
 session (multi-show assertions were added to the suite, which is explicitly in scope for
-that skill) — **77 passed, 0 failed**, the new baseline. **Still open**: only 2026 has
+that skill) — **77 passed, 0 failed**, the baseline still current as of this write-up.
+**Still open**: only 2026 has
 been exercised on the live site — creating a second show (e.g. 2027), verifying its data
 stays fully isolated from 2026, and confirming the public sponsor forms follow the
 "current show" pointer correctly have not yet been done by a human. See "Known
@@ -66,6 +76,56 @@ unlinked — Claude's attempt to delete it via a one-off FTP `DELE` command was 
 the auto-mode safety classifier (deleting a live server file is treated as destructive),
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
+
+## This session's work (2026-08-24)
+
+**Member Report added to the Reports tab.** Straightforward feature request: "Create a
+Member Report similar to the Registration Report. A row for each member in last name
+order. Columns are last name, first name, reg #." Modeled directly on the existing
+Registration Report (`printRegistrationReport()`/`registrationReportRows()` in
+`App/src/app.js`), but sources from the **club member roster**, not the loaded
+registration CSV — a deliberate distinction: "member" here means every name on the
+imported roster (`state.members`, populated by `ingestMembers()` from
+`members-data.json` via Developer > Import Members), not just people who registered for
+this year's show.
+
+- **`memberReportRows()`** (`App/src/app.js`, right after `printRegistrationReport()`) —
+  `(state.members || []).slice().sort(...)` by `lastName`, case-insensitive. Each member
+  record's shape (`{ name, lastName, firstName, memberNumber, phone, email, address,
+  city, state, zip, year, model, color, spouseFirstName }`) comes from
+  `App/deploy/members-import.php`'s CSV parser — `memberNumber` is what's shown as
+  "Reg #" on this report, matching the convention used elsewhere in the app where a
+  member's Member Number doubles as their Reg # once they register.
+- **`printMemberReport()`** — same print-report pattern as every other report in this
+  file (`buildPrintHeader`/`buildPrintFooter`, `.grid.report-table.centered-report-table`
+  styling, `window.print()`). Unlike `printRegistrationReport()`, it has **no**
+  `state.result`/`state.result.ok` guard — the Reports tab already renders without a
+  loaded CSV, and this report doesn't need one; it works purely off `state.members`,
+  which is populated at boot independent of any registration import.
+- **Reports tab button**: new "👥 Member Report" button in `buildReportsView()`, placed
+  between "📋 Registration Report" and "🤝 Sponsor Report".
+- **No test coverage added** — this is pure presentation logic with no business rules to
+  assert (unlike the multi-show work last session), and `/ETCCCarShowTest` wasn't
+  invoked this session.
+
+**Checkpoint this session**: one full `/ETCCCarShowCheckpoint` run (build/version bump →
+FTP deploy → commit → push):
+- `b0d3209` — "Add Member Report to Reports tab" (3 files: `App/src/app.js`, plus built
+  `App/ETCCCarShow.html`/`App/version.json`; 75 insertions / 5 deletions). Pushed to
+  `origin/main`, working tree clean.
+- `version.json` was at minor `24` going in (live footer read v3.24 from last session);
+  this build stamped **v3.25** into the live footer and left `version.json` at minor `26`
+  for next time (same one-ahead offset called out in earlier sessions — not a bug).
+- All 29 deploy files uploaded successfully on attempt 1; no errors.
+
+## Known follow-ups / things a new session might need to know (2026-08-24 session)
+
+- **Nothing new is open from this session** — it was a single, self-contained,
+  low-risk feature addition (a new report reading existing, already-trusted
+  `state.members` data) with no data-model changes, no server-side changes, and no
+  interaction with the multi-year show work from the previous session. All prior
+  open items (below, under the 2026-08-23 and earlier sections) remain exactly as they
+  were — none were touched or resolved this session.
 
 ## This session's work (2026-08-23)
 
