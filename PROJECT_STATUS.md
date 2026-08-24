@@ -1,13 +1,21 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-08-24 (end of session, latest). **This session added a small,
-self-contained feature: a Member Report on the Reports tab.** Lists every club member on
-the imported roster (`state.members`, from Developer > Import Members) — Last Name, First
-Name, Reg # (the member's Member Number) — sorted by last name, independent of any loaded
-registration CSV. One full `/ETCCCarShowCheckpoint`: **`b0d3209`**, pushed to
-`origin/main`; live site is **v3.25** and reflects everything through that commit.
-`/ETCCCarShowTest` was **not** run (not requested) — last known-good 77/77
-(2026-08-23 session, unaffected by this change).
+Last updated: 2026-08-24 (end of session, latest). **This session had two parts.** First,
+a small self-contained feature: a **Member Report** on the Reports tab, listing every club
+member on the imported roster (Last Name, First Name, Reg #/Member Number), sorted by last
+name, independent of any loaded registration CSV — checkpointed as `b0d3209` (v3.25).
+Second, after `/ETCCCarShowTest` confirmed 77/77 with no coverage gaps for that report (it's
+UI/DOM code, out of scope for the Node suite), **two real bugs were found and fixed on the
+Registration and Summary tabs**: (1) the Registration tab's "In Car Show" checkbox was
+wrongly ANDed with the Status checkboxes, so unchecking all Status boxes made it show zero
+rows no matter what — it's now an independent filter; (2) the Summary tab was silently
+gated by the Registration tab's search box and Status/In Car Show checkboxes (by design,
+per an old comment), which the user decided was wrong — it now always reflects the full
+loaded dataset regardless of what's checked/searched over there. A Total row was also added
+to the Summary tab's Car Show generation table. Final full `/ETCCCarShowCheckpoint`, with an
+**explicit version reset to 4.0**: **`995bfe2`**, pushed to `origin/main`; live site is
+**v4.0** and reflects everything through that commit — this supersedes the intermediate
+`b0d3209`/v3.25 state mentioned above.
 
 Previous update: 2026-08-23 (end of session). **That session added multi-year car
 show support** — the app previously assumed exactly one event; it now holds a separate,
@@ -118,14 +126,79 @@ FTP deploy → commit → push):
   for next time (same one-ahead offset called out in earlier sessions — not a bug).
 - All 29 deploy files uploaded successfully on attempt 1; no errors.
 
+**`/ETCCCarShowTest` run** (later in the same session, user said "test the member
+report"): `node test/run-tests.js` — **77 passed, 0 failed**, no stale assertions, no
+real bugs. Member Report itself got **no runnable assertion** — `regression-tests.js`
+only exercises the pure `logic.js`/`excel.js` layer via Node (no DOM), and
+`memberReportRows()`/`printMemberReport()` are `app.js`/DOM code, the same category as
+autosave and payment modals that this file's header comment already documents as
+manual-check-only. Added one line to that manual-check list instead of a fake assertion.
+
+**Registration tab bug fix — "In Car Show" checkbox.** Reported via a screenshot showing
+"0 of 32 rows shown" with only "In Car Show" checked. Root cause: `visibleRows()`
+(`App/src/app.js`) ANDed `state.inCarShowFilter` with `state.statusFilter[...]` — a row
+had to pass *both* filters, so with every Status checkbox unchecked, `statusFilter[...]`
+was false for every row and "In Car Show" alone could never show anything. Fixed by
+making the checkboxes mutually exclusive gates rather than ANDed: when
+`state.inCarShowFilter` is checked, rows are filtered *only* by `In Car Show? === "Yes"`,
+completely bypassing the Status checkboxes; when it's unchecked, behavior is unchanged
+(Status-filtered as before).
+
+**Summary tab decoupled from Registration tab filters + Total row added.** Explicit
+request: "summary page: all data should not be gated by the registration checkboxes. add
+total line to car show." Two changes in `App/src/app.js`:
+- `buildSummaryView()` previously called `LOGIC.summarizeRecords(visibleRows(), CONFIG)` —
+  an intentional design from an earlier session (see the removed comment: "so this tab
+  always reflects what I've selected over there"), which the user has now explicitly
+  reversed. It now calls `LOGIC.summarizeRecords(allRegistrations(), CONFIG)` instead, so
+  Summary tab totals are **always the full loaded dataset** (CSV registrations + walk-ins),
+  regardless of the Registration tab's search box or Status/In Car Show checkboxes. The
+  "Registrations" meta line under the Summary tab's title was reworded to match (no longer
+  claims to reflect the Registration tab's filters).
+- `genMatrix()` (the "Car Show" panel's generation table, At Event/In Car Show columns)
+  gets a bottom **Total** row summing both columns across all generations — same
+  bold-footer-row visual pattern the shirt-size matrices elsewhere on this tab already use.
+- **Watch for this if a future session touches Summary tab math again**: it is now
+  deliberately unfiltered. If a future request says "summary doesn't match what I searched
+  for," that's expected behavior post-this-session, not a bug — the fix would be to
+  re-introduce filtering only if explicitly asked, not to assume the old behavior should
+  come back.
+
+**Final checkpoint this session** (after the two fixes above): one full
+`/ETCCCarShowCheckpoint` run, called with an explicit `V4.0` argument:
+- `App/version.json` was hand-edited from `{major:3, minor:28}` to `{major:4, minor:0}`
+  *before* building — same "manual major-version reset" pattern as the 2026-07-20
+  session's "change version to 3.0" (see that session's note below: if `version.json`'s
+  `minor` looks oddly low/high relative to git history, that's why — it's not always a
+  pure auto-increment).
+- `node build.js` stamped **v4.0** into the live footer, then auto-bumped `version.json`
+  to `{major:4, minor:1}` for next time, as usual.
+- `bash deploy/ftp-deploy.sh` — all 29 files uploaded successfully on attempt 1.
+- **`995bfe2`** — "Fix In Car Show filter, decouple Summary tab from filters, add totals
+  (v4.0)" (4 files: `App/src/app.js`, `App/src/regression-tests.js`, plus built
+  `App/ETCCCarShow.html`/`App/version.json`; 52 insertions / 18 deletions). Pushed to
+  `origin/main`, working tree clean.
+
 ## Known follow-ups / things a new session might need to know (2026-08-24 session)
 
-- **Nothing new is open from this session** — it was a single, self-contained,
-  low-risk feature addition (a new report reading existing, already-trusted
-  `state.members` data) with no data-model changes, no server-side changes, and no
-  interaction with the multi-year show work from the previous session. All prior
-  open items (below, under the 2026-08-23 and earlier sections) remain exactly as they
-  were — none were touched or resolved this session.
+- **Summary tab is now intentionally unfiltered** (see above) — if a future session is
+  asked to make it respect the Registration tab's filters again, confirm that's really
+  what's wanted before reverting; it was an explicit, deliberate reversal of the prior
+  design, not an oversight.
+- **No automated coverage for either bug fix.** The "In Car Show" checkbox fix and the
+  Summary-tab-unfiltering change are both `app.js`/DOM-level, same class of gap as the
+  Member Report and the autosave bug from the 2026-07-25 session — none of it is
+  reachable from the Node regression suite. If a future session is asked to expand
+  in-app manual-check coverage, these three are candidates.
+- **Live site is v4.0** as of this session (see top summary) — a future "bump the
+  version" request should use the normal auto-increment path from `version.json`'s
+  current minor (`1`), not be told "4.0" again (same caveat the 2026-07-20 session left
+  for its own manual "3.0" reset).
+- All prior open items from earlier sessions (multi-year show isolation not yet
+  human-verified, Bill Greene's row still needing a manual "Revert to CSV" click if that
+  hasn't happened yet, orphaned `sponsor-form.php`/`deleted-sponsors.php` files on the
+  live server, etc. — see the 2026-08-23/2026-07-25/2026-07-20 sections below) remain
+  exactly as they were; none were touched this session.
 
 ## This session's work (2026-08-23)
 
