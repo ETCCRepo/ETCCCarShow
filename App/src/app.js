@@ -1191,8 +1191,14 @@
     var cols = visibleColumns();
     var q = state.search.trim().toLowerCase();
     return sortedRows().filter(function (r) {
-      if (!state.statusFilter[classifyStatus(r["Status"])]) return false;
-      if (state.inCarShowFilter && String(r["In Car Show?"]).trim().toLowerCase() !== "yes") return false;
+      // "In Car Show" is its own independent filter, not ANDed with the
+      // Status checkboxes — checking it shows every In Car Show row
+      // regardless of which (if any) Status boxes are checked.
+      if (state.inCarShowFilter) {
+        if (String(r["In Car Show?"]).trim().toLowerCase() !== "yes") return false;
+      } else if (!state.statusFilter[classifyStatus(r["Status"])]) {
+        return false;
+      }
       if (!q) return true;
       return cols.some(function (c) {
         var v = c === SHIRTS_COL ? shirtSummaryText(r) : r[c];
@@ -1516,11 +1522,12 @@
   }
 
   // ---------- summary ----------
-  // Recomputed from whatever the Registration tab's search/status filters
-  // currently leave visible, rather than always the full loaded
-  // dataset — so this tab always reflects "what I've selected over there".
+  // Always computed from the full loaded dataset (allRegistrations()) —
+  // deliberately NOT gated by the Registration tab's search box or Status/
+  // In Car Show checkboxes, so this tab always reflects everything loaded,
+  // not just whatever happens to be checked/searched over there.
   function buildSummaryView() {
-    var s = LOGIC.summarizeRecords(visibleRows(), CONFIG);
+    var s = LOGIC.summarizeRecords(allRegistrations(), CONFIG);
     // Total Income = registrations' own Total Fee (s.funds, includes each
     // registrant's own Individual Sponsorship add-on fee, since that's part
     // of their registration) + Premier/Corporate sponsor fees (standalone
@@ -1543,7 +1550,7 @@
         li("Generated", fmtDate(m.generatedAt) + "  —  ", el("span", { class: statusCls, text: m.statusMessage })),
         li("Registration file", m.regFileName + "  (" + m.regRows + " rows)"),
         li("Activity file", m.actFileName ? m.actFileName + "  (" + m.actRows + " rows)" : "— none loaded —"),
-        li("Showing", s.registrations + " of " + allRegistrations().length + " registrations — matches the Registration tab's current search/status filters")
+        li("Registrations", String(s.registrations) + " — all loaded registrations, independent of the Registration tab's search/status filters")
       ])
     ]));
 
@@ -1848,6 +1855,14 @@
         el("td", { class: g.inCarShow ? "" : "z", text: String(g.inCarShow) })
       ]);
     });
+    var atEventTotal = s.gens.reduce(function (sum, g) { return sum + g.atEvent; }, 0);
+    var inCarShowTotal = s.gens.reduce(function (sum, g) { return sum + g.inCarShow; }, 0);
+    body.push(el("tr", {}, [
+      el("td", { class: "lbl", style: "font-weight:600", text: "Total" }),
+      el("td", {}),
+      el("td", { style: "font-weight:600", text: String(atEventTotal) }),
+      el("td", { style: "font-weight:600", text: String(inCarShowTotal) })
+    ]));
     return el("table", { class: "matrix" }, [el("thead", {}, [head]), el("tbody", {}, body)]);
   }
 

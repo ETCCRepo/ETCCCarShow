@@ -17,6 +17,8 @@
  * - Detail modal always-editable pattern
  * - Backfill default payments for individual sponsors ($100 Credit Card, regDate)
  * - Payment recording in Edit Sponsor modal
+ * - Member Report (Reports tab): rows sorted by Last Name, Reg # column shows
+ *   each member's Member Number, independent of any loaded registration CSV
  * This file covers logic layer and Excel export round-trip only.
  */
 (function (root) {
