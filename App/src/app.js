@@ -4328,11 +4328,13 @@
     summaryBtn.addEventListener("click", printSummaryReport);
     var regBtn = el("button", { class: "btn" }, ["📋 Registration Report"]);
     regBtn.addEventListener("click", printRegistrationReport);
+    var memberBtn = el("button", { class: "btn" }, ["👥 Member Report"]);
+    memberBtn.addEventListener("click", printMemberReport);
     var sponsorBtn = el("button", { class: "btn" }, ["🤝 Sponsor Report"]);
     sponsorBtn.addEventListener("click", printSponsorReport);
     var tshirtBtn = el("button", { class: "btn" }, ["👕 T-Shirt Report"]);
     tshirtBtn.addEventListener("click", printTshirtReport);
-    var buttonCol = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start" }, [summaryBtn, regBtn, sponsorBtn, tshirtBtn]);
+    var buttonCol = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start" }, [summaryBtn, regBtn, memberBtn, sponsorBtn, tshirtBtn]);
     var row = el("div", { class: "reports-row" }, []);
     if (window.__carshowReportsBanner) {
       row.appendChild(el("img", { src: window.__carshowReportsBanner, class: "reports-banner", alt: "Reports" }));
@@ -4388,6 +4390,39 @@
       ]);
     }));
     host.appendChild(buildPrintHeader("Registration Report"));
+    host.appendChild(el("table", { class: "grid report-table centered-report-table" }, [thead, tbody]));
+    host.appendChild(buildPrintFooter());
+    window.print();
+  }
+
+  // ---------- Member Report (print) ----------
+  // Last Name / First Name / Reg # for every club member on the roster
+  // (state.members, from Developer > Import Members) — independent of any
+  // loaded registration CSV, always sorted by Last Name. "Reg #" here is the
+  // member's own Member Number, same value used as "Reg #" elsewhere in the
+  // app for a member's registration.
+  function memberReportRows() {
+    return (state.members || []).slice().sort(function (a, b) {
+      var aLast = String(a.lastName || "").toLowerCase();
+      var bLast = String(b.lastName || "").toLowerCase();
+      return aLast < bLast ? -1 : aLast > bLast ? 1 : 0;
+    });
+  }
+
+  function printMemberReport() {
+    var host = $("#printHost");
+    host.innerHTML = "";
+    var thead = el("thead", {}, [el("tr", {}, [
+      el("th", { text: "Last Name" }), el("th", { text: "First Name" }), el("th", { text: "Reg #" })
+    ])]);
+    var tbody = el("tbody", {}, memberReportRows().map(function (m) {
+      return el("tr", {}, [
+        el("td", { text: m.lastName || "" }),
+        el("td", { text: m.firstName || "" }),
+        el("td", { text: m.memberNumber || "" })
+      ]);
+    }));
+    host.appendChild(buildPrintHeader("Member Report"));
     host.appendChild(el("table", { class: "grid report-table centered-report-table" }, [thead, tbody]));
     host.appendChild(buildPrintFooter());
     window.print();
