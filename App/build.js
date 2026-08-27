@@ -75,7 +75,13 @@ var html =
 '<html lang="en">\n<head>\n<meta charset="utf-8">\n' +
 '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
 '<title>ETCC Car Show — Registration</title>\n' +
-'<link rel="icon" type="image/png" href="' + logoDataUri + '">\n' +
+// Plain relative link to the deployed PNG (ftp-deploy.sh uploads it to the
+// site root as ETCClogoWhiteBackground.png) rather than an inlined base64
+// data URI — same technique SilentAuctionManager's index.html uses for its
+// favicon. The full-size logo as a ~26KB inline data URI worked for most
+// browsers but is unnecessarily heavy for a favicon; a real file request is
+// simpler and matches this club's other apps.
+'<link rel="icon" type="image/png" href="ETCClogoWhiteBackground.png">\n' +
 '<style>\n' + css + '\n</style>\n</head>\n<body>\n' +
 '<header class="app">\n' +
 '  <div class="hdr-left"><img src="' + logoDataUri + '" alt="ETCC Logo" class="hdr-logo"></div>\n' +

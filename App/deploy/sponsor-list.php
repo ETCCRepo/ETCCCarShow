@@ -38,6 +38,7 @@ usort($sponsors, function ($a, $b) {
 <head>
 <meta charset="utf-8">
 <title>Sponsor List</title>
+<link rel="icon" type="image/png" href="ETCClogoWhiteBackground.png">
 <style>
   body { font-family: system-ui, sans-serif; margin: 0; color: #1d1d1f; background: #e5e5ea; min-height: 100vh; padding: 32px 16px; box-sizing: border-box; }
   .card { max-width: 700px; margin: 0 auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.12); padding: 28px 32px; }
