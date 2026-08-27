@@ -1,6 +1,23 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-08-24 (end of session, latest). **This session had two parts.** First,
+Last updated: 2026-08-27 (end of session, latest). **This session fixed a favicon gap**:
+"update favicon to the etcc logo using the same technique as SilentAuctionManager" led to
+swapping `build.js`'s inlined ~26KB base64 favicon for a plain relative
+`<link rel="icon" href="ETCClogoWhiteBackground.png">` (same technique SAM's `index.html`
+uses) — but the user then screenshotted the **login screen** still showing a generic tab
+icon. Root cause: `_login.html` (the password screen `index.php` serves via `readfile()`
+*before* the main app-bundle ever loads) is a completely separate static file with its own
+`<head>`, so the `build.js` fix never reached it — it had never had a favicon link at all.
+Fixed `_login.html`, then proactively found (via `AskUserQuestion`, confirmed) and fixed the
+same gap on 5 more standalone pages, each with its own independent `<head>`:
+`member-sponsor-form.php`, `public-sponsor-form.php`, `sponsor-list.php`,
+`forgot-password.php`, `reset-password.php`. One full `/ETCCCarShowCheckpoint`:
+**`e27f2ee`**, pushed to `origin/main`; live site is **v4.3** and reflects everything
+through that commit. `/ETCCCarShowTest` was **not** run (not requested; nothing in this
+session touches `logic.js`/`excel.js`/`config.js`) — last known-good 77/77
+(2026-08-23 session, unaffected).
+
+Previous update: 2026-08-24 (end of session). **That session had two parts.** First,
 a small self-contained feature: a **Member Report** on the Reports tab, listing every club
 member on the imported roster (Last Name, First Name, Reg #/Member Number), sorted by last
 name, independent of any loaded registration CSV — checkpointed as `b0d3209` (v3.25).
@@ -84,6 +101,86 @@ unlinked — Claude's attempt to delete it via a one-off FTP `DELE` command was 
 the auto-mode safety classifier (deleting a live server file is treated as destructive),
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
+
+## This session's work (2026-08-27)
+
+**Favicon fix — login screen and 5 other standalone pages.** Reported request: "update
+favicon to the etcc logo using the same technique as `Z:\Backup\websites\SilentAuctionManager`."
+
+**1. Switched `build.js`'s favicon technique.** CarShow already had a favicon (added
+2026-08-08, commit `35f1fce`) — `App/build.js` inlined the full-size ETCC logo as a
+`data:image/png;base64,...` URI (the same `logoDataUri` var used for the header `<img>`)
+directly into a `<link rel="icon">` tag, ~26KB of base64 baked into every page load.
+Investigated how SilentAuctionManager does it (`Z:\Backup\Websites\SilentAuctionManager\index.html`):
+a plain `<link rel="icon" id="favicon-link" href="Images/ETCClogoWhiteBackground.png" />`
+pointing at a real, separately-hosted file — no inlining. Since `ftp-deploy.sh` already
+uploads `ETCClogoWhiteBackground.png` to the CarShow deploy root (same directory as
+`index.php`), switched `build.js`'s favicon `<link>` to the same plain relative-path
+technique: `href="ETCClogoWhiteBackground.png"`. Shed ~25KB from the built bundle
+(1954KB → 1929KB) as a side effect. **Note**: unlike SAM, CarShow's favicon is static —
+SAM's is dynamically swappable per-club via `updateFavicon()`/Settings; CarShow has no such
+per-club branding concept, so only the technique (relative link to a real file) was
+borrowed, not the dynamic-swap machinery.
+
+**2. Found the real remaining bug via a user screenshot.** After deploying #1, the user
+screenshotted the **login/password screen** (`_login.html`) still showing a generic browser
+tab icon, not the ETCC logo. Root cause: `_login.html` is a **separate static file**,
+`readfile()`'d directly by `index.php` ([index.php:57](App/deploy/index.php:57)) whenever
+`$_SESSION['carshow_authenticated']` is empty — it is served *before* the main
+`app-bundle.html` (built by `build.js`) ever loads, has its own independent `<head>`, and
+**had never had a favicon link of any kind**. Fixing `build.js` alone could never reach
+this file. **Watch for this pattern in any future "X isn't showing up on page Y" report**:
+this app has several pages served as raw static/standalone files with their own `<head>`,
+completely outside `build.js`'s pipeline — a `build.js` fix only reaches `app-bundle.html`.
+
+**3. Proactively found + fixed the same gap on 5 more pages.** Grepped every file in
+`App/deploy/` for `<title>` without a matching `rel="icon"`, surfaced 10 candidates, and
+used `AskUserQuestion` to ask before expanding scope rather than silently fixing all 10 —
+the user confirmed fixing the 5 genuinely public-facing ones (declined implicitly by not
+listing: `dev-forgot-password.php`, `dev-reset-password.php`, `members-import.php`,
+`registrations-import.php`, `_data.html` — internal/admin-only tools or an apparently-unused
+legacy file, left untouched). Fixed, all with the identical one-line
+`<link rel="icon" type="image/png" href="ETCClogoWhiteBackground.png">` inserted right
+after each page's `<title>`:
+- `App/deploy/_login.html` (the actual reported bug)
+- `App/deploy/member-sponsor-form.php`
+- `App/deploy/public-sponsor-form.php`
+- `App/deploy/sponsor-list.php`
+- `App/deploy/forgot-password.php`
+- `App/deploy/reset-password.php`
+
+**Checkpoint this session**: one full `/ETCCCarShowCheckpoint` run (build/version bump →
+FTP deploy → commit → push):
+- `e27f2ee` — "Fix favicon on login screen and other standalone pages" (9 files:
+  `App/build.js` + the 6 pages above, plus built `App/ETCCCarShow.html`/`App/version.json`;
+  17 insertions / 5 deletions). Pushed to `origin/main`, working tree clean.
+- `version.json` was at minor `2` going in; this build stamped **v4.3** into the live
+  footer and left `version.json` at minor `4` for next time (usual one-ahead offset).
+- All 29 deploy files uploaded successfully on attempt 1; no errors.
+
+**Tests**: `/ETCCCarShowTest` was **not** run this session — not requested, and nothing
+touched (favicon `<link>` tags in static HTML/PHP `<head>`s) is reachable from or relevant
+to the Node regression suite, which only covers `logic.js`/`excel.js`/`config.js`. Last
+known-good baseline remains 77/77 (2026-08-23 session).
+
+## Known follow-ups / things a new session might need to know (2026-08-27 session)
+
+- **5 pages were deliberately left without a favicon fix**: `dev-forgot-password.php`,
+  `dev-reset-password.php`, `members-import.php`, `registrations-import.php` (all
+  internal/Developer-only tools, unlikely to matter) and `_data.html` (appears to be an
+  unused legacy file — not investigated further, not part of `ftp-deploy.sh`'s upload
+  list, so it may not even be reachable live). If a future session is asked to do a
+  complete favicon sweep, these 5 are the remaining candidates — the same one-line
+  `<link rel="icon" type="image/png" href="ETCClogoWhiteBackground.png">` pattern applies.
+- **No automated coverage for any of this** — favicon `<link>` tags in static
+  HTML/PHP `<head>`s are entirely outside what the Node regression suite can exercise
+  (same class of gap as the UI/DOM items called out in the 2026-08-24 and 2026-07-25
+  sections below).
+- All prior open items from earlier sessions (multi-year show isolation not yet
+  human-verified, Bill Greene's row still needing a manual "Revert to CSV" click if that
+  hasn't happened yet, orphaned `sponsor-form.php`/`deleted-sponsors.php` files on the
+  live server, etc. — see the 2026-08-24/2026-08-23/2026-07-25/2026-07-20 sections below)
+  remain exactly as they were; none were touched this session.
 
 ## This session's work (2026-08-24)
 
