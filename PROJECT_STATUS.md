@@ -1,6 +1,23 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-08-27 (end of session, latest). **This session fixed a favicon gap**:
+Last updated: 2026-08-28 (end of session, latest). **This session closed out the favicon
+work from the previous day.** The user reported "the favicon for this website does not
+appear on my iphone or ipad" — the fix from the 2026-08-27 session (a plain
+`<link rel="icon">`) is mostly ignored by iOS Safari, which specifically wants an
+`apple-touch-icon` link for both tab display and "Add to Home Screen." Added
+`<link rel="apple-touch-icon" href="ETCClogoWhiteBackground.png">` (same file, no new
+asset) alongside the existing favicon link on all 7 pages that got one the day before:
+`build.js`'s app-bundle output, `_login.html`, `member-sponsor-form.php`,
+`public-sponsor-form.php`, `sponsor-list.php`, `forgot-password.php`, `reset-password.php`.
+One full `/ETCCCarShowCheckpoint`: **`cf08f63`**, pushed to `origin/main`; live site is
+**v4.5** and reflects everything through that commit. `/ETCCCarShowTest` was **not** run
+(not requested; favicon `<link>` tags aren't reachable from the Node suite) — last
+known-good 77/77 (2026-08-23 session, unaffected). **One open caveat, not yet resolved**:
+`ETCClogoWhiteBackground.png` is **150×116px, not square** — iOS may letterbox or crop it
+when used as a home-screen icon; this was flagged to the user but not fixed (would need a
+purpose-made square icon asset). See "Known follow-ups" below.
+
+Previous update: 2026-08-27 (end of session). **That session fixed a favicon gap**:
 "update favicon to the etcc logo using the same technique as SilentAuctionManager" led to
 swapping `build.js`'s inlined ~26KB base64 favicon for a plain relative
 `<link rel="icon" href="ETCClogoWhiteBackground.png">` (same technique SAM's `index.html`
@@ -101,6 +118,77 @@ unlinked — Claude's attempt to delete it via a one-off FTP `DELE` command was 
 the auto-mode safety classifier (deleting a live server file is treated as destructive),
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
+
+## This session's work (2026-08-28)
+
+**Favicon still not showing — this time on iOS/iPadOS specifically.** Direct continuation
+of the 2026-08-27 favicon session: "The favicon for this website does not appear on my
+iphone or ipad." The previous day's fix (`<link rel="icon" href="ETCClogoWhiteBackground.png">`
+on 7 pages) works in desktop/Android browsers, but **iOS Safari largely ignores a plain
+`rel="icon"` link** — it looks for `rel="apple-touch-icon"` specifically, both for showing
+an icon in its own UI and, more importantly, for the icon used when a user does
+"Add to Home Screen." None of the 7 pages had one.
+
+- **Fix**: added `<link rel="apple-touch-icon" href="ETCClogoWhiteBackground.png">`
+  immediately after the existing `<link rel="icon">` on every page that has one — same
+  file already deployed at the site root, no new asset needed:
+  - `App/build.js` (feeds the main app-bundle via `node build.js`)
+  - `App/deploy/_login.html`
+  - `App/deploy/member-sponsor-form.php`
+  - `App/deploy/public-sponsor-form.php`
+  - `App/deploy/sponsor-list.php`
+  - `App/deploy/forgot-password.php`
+  - `App/deploy/reset-password.php`
+- **Known limitation, flagged but not fixed**: `App/assets/ETCClogoWhiteBackground.png` is
+  **150×116px** (confirmed by reading its PNG `IHDR` chunk directly in Node — width at byte
+  offset 16, height at offset 20), **not square**. Apple's `apple-touch-icon` convention
+  expects a square image (commonly 180×180); iOS will likely letterbox or crop a non-square
+  source when generating the home-screen icon. This was told to the user explicitly at the
+  time of the fix but left as-is — **if iOS home-screen icons still look wrong (cropped
+  logo, visible padding) after this fix, the next step is producing a proper square version
+  of the logo**, not another `<link>` tag change.
+- **Watch for this pattern generally**: this app now has two icon-related traps discovered
+  across two sessions — (1) pages with their own standalone `<head>` don't inherit
+  `build.js`'s favicon fix (2026-08-27 session), and (2) a `rel="icon"` link alone doesn't
+  satisfy iOS, which needs `rel="apple-touch-icon"` too (this session). Any *third* favicon
+  complaint should be checked against **both** traps before assuming a new bug.
+
+**Checkpoint this session**: one full `/ETCCCarShowCheckpoint` run (build/version bump →
+FTP deploy → commit → push):
+- `cf08f63` — "Add apple-touch-icon so favicon shows on iOS/iPadOS" (9 files: `App/build.js`
+  + the 6 pages above, plus built `App/ETCCCarShow.html`/`App/version.json`;
+  14 insertions / 3 deletions). Pushed to `origin/main`, working tree clean.
+- `version.json` was at minor `4` going in; this build stamped **v4.5** into the live
+  footer and left `version.json` at minor `6` for next time (usual one-ahead offset).
+- All 29 deploy files uploaded successfully on attempt 1; no errors.
+
+**Tests**: `/ETCCCarShowTest` was **not** run this session — not requested, and favicon
+`<link>` tags in static `<head>`s are entirely outside what the Node regression suite
+(`logic.js`/`excel.js`/`config.js` only) can exercise. Last known-good baseline remains
+77/77 (2026-08-23 session).
+
+## Known follow-ups / things a new session might need to know (2026-08-28 session)
+
+- **The logo image is not square (150×116px)** and is now used as an `apple-touch-icon`,
+  which Apple's convention expects to be square. If a future session gets a report that
+  the iOS home-screen icon looks cropped, stretched, or has visible padding/letterboxing,
+  this is the likely cause — the fix would be producing (or requesting from the club) a
+  proper square version of `App/assets/ETCClogoWhiteBackground.png` (or a dedicated
+  180×180 icon asset), then pointing the `apple-touch-icon` links at that instead of
+  reusing the header-logo file.
+- **Unconfirmed whether the apple-touch-icon fix actually resolved the user's iPhone/iPad
+  report** — this was deployed at the end of the session; no live device confirmation
+  from the user yet. If a new session opens with "still not showing on my phone," check
+  whether it's actually the tab icon (Safari is inconsistent about showing regular
+  favicons in tabs at all, which may just be normal iOS behavior, not fixable) versus the
+  home-screen bookmark icon (what apple-touch-icon actually controls) — clarify which one
+  is meant before changing anything further.
+- All prior open items from earlier sessions (multi-year show isolation not yet
+  human-verified, Bill Greene's row still needing a manual "Revert to CSV" click if that
+  hasn't happened yet, orphaned `sponsor-form.php`/`deleted-sponsors.php` files on the
+  live server, 5 internal pages still without any favicon link at all, etc. — see the
+  2026-08-27/2026-08-24/2026-08-23/2026-07-25/2026-07-20 sections below) remain exactly
+  as they were; none were touched this session.
 
 ## This session's work (2026-08-27)
 
