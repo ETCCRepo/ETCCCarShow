@@ -82,6 +82,10 @@ var html =
 // browsers but is unnecessarily heavy for a favicon; a real file request is
 // simpler and matches this club's other apps.
 '<link rel="icon" type="image/png" href="ETCClogoWhiteBackground.png">\n' +
+// iOS Safari ignores a plain <link rel="icon"> for "Add to Home Screen" (and
+// is inconsistent about showing it in the tab bar at all) — it specifically
+// wants apple-touch-icon. Same file, no separate asset needed.
+'<link rel="apple-touch-icon" href="ETCClogoWhiteBackground.png">\n' +
 '<style>\n' + css + '\n</style>\n</head>\n<body>\n' +
 '<header class="app">\n' +
 '  <div class="hdr-left"><img src="' + logoDataUri + '" alt="ETCC Logo" class="hdr-logo"></div>\n' +
