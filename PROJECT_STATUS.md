@@ -1,6 +1,26 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-08-28 (end of session, latest). **This session closed out the favicon
+Last updated: 2026-09-06 (end of session, latest). **This session confirmed the favicon
+fix from 2026-08-28 actually works** (the user checked on their iPhone/iPad and reported
+"favicon fixed" — the open caveat about the non-square logo source did not turn out to be
+a real problem), then changed how sponsor totals are calculated. The user asked "how is
+premier sponsors total calculated" — the answer was `count of Premier sponsors × $250`
+(a flat-rate estimate, `sponsorStatsByType()` in `App/src/app.js`), completely ignoring
+whether a payment was actually recorded. After being shown the tradeoff via
+`AskUserQuestion` (flat-rate estimate vs. actual payments vs. a hybrid), the user chose
+**actual payments for all sponsor types** — Premier, Corporate, and Individual sponsor
+totals (on the Summary tab's Sponsors cards and in Total Income) now sum each sponsor's
+real last-recorded payment amount instead of assuming everyone paid the standard fee.
+**Behavior change to know about**: a sponsor with no payment entered yet in the Payment
+modal now contributes **$0** to their type's total (and to Total Income) instead of the
+assumed $250/$100 — this is intentional, not a regression, and officers should expect
+Premier/Corporate totals to look lower than before until payments are actually recorded.
+One full `/ETCCCarShowCheckpoint`: **`8f8888b`**, pushed to `origin/main`; live site is
+**v4.7** and reflects everything through that commit. `/ETCCCarShowTest` was **not** run
+(not requested) — last known-good 77/77 (2026-08-23 session; this session's change is
+`app.js`/UI-layer sponsor-total math, not reachable from the Node suite either way).
+
+Previous update: 2026-08-28 (end of session). **That session closed out the favicon
 work from the previous day.** The user reported "the favicon for this website does not
 appear on my iphone or ipad" — the fix from the 2026-08-27 session (a plain
 `<link rel="icon">`) is mostly ignored by iOS Safari, which specifically wants an
@@ -118,6 +138,84 @@ unlinked — Claude's attempt to delete it via a one-off FTP `DELE` command was 
 the auto-mode safety classifier (deleting a live server file is treated as destructive),
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
+
+## This session's work (2026-09-06)
+
+**1. Favicon fix confirmed working.** The user checked their iPhone/iPad directly and
+reported "favicon fixed" — the `apple-touch-icon` addition from the 2026-08-28 session
+resolved it. The non-square-logo caveat flagged that session (150×116px source used as
+a square `apple-touch-icon`) did **not** turn out to cause a visible problem in practice —
+no further action needed there unless a future report says otherwise.
+
+**2. Sponsor totals changed from a flat-rate estimate to actual recorded payments.**
+User asked "how is premier sponsors total calculated" — investigation found
+`sponsorStatsByType()` (`App/src/app.js`) computed `total: matches.length * typeCfg.fee`,
+i.e. **every** sponsor of a type was assumed to have paid exactly the standard rate
+($250 Premier, $100 Corporate/Individual), regardless of whether a payment was ever
+actually recorded in the Payment modal. This total feeds both the Sponsors summary cards
+on the Summary tab and the Total Income calculation (`sponsorFunds = premier.total +
+corporate.total` — Individual is deliberately excluded there since it's already counted
+via the registrant's own Total Fee, unaffected by this change).
+
+- **Presented the tradeoff via `AskUserQuestion`** rather than picking one unilaterally,
+  since it changes financial reporting: flat-rate estimate (always shows the "expected"
+  total, but ignores discounts/no-payment-yet), actual payments (accurate once entered,
+  but a not-yet-paid sponsor shows $0 and can make Total Income look artificially low),
+  or a hybrid (actual if recorded, fall back to standard fee otherwise). **User chose:
+  actual payments, for all three sponsor types** — an explicit, deliberate choice to
+  accept lower-looking totals in exchange for accuracy.
+- **Implementation**: `sponsorStatsByType()`'s `total` now sums
+  `getLastPaymentForSponsor(s.id).amount` across every matching sponsor (falling back to 0
+  when no payment exists) instead of `matches.length * fee`. This reuses the exact same
+  `getLastPaymentForSponsor()` helper the Sponsors table's own "Paid" column already
+  displays per-row, so the type-level total is now guaranteed consistent with what's shown
+  per sponsor — previously the two could disagree (e.g. a Premier sponsor who actually
+  paid $200 showed "$200" in their own row but was still counted as "$250" in the card
+  total).
+- **Individual sponsors are effectively unaffected in the common case** — they get a
+  $100 payment auto-created by `backfillPaymentDefaults()` the moment they're synced from
+  a CSV registration, so summing actual payments still yields $100 each unless an officer
+  manually edits that default (discount, refund, etc.), in which case the total now
+  correctly reflects the edit instead of silently overriding it back to $100.
+- **Watch for this if a future report is "Total Income looks too low" or "Premier total
+  doesn't match how many sponsors we have"**: that's expected post-this-session behavior,
+  not a bug — check whether every Premier/Corporate sponsor actually has a payment
+  recorded (Sponsors tab → "Paid" column; a "Mark Paid…" button appears for anyone with
+  no payment or a $0 one) before assuming something broke. Don't revert to the flat-rate
+  estimate without confirming that's really what's wanted — this was an explicit, informed
+  reversal of the original design.
+
+**Checkpoint this session**: one full `/ETCCCarShowCheckpoint` run (build/version bump →
+FTP deploy → commit → push):
+- `8f8888b` — "Sponsor totals now use actual recorded payments, not the flat rate"
+  (3 files: `App/src/app.js`, plus built `App/ETCCCarShow.html`/`App/version.json`;
+  23 insertions / 5 deletions). Pushed to `origin/main`, working tree clean.
+- `version.json` was at minor `6` going in; this build stamped **v4.7** into the live
+  footer and left `version.json` at minor `8` for next time (usual one-ahead offset).
+- All 29 deploy files uploaded successfully on attempt 1; no errors.
+
+**Tests**: `/ETCCCarShowTest` was **not** run this session — not requested, and the
+sponsor-total change lives entirely in `app.js`'s UI/state layer (`state.sponsors`,
+`state.payments`), which the Node regression suite (`logic.js`/`excel.js`/`config.js`
+only) cannot exercise regardless. Last known-good baseline remains 77/77
+(2026-08-23 session).
+
+## Known follow-ups / things a new session might need to know (2026-09-06 session)
+
+- **Premier/Corporate totals will look lower than before for any sponsor without a
+  recorded payment.** This is intentional (see above), but if officers who are used to
+  the old flat-rate totals ask "why did the sponsor total drop," point them at the
+  Sponsors tab's "Paid" column / "Mark Paid…" button rather than assuming a bug — the fix
+  is recording the actual payment, not reverting the calculation.
+- **The favicon work from 2026-08-27/2026-08-28 is now fully closed** — confirmed working
+  on a real iPhone/iPad, no further action needed. (Superseded: the 2026-08-28 section's
+  "unconfirmed" and "if it looks cropped" caveats below no longer apply.)
+- All prior open items from earlier sessions (multi-year show isolation not yet
+  human-verified, Bill Greene's row still needing a manual "Revert to CSV" click if that
+  hasn't happened yet, orphaned `sponsor-form.php`/`deleted-sponsors.php` files on the
+  live server, 5 internal pages still without any favicon link at all, etc. — see the
+  2026-08-28/2026-08-27/2026-08-24/2026-08-23/2026-07-25/2026-07-20 sections below) remain
+  exactly as they were; none were touched this session.
 
 ## This session's work (2026-08-28)
 
