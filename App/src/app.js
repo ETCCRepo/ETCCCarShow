@@ -1906,10 +1906,19 @@
       if (!info || !sizeCounts[info.sizeKey]) return;
       if (info.gender === "Men's") sizeCounts[info.sizeKey].mens++; else sizeCounts[info.sizeKey].womens++;
     });
+    // Sum each sponsor's actual last-recorded payment (same value the
+    // Sponsors table's own "Paid" column shows via getLastPaymentForSponsor)
+    // rather than assuming every sponsor of this type paid the standard fee —
+    // a sponsor with no payment recorded yet, a partial payment, or a
+    // discounted amount is reflected exactly as entered instead of estimated.
+    var total = matches.reduce(function (sum, s) {
+      var payment = getLastPaymentForSponsor(s.id);
+      return sum + (payment ? Number(payment.amount) || 0 : 0);
+    }, 0);
     return {
       label: typeCfg ? typeCfg.label.replace(/\s*\(\$[\d,]+\)\s*$/, "") : typeKey,
       count: matches.length,
-      total: matches.length * (typeCfg ? typeCfg.fee : 0),
+      total: total,
       sizeCounts: sizeCounts
     };
   }
