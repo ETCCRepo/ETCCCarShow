@@ -19,6 +19,11 @@
  * - Payment recording in Edit Sponsor modal
  * - Member Report (Reports tab): rows sorted by Last Name, Reg # column shows
  *   each member's Member Number, independent of any loaded registration CSV
+ * - ensureDashNumbers()/printSelectedWindowCards()/downloadTallySheetForShow()
+ *   (app.js): the DOM/fetch-dependent wiring around Dash # assignment and
+ *   the Tally Sheet download button — the pure numbering math they call
+ *   (LOGIC.dashNumberBase/nextDashNumber) and the workbook shape it produces
+ *   (excel.js's buildTallySheet()) ARE covered below.
  * This file covers logic layer and Excel export round-trip only.
  */
 (function (root) {
@@ -106,6 +111,8 @@
     manualRegistrationAssertions(results);
     pickLatestPaymentAssertions(results);
     multiShowAssertions(results);
+    ownerDisplayNameAssertions(results);
+    dashNumberAssertions(results);
 
     return { out: out, results: results };
   }
@@ -226,6 +233,60 @@
       "CONFIG.title carries no hardcoded year (it's a fallback; ingestShows sets the real one)");
   }
 
+  // LOGIC.ownerDisplayName() — the Owner column on the Judging Tally Sheet
+  // (excel.js's buildTallySheet()). "First & Spouse Last", distinct from
+  // sponsorshipDefaultText()'s "First and Spouse Last" (that one feeds a
+  // stored, user-editable field; this one is display-only and uses "&" to
+  // match the club's existing paper tally sheet's own convention).
+  function ownerDisplayNameAssertions(results) {
+    var name = LOGIC.ownerDisplayName;
+    eq(results, name({ "First Name": "John", "Last Name": "Doe" }), "John Doe",
+      "ownerDisplayName: First Last with no spouse");
+    eq(results, name({ "First Name": "John", "Spouse First Name": "Jane", "Last Name": "Doe" }), "John & Jane Doe",
+      "ownerDisplayName: First & Spouse Last when a spouse is present");
+    eq(results, name({ "First Name": "  John  ", "Last Name": "  Doe  " }), "John Doe",
+      "ownerDisplayName: surrounding whitespace is trimmed");
+    eq(results, name({ "Last Name": "Doe" }), "Doe",
+      "ownerDisplayName: blank First Name doesn't leave a stray leading space");
+  }
+
+  // LOGIC.dashNumberBase()/nextDashNumber() — the judging-day Dash #
+  // numbering app.js's ensureDashNumbers() calls per car (see that
+  // function's own comment for the full rationale). One block of 100 per
+  // generation, C1=100s ... C8=800s, and — the part most worth pinning
+  // down — a number already assigned anywhere in a generation's block is
+  // never handed out again, even to a caller that only sees a PARTIAL view
+  // of who else has a number (ensureDashNumbers()'s whole reason for
+  // recomputing from the full map every time instead of trusting a
+  // precomputed watermark).
+  function dashNumberAssertions(results) {
+    var gens = CONFIG.corvetteGenerations;
+    eq(results, LOGIC.dashNumberBase("C1", gens), 100, "dashNumberBase: C1 -> 100");
+    eq(results, LOGIC.dashNumberBase("C2", gens), 200, "dashNumberBase: C2 -> 200");
+    eq(results, LOGIC.dashNumberBase("C8", gens), 800, "dashNumberBase: C8 -> 800");
+    eq(results, LOGIC.dashNumberBase("", gens), null, "dashNumberBase: blank Gen -> null");
+    eq(results, LOGIC.dashNumberBase("C9", gens), null, "dashNumberBase: unrecognized Gen -> null");
+
+    eq(results, LOGIC.nextDashNumber("C1", {}, gens), 100,
+      "nextDashNumber: first car in an empty generation gets the base number");
+    eq(results, LOGIC.nextDashNumber("C1", { a: 100, b: 101 }, gens), 102,
+      "nextDashNumber: continues after the highest already assigned in that block");
+    eq(results, LOGIC.nextDashNumber("C2", { a: 100, b: 101 }, gens), 200,
+      "nextDashNumber: a different generation's numbers don't affect this one");
+    // The scenario ensureDashNumbers() is built specifically to avoid: a
+    // caller only sees SOME of the assigned numbers (a partial reprint
+    // batch), but the function is handed the FULL map, so it must not
+    // repeat "a" (100) even though "b" isn't in view here.
+    eq(results, LOGIC.nextDashNumber("C1", { a: 100 }, gens), 101,
+      "nextDashNumber: never reuses a number already assigned, even from a caller with a partial view");
+    // A car removed after its number was printed leaves a gap on purpose —
+    // the next assignment continues past the gap rather than filling it.
+    eq(results, LOGIC.nextDashNumber("C1", { a: 100, c: 105 }, gens), 106,
+      "nextDashNumber: a gap in already-assigned numbers is not backfilled");
+    eq(results, LOGIC.nextDashNumber("", { a: 100 }, gens), null,
+      "nextDashNumber: blank Gen returns null rather than guessing a block");
+  }
+
   // Excel export round-trip (build a workbook, reload it, check shape).
   function excelAssertionList(out, ExcelJS) {
     var results = [];
@@ -251,6 +312,52 @@
       eq(results, sawMoney, true, "Total Fee column has $ number format");
       var shirtColsInExcel = out.shirtColumns.filter(function (c) { return out.columns.indexOf(c) !== -1; });
       eq(results, shirtColsInExcel.length, 24, "Excel export still has all 24 shirt columns");
+      return tallySheetAssertionList(ExcelJS);
+    }).then(function (tallyResults) {
+      return results.concat(tallyResults);
+    });
+  }
+
+  // Judging Tally Sheet round-trip (excel.js's buildTallySheet()) — two cars
+  // in C1 (to exercise the "Car Class only on the block's first row"
+  // layout) and no cars at all in C2 (to exercise the "still print the
+  // header + a blank Dash # range" branch for a generation with zero
+  // entrants), against real CONFIG.corvetteGenerations so a config change
+  // (e.g. adding a C9) would be reflected here too.
+  function tallySheetAssertionList(ExcelJS) {
+    var results = [];
+    var cars = [
+      { gen: "C1", dashNumber: 100, owner: "John & Jane Doe", year: "1962", color: "Silver" },
+      { gen: "C1", dashNumber: 101, owner: "Bob Smith", year: "1961", color: "Red" }
+    ];
+    var meta = { title: "Test Car Show", generatedAt: new Date("2026-09-08T12:00:00Z"), generations: CONFIG.corvetteGenerations };
+    return Promise.resolve().then(function () {
+      var wb = EXCEL.buildTallySheet(ExcelJS, cars, meta);
+      return wb.xlsx.writeBuffer();
+    }).then(function (buf) {
+      var wb2 = new ExcelJS.Workbook();
+      return wb2.xlsx.load(buf).then(function () { return wb2; });
+    }).then(function (wb2) {
+      var ws = wb2.getWorksheet("TallySheet");
+      eq(results, !!ws, true, "TallySheet: worksheet exists");
+      eq(results, ws.getCell(2, 1).value, "Car Class", "TallySheet: header row has Car Class");
+      eq(results, ws.getCell(2, 2).value, "Dash #", "TallySheet: header row has Dash #");
+      eq(results, ws.getCell(2, 5).value, "Owner", "TallySheet: header row has Owner");
+      // C1's two real cars, rows 3-4.
+      eq(results, ws.getCell(3, 1).value, "C1", "TallySheet: first C1 row carries the Car Class label");
+      eq(results, ws.getCell(3, 2).value, 100, "TallySheet: first car's Dash # is 100");
+      eq(results, ws.getCell(3, 5).value, "John & Jane Doe", "TallySheet: first car's Owner");
+      eq(results, ws.getCell(4, 1).value, null, "TallySheet: second C1 row leaves Car Class blank");
+      eq(results, ws.getCell(4, 2).value, 101, "TallySheet: second car's Dash # is 101");
+      // 3 buffer rows continue right after the highest assigned number (101).
+      eq(results, ws.getCell(5, 2).value, 102, "TallySheet: buffer row continues after the last real car");
+      eq(results, ws.getCell(6, 2).value, 103, "TallySheet: second buffer row");
+      eq(results, ws.getCell(7, 2).value, 104, "TallySheet: third buffer row");
+      // One blank separator row (row 8), then C2's header — no real cars, so
+      // it's still printed with its own base number and buffer range.
+      eq(results, ws.getCell(9, 1).value, "C2", "TallySheet: an empty generation still gets its header row");
+      eq(results, ws.getCell(9, 2).value, 200, "TallySheet: empty generation's header row uses its base number");
+      eq(results, ws.getCell(9, 5).value, null, "TallySheet: empty generation's header row has no Owner");
       return results;
     });
   }

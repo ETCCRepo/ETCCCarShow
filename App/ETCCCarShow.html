@@ -421,7 +421,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div>v4.9 &middot; Deployed 09/08/2026 09:43 AM</div>
+  <div>v4.10 &middot; Deployed 09/08/2026 09:52 AM</div>
   <div class="footer-credit">Website by Business Web Express &middot; <a href="mailto:info@businesswebexpress.com">info@businesswebexpress.com</a></div>
   <div class="footer-credit">&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
@@ -796,6 +796,41 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (year >= g.from && year <= g.to) return g.gen;
     }
     return "";
+  }
+
+  // Judging-day Dash # numbering (see app.js's ensureDashNumbers(), which
+  // calls this once per car). One block of 100 numbers per generation, in
+  // CONFIG.corvetteGenerations' own order — C1 -> 100, C2 -> 200, ... C8 ->
+  // 800 — matching the club's paper Tally Sheet template. Returns null for
+  // an unrecognized/blank Gen (e.g. a row with no Year yet) rather than
+  // guessing a bucket for it.
+  function dashNumberBase(gen, generations) {
+    generations = generations || CONFIG.corvetteGenerations;
+    for (var i = 0; i < generations.length; i++) {
+      if (generations[i].gen === gen) return (i + 1) * 100;
+    }
+    return null;
+  }
+
+  // The next unused number in `gen`'s block, given every number already
+  // assigned anywhere (dashNumbers: { anyKey: number, ... } — a full
+  // rowKey->number map, or any object whose values are the assigned
+  // numbers). Deliberately scans ALL of dashNumbers rather than trusting a
+  // precomputed "highest so far", so a caller working through a partial
+  // batch (e.g. reprinting 3 of 150 cars) can never hand out a number that
+  // collides with a car outside that batch which already has one. Once a
+  // number is taken it's never reused even if that car is later removed —
+  // the resulting gap is expected (that number may already be printed on a
+  // physical window card).
+  function nextDashNumber(gen, dashNumbers, generations) {
+    var base = dashNumberBase(gen, generations);
+    if (base == null) return null;
+    var highest = base - 1;
+    Object.keys(dashNumbers || {}).forEach(function (key) {
+      var n = dashNumbers[key];
+      if (n >= base && n < base + 100 && n > highest) highest = n;
+    });
+    return highest + 1;
   }
 
   function hasColumn(rows, name) {
@@ -1175,7 +1210,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return name ? name + " Registration List" : CONFIG.title;
   }
 
-  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName };
+  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName, dashNumberBase: dashNumberBase, nextDashNumber: nextDashNumber };
   root.CarShowLogic = API;
   if (typeof module !== "undefined" && module.exports) module.exports = API;
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -1470,6 +1505,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
  * - Payment recording in Edit Sponsor modal
  * - Member Report (Reports tab): rows sorted by Last Name, Reg # column shows
  *   each member's Member Number, independent of any loaded registration CSV
+ * - ensureDashNumbers()/printSelectedWindowCards()/downloadTallySheetForShow()
+ *   (app.js): the DOM/fetch-dependent wiring around Dash # assignment and
+ *   the Tally Sheet download button — the pure numbering math they call
+ *   (LOGIC.dashNumberBase/nextDashNumber) and the workbook shape it produces
+ *   (excel.js's buildTallySheet()) ARE covered below.
  * This file covers logic layer and Excel export round-trip only.
  */
 (function (root) {
@@ -1557,6 +1597,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     manualRegistrationAssertions(results);
     pickLatestPaymentAssertions(results);
     multiShowAssertions(results);
+    ownerDisplayNameAssertions(results);
+    dashNumberAssertions(results);
 
     return { out: out, results: results };
   }
@@ -1677,6 +1719,60 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       "CONFIG.title carries no hardcoded year (it's a fallback; ingestShows sets the real one)");
   }
 
+  // LOGIC.ownerDisplayName() — the Owner column on the Judging Tally Sheet
+  // (excel.js's buildTallySheet()). "First & Spouse Last", distinct from
+  // sponsorshipDefaultText()'s "First and Spouse Last" (that one feeds a
+  // stored, user-editable field; this one is display-only and uses "&" to
+  // match the club's existing paper tally sheet's own convention).
+  function ownerDisplayNameAssertions(results) {
+    var name = LOGIC.ownerDisplayName;
+    eq(results, name({ "First Name": "John", "Last Name": "Doe" }), "John Doe",
+      "ownerDisplayName: First Last with no spouse");
+    eq(results, name({ "First Name": "John", "Spouse First Name": "Jane", "Last Name": "Doe" }), "John & Jane Doe",
+      "ownerDisplayName: First & Spouse Last when a spouse is present");
+    eq(results, name({ "First Name": "  John  ", "Last Name": "  Doe  " }), "John Doe",
+      "ownerDisplayName: surrounding whitespace is trimmed");
+    eq(results, name({ "Last Name": "Doe" }), "Doe",
+      "ownerDisplayName: blank First Name doesn't leave a stray leading space");
+  }
+
+  // LOGIC.dashNumberBase()/nextDashNumber() — the judging-day Dash #
+  // numbering app.js's ensureDashNumbers() calls per car (see that
+  // function's own comment for the full rationale). One block of 100 per
+  // generation, C1=100s ... C8=800s, and — the part most worth pinning
+  // down — a number already assigned anywhere in a generation's block is
+  // never handed out again, even to a caller that only sees a PARTIAL view
+  // of who else has a number (ensureDashNumbers()'s whole reason for
+  // recomputing from the full map every time instead of trusting a
+  // precomputed watermark).
+  function dashNumberAssertions(results) {
+    var gens = CONFIG.corvetteGenerations;
+    eq(results, LOGIC.dashNumberBase("C1", gens), 100, "dashNumberBase: C1 -> 100");
+    eq(results, LOGIC.dashNumberBase("C2", gens), 200, "dashNumberBase: C2 -> 200");
+    eq(results, LOGIC.dashNumberBase("C8", gens), 800, "dashNumberBase: C8 -> 800");
+    eq(results, LOGIC.dashNumberBase("", gens), null, "dashNumberBase: blank Gen -> null");
+    eq(results, LOGIC.dashNumberBase("C9", gens), null, "dashNumberBase: unrecognized Gen -> null");
+
+    eq(results, LOGIC.nextDashNumber("C1", {}, gens), 100,
+      "nextDashNumber: first car in an empty generation gets the base number");
+    eq(results, LOGIC.nextDashNumber("C1", { a: 100, b: 101 }, gens), 102,
+      "nextDashNumber: continues after the highest already assigned in that block");
+    eq(results, LOGIC.nextDashNumber("C2", { a: 100, b: 101 }, gens), 200,
+      "nextDashNumber: a different generation's numbers don't affect this one");
+    // The scenario ensureDashNumbers() is built specifically to avoid: a
+    // caller only sees SOME of the assigned numbers (a partial reprint
+    // batch), but the function is handed the FULL map, so it must not
+    // repeat "a" (100) even though "b" isn't in view here.
+    eq(results, LOGIC.nextDashNumber("C1", { a: 100 }, gens), 101,
+      "nextDashNumber: never reuses a number already assigned, even from a caller with a partial view");
+    // A car removed after its number was printed leaves a gap on purpose —
+    // the next assignment continues past the gap rather than filling it.
+    eq(results, LOGIC.nextDashNumber("C1", { a: 100, c: 105 }, gens), 106,
+      "nextDashNumber: a gap in already-assigned numbers is not backfilled");
+    eq(results, LOGIC.nextDashNumber("", { a: 100 }, gens), null,
+      "nextDashNumber: blank Gen returns null rather than guessing a block");
+  }
+
   // Excel export round-trip (build a workbook, reload it, check shape).
   function excelAssertionList(out, ExcelJS) {
     var results = [];
@@ -1702,6 +1798,52 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       eq(results, sawMoney, true, "Total Fee column has $ number format");
       var shirtColsInExcel = out.shirtColumns.filter(function (c) { return out.columns.indexOf(c) !== -1; });
       eq(results, shirtColsInExcel.length, 24, "Excel export still has all 24 shirt columns");
+      return tallySheetAssertionList(ExcelJS);
+    }).then(function (tallyResults) {
+      return results.concat(tallyResults);
+    });
+  }
+
+  // Judging Tally Sheet round-trip (excel.js's buildTallySheet()) — two cars
+  // in C1 (to exercise the "Car Class only on the block's first row"
+  // layout) and no cars at all in C2 (to exercise the "still print the
+  // header + a blank Dash # range" branch for a generation with zero
+  // entrants), against real CONFIG.corvetteGenerations so a config change
+  // (e.g. adding a C9) would be reflected here too.
+  function tallySheetAssertionList(ExcelJS) {
+    var results = [];
+    var cars = [
+      { gen: "C1", dashNumber: 100, owner: "John & Jane Doe", year: "1962", color: "Silver" },
+      { gen: "C1", dashNumber: 101, owner: "Bob Smith", year: "1961", color: "Red" }
+    ];
+    var meta = { title: "Test Car Show", generatedAt: new Date("2026-09-08T12:00:00Z"), generations: CONFIG.corvetteGenerations };
+    return Promise.resolve().then(function () {
+      var wb = EXCEL.buildTallySheet(ExcelJS, cars, meta);
+      return wb.xlsx.writeBuffer();
+    }).then(function (buf) {
+      var wb2 = new ExcelJS.Workbook();
+      return wb2.xlsx.load(buf).then(function () { return wb2; });
+    }).then(function (wb2) {
+      var ws = wb2.getWorksheet("TallySheet");
+      eq(results, !!ws, true, "TallySheet: worksheet exists");
+      eq(results, ws.getCell(2, 1).value, "Car Class", "TallySheet: header row has Car Class");
+      eq(results, ws.getCell(2, 2).value, "Dash #", "TallySheet: header row has Dash #");
+      eq(results, ws.getCell(2, 5).value, "Owner", "TallySheet: header row has Owner");
+      // C1's two real cars, rows 3-4.
+      eq(results, ws.getCell(3, 1).value, "C1", "TallySheet: first C1 row carries the Car Class label");
+      eq(results, ws.getCell(3, 2).value, 100, "TallySheet: first car's Dash # is 100");
+      eq(results, ws.getCell(3, 5).value, "John & Jane Doe", "TallySheet: first car's Owner");
+      eq(results, ws.getCell(4, 1).value, null, "TallySheet: second C1 row leaves Car Class blank");
+      eq(results, ws.getCell(4, 2).value, 101, "TallySheet: second car's Dash # is 101");
+      // 3 buffer rows continue right after the highest assigned number (101).
+      eq(results, ws.getCell(5, 2).value, 102, "TallySheet: buffer row continues after the last real car");
+      eq(results, ws.getCell(6, 2).value, 103, "TallySheet: second buffer row");
+      eq(results, ws.getCell(7, 2).value, 104, "TallySheet: third buffer row");
+      // One blank separator row (row 8), then C2's header — no real cars, so
+      // it's still printed with its own base number and buffer range.
+      eq(results, ws.getCell(9, 1).value, "C2", "TallySheet: an empty generation still gets its header row");
+      eq(results, ws.getCell(9, 2).value, 200, "TallySheet: empty generation's header row uses its base number");
+      eq(results, ws.getCell(9, 5).value, null, "TallySheet: empty generation's header row has no Owner");
       return results;
     });
   }
@@ -2773,53 +2915,30 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     });
   }
 
-  // C1 -> 100, C2 -> 200, ... C8 -> 800 — one block of 100 numbers per
-  // generation, in CONFIG.corvetteGenerations' own order. Matches the
-  // club's paper Tally Sheet template exactly. Returns null for a car with
-  // no recognized Gen (e.g. a row with no Year yet), which ensureDashNumbers()
-  // below leaves unassigned rather than guessing.
-  function dashBaseForGen(gen) {
-    for (var i = 0; i < CONFIG.corvetteGenerations.length; i++) {
-      if (CONFIG.corvetteGenerations[i].gen === gen) return (i + 1) * 100;
-    }
-    return null;
-  }
-
   // Assigns a Dash # to every row in `rows` that doesn't already have one in
   // state.dashNumbers, then pushes just the new assignments to the server in
   // one batch. Idempotent and additive — an already-assigned row (its number
   // is physically on a printed window card) is never touched or renumbered,
-  // even if it's re-passed here later. New numbers pick up right after the
-  // highest number already assigned in that generation's block, so a car
-  // removed from the show after its number was printed leaves a gap rather
-  // than that number ever being reused.
+  // even if it's re-passed here later.
   //
-  // The "highest assigned so far" watermark is read from ALL of
-  // state.dashNumbers, not just from `rows` — `rows` is often a subset (a
-  // reprint of a handful of cards, say), and computing the watermark from
-  // only that subset could hand out a number that collides with a car
-  // outside it that already has one.
+  // The actual numbering (which block, which number is next) is
+  // LOGIC.nextDashNumber() — a pure function covered by the regression suite
+  // — recomputed against the live state.dashNumbers map on every row rather
+  // than a locally precomputed watermark, so `rows` being a subset (a
+  // reprint of a handful of cards, say) can never hand out a number that
+  // collides with a car outside it that already has one.
   //
   // Local state is updated synchronously (before this returns) so callers —
   // printSelectedWindowCards()/downloadTallySheet() — can rely on
   // state.dashNumbers being complete immediately after calling this, without
   // waiting on the network push.
   function ensureDashNumbers(rows) {
-    var highestByGen = {};
-    CONFIG.corvetteGenerations.forEach(function (g, i) {
-      var base = (i + 1) * 100, highest = base - 1;
-      Object.keys(state.dashNumbers).forEach(function (key) {
-        var n = state.dashNumbers[key];
-        if (n >= base && n < base + 100 && n > highest) highest = n;
-      });
-      highestByGen[g.gen] = highest;
-    });
     var assignments = {};
     rows.forEach(function (r) {
-      var key = rowKey(r), gen = r["Gen"], base = dashBaseForGen(gen);
-      if (base == null || state.dashNumbers[key] != null) return;
-      var next = (gen in highestByGen && highestByGen[gen] >= base) ? highestByGen[gen] + 1 : base;
-      highestByGen[gen] = next;
+      var key = rowKey(r);
+      if (state.dashNumbers[key] != null) return;
+      var next = LOGIC.nextDashNumber(r["Gen"], state.dashNumbers, CONFIG.corvetteGenerations);
+      if (next == null) return;
       state.dashNumbers[key] = next;
       assignments[key] = next;
     });

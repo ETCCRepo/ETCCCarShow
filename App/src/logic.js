@@ -64,6 +64,41 @@
     return "";
   }
 
+  // Judging-day Dash # numbering (see app.js's ensureDashNumbers(), which
+  // calls this once per car). One block of 100 numbers per generation, in
+  // CONFIG.corvetteGenerations' own order — C1 -> 100, C2 -> 200, ... C8 ->
+  // 800 — matching the club's paper Tally Sheet template. Returns null for
+  // an unrecognized/blank Gen (e.g. a row with no Year yet) rather than
+  // guessing a bucket for it.
+  function dashNumberBase(gen, generations) {
+    generations = generations || CONFIG.corvetteGenerations;
+    for (var i = 0; i < generations.length; i++) {
+      if (generations[i].gen === gen) return (i + 1) * 100;
+    }
+    return null;
+  }
+
+  // The next unused number in `gen`'s block, given every number already
+  // assigned anywhere (dashNumbers: { anyKey: number, ... } — a full
+  // rowKey->number map, or any object whose values are the assigned
+  // numbers). Deliberately scans ALL of dashNumbers rather than trusting a
+  // precomputed "highest so far", so a caller working through a partial
+  // batch (e.g. reprinting 3 of 150 cars) can never hand out a number that
+  // collides with a car outside that batch which already has one. Once a
+  // number is taken it's never reused even if that car is later removed —
+  // the resulting gap is expected (that number may already be printed on a
+  // physical window card).
+  function nextDashNumber(gen, dashNumbers, generations) {
+    var base = dashNumberBase(gen, generations);
+    if (base == null) return null;
+    var highest = base - 1;
+    Object.keys(dashNumbers || {}).forEach(function (key) {
+      var n = dashNumbers[key];
+      if (n >= base && n < base + 100 && n > highest) highest = n;
+    });
+    return highest + 1;
+  }
+
   function hasColumn(rows, name) {
     if (!rows.length) return false;
     return Object.prototype.hasOwnProperty.call(rows[0], name);
@@ -441,7 +476,7 @@
     return name ? name + " Registration List" : CONFIG.title;
   }
 
-  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName };
+  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName, dashNumberBase: dashNumberBase, nextDashNumber: nextDashNumber };
   root.CarShowLogic = API;
   if (typeof module !== "undefined" && module.exports) module.exports = API;
 })(typeof globalThis !== "undefined" ? globalThis : this);

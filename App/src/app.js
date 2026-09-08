@@ -1052,53 +1052,30 @@
     });
   }
 
-  // C1 -> 100, C2 -> 200, ... C8 -> 800 — one block of 100 numbers per
-  // generation, in CONFIG.corvetteGenerations' own order. Matches the
-  // club's paper Tally Sheet template exactly. Returns null for a car with
-  // no recognized Gen (e.g. a row with no Year yet), which ensureDashNumbers()
-  // below leaves unassigned rather than guessing.
-  function dashBaseForGen(gen) {
-    for (var i = 0; i < CONFIG.corvetteGenerations.length; i++) {
-      if (CONFIG.corvetteGenerations[i].gen === gen) return (i + 1) * 100;
-    }
-    return null;
-  }
-
   // Assigns a Dash # to every row in `rows` that doesn't already have one in
   // state.dashNumbers, then pushes just the new assignments to the server in
   // one batch. Idempotent and additive — an already-assigned row (its number
   // is physically on a printed window card) is never touched or renumbered,
-  // even if it's re-passed here later. New numbers pick up right after the
-  // highest number already assigned in that generation's block, so a car
-  // removed from the show after its number was printed leaves a gap rather
-  // than that number ever being reused.
+  // even if it's re-passed here later.
   //
-  // The "highest assigned so far" watermark is read from ALL of
-  // state.dashNumbers, not just from `rows` — `rows` is often a subset (a
-  // reprint of a handful of cards, say), and computing the watermark from
-  // only that subset could hand out a number that collides with a car
-  // outside it that already has one.
+  // The actual numbering (which block, which number is next) is
+  // LOGIC.nextDashNumber() — a pure function covered by the regression suite
+  // — recomputed against the live state.dashNumbers map on every row rather
+  // than a locally precomputed watermark, so `rows` being a subset (a
+  // reprint of a handful of cards, say) can never hand out a number that
+  // collides with a car outside it that already has one.
   //
   // Local state is updated synchronously (before this returns) so callers —
   // printSelectedWindowCards()/downloadTallySheet() — can rely on
   // state.dashNumbers being complete immediately after calling this, without
   // waiting on the network push.
   function ensureDashNumbers(rows) {
-    var highestByGen = {};
-    CONFIG.corvetteGenerations.forEach(function (g, i) {
-      var base = (i + 1) * 100, highest = base - 1;
-      Object.keys(state.dashNumbers).forEach(function (key) {
-        var n = state.dashNumbers[key];
-        if (n >= base && n < base + 100 && n > highest) highest = n;
-      });
-      highestByGen[g.gen] = highest;
-    });
     var assignments = {};
     rows.forEach(function (r) {
-      var key = rowKey(r), gen = r["Gen"], base = dashBaseForGen(gen);
-      if (base == null || state.dashNumbers[key] != null) return;
-      var next = (gen in highestByGen && highestByGen[gen] >= base) ? highestByGen[gen] + 1 : base;
-      highestByGen[gen] = next;
+      var key = rowKey(r);
+      if (state.dashNumbers[key] != null) return;
+      var next = LOGIC.nextDashNumber(r["Gen"], state.dashNumbers, CONFIG.corvetteGenerations);
+      if (next == null) return;
       state.dashNumbers[key] = next;
       assignments[key] = next;
     });
