@@ -1,6 +1,37 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-06 (end of session, latest). **This session confirmed the favicon
+Last updated: 2026-09-08 (end of session, latest). **This session added judging-day
+Dash # numbering and a Judging Tally Sheet export**, then closed out the regression
+coverage for it in a follow-up pass. What started as "generate a spreadsheet in the
+attached format with the cars in the registrations" (against the club's paper template,
+`Z:\Backup\ETCC\Car Show\Forms\Tally Sheet.xlsx`) turned into a real feature once the
+user clarified the numbers should come **from the window cards** and the sheet should be
+**generated when window cards are printed** — so instead of a one-off export, the app now
+assigns each in-show car a stable "Dash #" placard number (grouped by generation in
+blocks of 100 — C1=100s, C2=200s ... C8=800s, matching the paper template exactly) the
+first time its window card is printed, persists it server-side, prints it on the card in
+place of the internal Reg #, and offers both an automatic Tally Sheet download alongside
+bulk window-card printing and a standalone "📋 Tally Sheet" button for a fresh copy on
+demand. **A real correctness bug was caught and fixed during design, not after**: the
+first draft computed each generation's "next available number" only from the batch of
+cars being processed in that call, which would have let a partial reprint (e.g.
+re-printing 3 of 150 cards) hand out a number already assigned to a car outside that
+batch — fixed by always recomputing the watermark from the FULL persisted assignment map
+(`LOGIC.nextDashNumber()` in `App/src/logic.js`), not a locally-scoped subset. A follow-up
+`/ETCCCarShowTest` pass extracted that numbering math into `logic.js` (it started as an
+untestable DOM/fetch-entangled closure in `app.js`) and added 30 regression assertions
+covering it plus a new Judging Tally Sheet Excel round-trip — including a dedicated
+assertion for the exact collision scenario above, so it can't quietly regress. Two full
+`/ETCCCarShowCheckpoint` runs this session: **`c4cb19d`** (the feature, v4.10) and
+**`3bc508c`** (the test coverage + `ensureDashNumbers()` refactor, v4.11), both pushed to
+`origin/main`; live site is **v4.11** and reflects everything through `3bc508c`.
+`/ETCCCarShowTest` ran twice this session — first added the 30 new assertions (77 → 107
+passing), then re-ran clean with no changes needed after the checkpoint. **Still open**:
+this feature has **never been exercised against real live registration data** — only
+synthetic fixtures in the test suite and a code-level design review. See "Known
+follow-ups" below before relying on it at the actual show.
+
+Previous update: 2026-09-06 (end of session). **That session confirmed the favicon
 fix from 2026-08-28 actually works** (the user checked on their iPhone/iPad and reported
 "favicon fixed" — the open caveat about the non-square logo source did not turn out to be
 a real problem), then changed how sponsor totals are calculated. The user asked "how is
@@ -138,6 +169,158 @@ unlinked — Claude's attempt to delete it via a one-off FTP `DELE` command was 
 the auto-mode safety classifier (deleting a live server file is treated as destructive),
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
+
+## This session's work (2026-09-08)
+
+**Request**: "Need to generate a spreadsheet in the attached format with the cars in the
+registrations" against `Z:\Backup\ETCC\Car Show\Forms\Tally Sheet.xlsx` — the club's
+existing paper judging roster, one row per car grouped by generation (`Car Class | Dash #
+| General Votes | Best of Show Votes | Owner | Year | Color`), with Dash # numbered in
+per-generation blocks of 100 (C1=100-1xx, C2=200-2xx, ... C8=800-8xx).
+
+**Clarifying questions asked up front (via `AskUserQuestion`)** landed on: pull data
+freshly from the live app rather than a stale local CSV, include only `In Car Show? =
+Yes` rows, auto-assign Dash # per generation like the sample, and include the blank
+buffer rows + bottom summary block. The user's actual answer to "how should Dash # be
+filled in" reframed the whole task: **"From the windows cards. Spreadsheet should be
+generated when window cards are printed."** That turned a one-off export into a real
+feature — the app needed to (1) invent and persist a stable Dash # for every car, (2)
+print that number on the window card itself, and (3) generate the roster automatically
+as part of the existing "Print Window Cards" action.
+
+**1. New per-show data: `data/<year>/dash-numbers.json`** — a flat map, `rowKey(rec) ->
+integer dash number` (same `rowKey()` used everywhere else for CSV-and-walk-in-row
+identity: `r.id || csvRegKey(r)`). New endpoint `App/deploy/dash-numbers.php`, following
+the exact envelope every other per-show endpoint uses (`session_start`, no-store headers,
+`carshow_authed()`, then `carshow_valid_year($_GET['year'] ?? ...)` — a missing/invalid
+year is a hard 400, same as everywhere else). Two actions: `list`, and `assign` (merges a
+batch of `{key: number}` pairs into the map — never removes an existing key, since a
+number already on a printed physical card must stay reserved forever). Registered in
+`lib.php`'s `carshow_show_files()` list so `shows.php`'s `delete` action cleans it up
+along with a show's other files, and added to `ftp-deploy.sh`'s upload list.
+`index.php` reads it and calls a new `window.__carshow.ingestDashNumbers(map)` boot call
+(order doesn't matter relative to the other ingests — it's read-only until a print
+action happens), and adds `dashNumbersApiUrl: 'dash-numbers.php?year=<year>'` to the
+injected `window.__carshowSite` config.
+
+**2. Client-side numbering (`App/src/app.js`)**:
+- `state.dashNumbers` (filled by `ingestDashNumbers()`), `state.dashNumberSyncError`,
+  `state.tallySheetBuilding`.
+- `carsInShow()` — every registration (CSV or walk-in) with `In Car Show? === "Yes"`;
+  the same set both the Tally Sheet and Dash # assignment operate on.
+- `ensureDashNumbers(rows)` — assigns a number to any row in `rows` missing one in
+  `state.dashNumbers`, then pushes just the new assignments to the server in one batch
+  (fire-and-forget, `dashNumberSyncError` surfaced on failure same as every other
+  `*ToServer` push). **Idempotent and additive**: an already-assigned row is never
+  touched, even if passed in again later.
+- `fillOneWindowCard()`'s `CarNumber` field now reads `state.dashNumbers[rowKey(r)]`
+  first, falling back to `Reg #` only if the row has no resolvable generation (e.g. no
+  Year yet) — so the physical window card and the Tally Sheet reference the same number.
+- `printWindowCards(list)` calls `ensureDashNumbers(list)` before filling any PDFs (both
+  the single-row detail-modal reprint and the bulk toolbar action go through this).
+- `printSelectedWindowCards()` (the Registration tab's bulk "🪟 Print Window Cards"
+  button) was widened: it now calls `ensureDashNumbers(carsInShow())` — the WHOLE
+  in-show roster, not just the batch selected for (re)printing — then prints the
+  selected subset, then calls the new `downloadTallySheet(carsInShow())`. This keeps the
+  Tally Sheet complete on every print, not just covering whichever cards happened to be
+  reprinted.
+- New standalone **"📋 Tally Sheet"** button on the Registration tab (next to Print
+  Window Cards) — `downloadTallySheetForShow()` — regenerates and downloads the sheet
+  without touching any PDFs, for pulling a fresh paper copy after Status/In-Car-Show edits.
+- `downloadTallySheet(cars)` builds the workbook via `EXCEL.buildTallySheet()` (new
+  vendored-`ExcelJS`-backed function, see below), writes it to a `Blob`, and triggers a
+  browser download via a synthetic `<a download>` click — **the app's first-ever
+  client-side file download**; `excel.js`'s `build()` function existed before this
+  session but was only ever exercised by the regression test's Excel round-trip, never
+  wired to an actual UI button until now.
+
+**3. New `App/src/excel.js` function: `buildTallySheet(ExcelJS, cars, meta)`** — builds
+the `TallySheet` worksheet matching the paper template: same 7 columns, one block per
+generation (`Car Class` label only on the block's first row), real cars sorted by Dash #,
+then 3 blank Dash#-only buffer rows continuing past the highest assigned number in that
+block (a generation with zero entrants still gets its header row + a blank buffer range
+starting at its base number), one blank separator row between generations, then a bottom
+summary block (Total Cars Entered, Cars by category with count + percentage, and blank
+hand-fill rows for "Most participation from visiting club" / "Best of Show" / "Dealers
+Choice" — those three are decided live at the show, not derivable from data).
+
+**4. New `App/src/logic.js` function: `ownerDisplayName(rec)`** — "First & Spouse Last"
+for the Tally Sheet's Owner column. Deliberately separate from the pre-existing
+`sponsorshipDefaultText()` (same fields, but that one feeds a stored/editable field and
+joins with "and"; this one is presentation-only and joins with "&" to match the paper
+template's own convention).
+
+**5. A real bug caught during design, fixed before it ever shipped**: the first draft of
+`ensureDashNumbers()` computed each generation's "highest number assigned so far" only
+from the rows in the current call's `rows` argument. Since `printWindowCards()` is
+sometimes called with a SUBSET of the full roster (a reprint of just a few cards), that
+watermark could be lower than the true highest already-assigned number for a generation
+whose other cars weren't in that subset — handing out a number that collides with one
+already printed on a different, unlisted car. **Fixed** by always recomputing the
+watermark from `state.dashNumbers` in its entirety, never from the (possibly partial)
+`rows` argument. This became the seed for the pure `LOGIC.nextDashNumber()` function
+extracted in the follow-up test pass (item 6 below), and there is now a dedicated
+regression assertion pinned to exactly this scenario so it can't silently regress:
+*"nextDashNumber: never reuses a number already assigned, even from a caller with a
+partial view."*
+
+**6. Follow-up `/ETCCCarShowTest` pass (separate, explicit trigger)** — the feature
+shipped in checkpoint `c4cb19d` with zero regression coverage (flagged explicitly to the
+user at the time). The follow-up:
+- Extracted the numbering math out of `app.js`'s `ensureDashNumbers()` — which was a
+  DOM/fetch-entangled closure with no way to unit-test directly — into two pure
+  functions in `logic.js`: `dashNumberBase(gen, generations)` (C1→100, C2→200, ... C8→800)
+  and `nextDashNumber(gen, dashNumbers, generations)` (the collision-avoiding "what's
+  next" computation, item 5 above). `app.js`'s `ensureDashNumbers()` now just calls
+  `LOGIC.nextDashNumber(...)` per row — a net simplification, ~15 fewer lines, no
+  behavior change.
+- Added 30 new assertions to `App/src/regression-tests.js`: 4 for `ownerDisplayName`, 11
+  for `dashNumberBase`/`nextDashNumber`, and 15 for a new Judging Tally Sheet Excel
+  round-trip (worksheet exists, header row, per-generation block layout including the
+  "Car Class label only on the block's first row" rule, buffer-row numbering, and the
+  empty-generation branch).
+- Updated the file's top-of-file NOTE listing what's still UI-only/manually-tested
+  (`ensureDashNumbers()`'s DOM/fetch wiring, the print/download button handlers) versus
+  what the new assertions now cover (the pure numbering math and the workbook shape).
+- Second `/ETCCCarShowTest` invocation later in the session found the suite already
+  clean with no new commits since — confirmed nothing to update, no action taken.
+
+**Checkpoints**: `node build.js` + `bash deploy/ftp-deploy.sh` + commit/push ran twice —
+**`c4cb19d`** (the feature itself, v4.10) and **`3bc508c`** (the test coverage +
+`ensureDashNumbers()` refactor, v4.11). Both pushed to `origin/main`; live site is
+**v4.11**.
+
+## Known follow-ups / things a new session might need to know (2026-09-08 session)
+
+- **This feature has never been exercised against real live registration data.**
+  Everything was verified by code review plus the synthetic regression fixtures — nobody
+  has yet clicked "Print Window Cards" on the actual live 2026 show and confirmed real
+  Dash #s get assigned, the physical window card shows the right number, and the
+  downloaded Tally Sheet matches. **Do this before relying on it at the actual show.**
+- **Dash # assignment is permanent by design, with no undo/manual-correction UI.** Once
+  a number is assigned it never changes — there's no button anywhere to reassign or clear
+  one if, say, a car gets miscategorized into the wrong generation before its Year is
+  corrected. If that comes up, the fix today is a direct edit of
+  `data/<year>/dash-numbers.json` on the server (removing that row's key lets
+  `ensureDashNumbers()` re-assign it correctly on the next print), not anything reachable
+  from the UI.
+- **The "📋 Tally Sheet" button's enabled/disabled state is computed once at toolbar
+  build time** (`!carsInShow().length`), not re-evaluated live the way the "🪟 Print
+  Window Cards" button's count is — since the whole toolbar re-renders on most state
+  changes anyway this should self-correct in practice, but it wasn't specifically
+  verified to update instantly after, e.g., toggling a single row's In Car Show? flag
+  without a full page reload.
+- **Excel.js's `build()` function (Registration/Summary/Sponsor sheets) is still not
+  wired to any UI button** — it's exercised only by the regression test's round-trip, a
+  pre-existing gap from before this session, unrelated to and not fixed by this
+  session's work. `buildTallySheet()` is the first of excel.js's functions to actually
+  reach an end user.
+- **Assumed but unconfirmed with the user**: that 3 blank buffer rows per generation and
+  1 blank separator row between generations (this session's own defaults, since the
+  original paper template's buffer-row counts were inconsistent/ad-hoc across
+  generations with no discoverable formula) are the right amount. Easy to adjust —
+  `TALLY_BUFFER_ROWS` at the top of `excel.js`'s new Tally Sheet section — if the club
+  wants more or fewer blank rows for late walk-in cars.
 
 ## This session's work (2026-09-06)
 
