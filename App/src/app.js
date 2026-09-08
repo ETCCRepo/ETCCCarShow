@@ -1,10 +1,12 @@
 /* app.js — DOM wiring and rendering for the hosted site. Globals: CarShowConfig,
- * CarShowLogic, Papa, ExcelJS (ExcelJS/Papa are only exercised here via the
- * Developer > Run Regression Tests round-trip, see runRegressionTests()). */
+ * CarShowLogic, CarShowExcel, Papa, ExcelJS (Papa is only exercised here via
+ * the Developer > Run Regression Tests round-trip, see runRegressionTests();
+ * ExcelJS also backs the Judging Tally Sheet download, see downloadTallySheet()). */
 (function () {
   "use strict";
   var CONFIG = window.CarShowConfig;
   var LOGIC = window.CarShowLogic;
+  var EXCEL = window.CarShowExcel;
 
   var state = {
     reg: null,   // { name, rows }
@@ -114,6 +116,13 @@
     tshirtOrderPageOpen: false, // T-Shirts tab > "T-Shirt Order Form" full-page screen
     tshirtPurchasePageOpen: false, // T-Shirts tab > "Buy T-Shirt" full-page screen
     tshirtPurchases: [],       // day-of-event walk-up sales — filled by ingestTshirtPurchases()
+    // rowKey(r) -> integer Dash # (the judging-day placard number, e.g. 100,
+    // 101, 200...) — assigned once per car by ensureDashNumbers() and then
+    // never changed, since it's the number physically printed on that car's
+    // window card. Filled by ingestDashNumbers(); see App/deploy/dash-numbers.php.
+    dashNumbers: {},
+    dashNumberSyncError: null,
+    tallySheetBuilding: false,
     tshirtPurchaseName: "",    // Buy T-Shirt form's in-progress Name field
     tshirtPurchaseCost: "",    // Buy T-Shirt form's in-progress Cost field (defaults from settings when opened)
     tshirtPurchaseSize: "",    // Buy T-Shirt form's in-progress T-Shirt Size field (e.g. "Men's Large")
@@ -492,6 +501,9 @@
     if (state.tab === "reg" && state.regDeleteSyncError) {
       app.appendChild(el("div", { class: "messages", style: "margin-bottom:10px" }, [state.regDeleteSyncError]));
     }
+    if (state.tab === "reg" && state.dashNumberSyncError) {
+      app.appendChild(el("div", { class: "messages", style: "margin-bottom:10px" }, [state.dashNumberSyncError]));
+    }
     var toolbar = state.tab === "reg" ? buildRegToolbar() : buildSummaryToolbar();
     app.appendChild(toolbar);
     app.appendChild(state.tab === "reg" ? buildRegView() : buildSummaryView());
@@ -776,6 +788,15 @@
     var printCardsBtn = el("button", { class: "btn", id: "regPrintCardsBtn", disabled: "disabled" }, ["🪟 Print Window Cards"]);
     printCardsBtn.addEventListener("click", printSelectedWindowCards);
 
+    // Not selection-dependent like printCardsBtn — always enabled once
+    // there's at least one In Car Show car, so an officer can pull a fresh
+    // paper copy at any time (e.g. after a batch of Status/In Car Show
+    // edits) without needing to reprint any window cards.
+    var tallyBtn = el("button", { class: "btn", id: "regTallySheetBtn", title: "Download the judging Tally Sheet (assigns Dash #s to any newly-added cars)" },
+      [state.tallySheetBuilding ? "Building…" : "📋 Tally Sheet"]);
+    tallyBtn.addEventListener("click", downloadTallySheetForShow);
+    if (state.tallySheetBuilding || !carsInShow().length) tallyBtn.setAttribute("disabled", "disabled");
+
     var addBtn = el("button", { class: "btn primary" }, ["+ Add Registration"]);
     addBtn.addEventListener("click", openAddRegistration);
 
@@ -797,7 +818,7 @@
       el("span", { class: "spacer" }),
       zoomGroup
     ];
-    kids.push(printCardsBtn, delBtn, prn);
+    kids.push(printCardsBtn, tallyBtn, delBtn, prn);
     return el("div", { class: "toolbar no-print" }, kids);
   }
   function buildSummaryToolbar() {
@@ -1020,6 +1041,135 @@
   // tab's row checkboxes and by deleteSelectedReg() to route each selected
   // row to the right deletion mechanism (see below).
   function rowKey(r) { return r.id || csvRegKey(r); }
+
+  // ---------- Dash # (judging-day placard numbers) ----------
+  // Every registration whose "In Car Show?" is exactly "Yes" — the roster
+  // the Judging Tally Sheet is built from and the only rows that ever get a
+  // window card. Same "Yes" check printSelectedWindowCards() already uses.
+  function carsInShow() {
+    return allRegistrations().filter(function (r) {
+      return String(r["In Car Show?"]).trim().toLowerCase() === "yes";
+    });
+  }
+
+  // C1 -> 100, C2 -> 200, ... C8 -> 800 — one block of 100 numbers per
+  // generation, in CONFIG.corvetteGenerations' own order. Matches the
+  // club's paper Tally Sheet template exactly. Returns null for a car with
+  // no recognized Gen (e.g. a row with no Year yet), which ensureDashNumbers()
+  // below leaves unassigned rather than guessing.
+  function dashBaseForGen(gen) {
+    for (var i = 0; i < CONFIG.corvetteGenerations.length; i++) {
+      if (CONFIG.corvetteGenerations[i].gen === gen) return (i + 1) * 100;
+    }
+    return null;
+  }
+
+  // Assigns a Dash # to every row in `rows` that doesn't already have one in
+  // state.dashNumbers, then pushes just the new assignments to the server in
+  // one batch. Idempotent and additive — an already-assigned row (its number
+  // is physically on a printed window card) is never touched or renumbered,
+  // even if it's re-passed here later. New numbers pick up right after the
+  // highest number already assigned in that generation's block, so a car
+  // removed from the show after its number was printed leaves a gap rather
+  // than that number ever being reused.
+  //
+  // The "highest assigned so far" watermark is read from ALL of
+  // state.dashNumbers, not just from `rows` — `rows` is often a subset (a
+  // reprint of a handful of cards, say), and computing the watermark from
+  // only that subset could hand out a number that collides with a car
+  // outside it that already has one.
+  //
+  // Local state is updated synchronously (before this returns) so callers —
+  // printSelectedWindowCards()/downloadTallySheet() — can rely on
+  // state.dashNumbers being complete immediately after calling this, without
+  // waiting on the network push.
+  function ensureDashNumbers(rows) {
+    var highestByGen = {};
+    CONFIG.corvetteGenerations.forEach(function (g, i) {
+      var base = (i + 1) * 100, highest = base - 1;
+      Object.keys(state.dashNumbers).forEach(function (key) {
+        var n = state.dashNumbers[key];
+        if (n >= base && n < base + 100 && n > highest) highest = n;
+      });
+      highestByGen[g.gen] = highest;
+    });
+    var assignments = {};
+    rows.forEach(function (r) {
+      var key = rowKey(r), gen = r["Gen"], base = dashBaseForGen(gen);
+      if (base == null || state.dashNumbers[key] != null) return;
+      var next = (gen in highestByGen && highestByGen[gen] >= base) ? highestByGen[gen] + 1 : base;
+      highestByGen[gen] = next;
+      state.dashNumbers[key] = next;
+      assignments[key] = next;
+    });
+    if (Object.keys(assignments).length) pushDashNumbersToServer(assignments);
+  }
+
+  // Fire-and-forget, same optimistic-local-update-then-push pattern as every
+  // other *ToServer function — state.dashNumbers is already correct locally
+  // by the time this is called (see ensureDashNumbers above), so a failure
+  // here only means the NEXT page load would re-derive slightly different
+  // (but still valid/non-colliding) numbers for whatever didn't save; it
+  // does not block printing or the Tally Sheet download in the meantime.
+  function pushDashNumbersToServer(assignments) {
+    if (!SITE_CONFIG.dashNumbersApiUrl) return;
+    fetch(SITE_CONFIG.dashNumbersApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "assign", assignments: assignments })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      state.dashNumberSyncError = null;
+    }).catch(function () {
+      state.dashNumberSyncError = "Could not save the new Dash # assignments to the server — reload before printing again to avoid duplicates.";
+      renderViews();
+    });
+  }
+
+  // Builds the Judging Tally Sheet workbook for every car currently In Car
+  // Show and triggers a browser download — same vendored ExcelJS the
+  // Excel-export regression round-trip already uses (see excel.js), just
+  // wired to an actual button for the first time. Assumes every row in
+  // `cars` already has a Dash # (the caller runs ensureDashNumbers() first).
+  function downloadTallySheet(cars) {
+    var ExcelJS = window.ExcelJS;
+    if (!ExcelJS) { alert("Excel library failed to load — try reloading the page."); return; }
+    var rows = cars.map(function (r) {
+      return {
+        gen: r["Gen"],
+        dashNumber: state.dashNumbers[rowKey(r)],
+        owner: LOGIC.ownerDisplayName(r),
+        year: r["Year"],
+        color: r["Color"]
+      };
+    });
+    var meta = {
+      title: CONFIG.title.replace(/\s*Registration List$/, ""),
+      generatedAt: new Date(),
+      generations: CONFIG.corvetteGenerations
+    };
+    state.tallySheetBuilding = true;
+    renderViews();
+    Promise.resolve()
+      .then(function () { return EXCEL.buildTallySheet(ExcelJS, rows, meta); })
+      .then(function (wb) { return wb.xlsx.writeBuffer(); })
+      .then(function (buf) {
+        var blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        var url = URL.createObjectURL(blob);
+        var a = el("a", { href: url, download: meta.title + " Tally Sheet.xlsx" });
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      })
+      .catch(function (err) {
+        alert("Could not generate the Tally Sheet: " + (err && err.message || err));
+      })
+      .then(function () {
+        state.tallySheetBuilding = false;
+        renderViews();
+      });
+  }
 
   // ---------- Registration tab row selection + bulk delete ----------
   function selectedRegKeys() { return Object.keys(state.regSelected); }
@@ -3189,6 +3339,14 @@
   // skipped rather than treated as an error — same tolerant-optional-field
   // philosophy as members-import.php's column detection.
   //
+  // CarNumber is the row's judging-day Dash # (state.dashNumbers), not its
+  // registration Reg # — this is the number judges use on the Tally Sheet to
+  // record votes, and it's what makes the printed window card and the paper
+  // tally sheet reference the same car. Callers (printWindowCards() below)
+  // always run ensureDashNumbers() first, so this is normally already
+  // assigned; a car printed with no Gen (so no dash-number bucket exists,
+  // e.g. a missing Year) falls back to its Reg # rather than printing blank.
+  //
   // Text is rendered bold and at a fixed larger size (not the template's own
   // default appearance) — setFontSize() per field plus a single
   // form.updateFieldAppearances(boldFont) call (regenerates every field's
@@ -3200,9 +3358,10 @@
       return doc.embedFont(PDFLib.StandardFonts.HelveticaBold).then(function (boldFont) {
         var form = doc.getForm();
         var name = (r["First Name"] || "") + (r["Last Name"] ? " " + r["Last Name"] : "");
+        var dashNumber = state.dashNumbers[rowKey(r)];
         var values = {
           Owner: name,
-          CarNumber: String(r["Reg #"] || ""),
+          CarNumber: String(dashNumber != null ? dashNumber : (r["Reg #"] || "")),
           Year: String(r["Year"] || ""),
           Model: String(r["Model"] || ""),
           Generation: String(r["Gen"] || "")
@@ -3241,6 +3400,10 @@
   // bulk "Print Window Cards" button (printSelectedWindowCards).
   function printWindowCards(list) {
     if (!list.length) return;
+    // Every window card printed needs a Dash # on it (see fillOneWindowCard
+    // above) — assign one to anything in this batch that doesn't have one
+    // yet, before filling any PDFs. Cheap/no-op for rows already assigned.
+    ensureDashNumbers(list);
     var pdfName = state.appSettings.windowCardPdf;
     if (!pdfName) {
       alert("No Car Show Window Card template uploaded yet — upload one in Developer > Settings first.");
@@ -3292,6 +3455,12 @@
   // with any other value is silently skipped (see the toolbar button's own
   // count, which already only counts qualifying rows, so nothing here comes
   // as a surprise at print time).
+  //
+  // Also assigns Dash # numbers across the WHOLE In-Car-Show roster (not
+  // just the batch being (re)printed) and downloads a fresh Judging Tally
+  // Sheet, so the paper sheet judges use always lists every car currently
+  // showing, with a number for each — not just whichever subset happened to
+  // be selected for this particular reprint.
   function printSelectedWindowCards() {
     var byKey = {};
     allRegistrations().forEach(function (r) { byKey[rowKey(r)] = r; });
@@ -3299,7 +3468,21 @@
       .map(function (key) { return byKey[key]; })
       .filter(function (r) { return r && String(r["In Car Show?"]).trim().toLowerCase() === "yes"; });
     if (!toPrint.length) return;
+    var allShow = carsInShow();
+    ensureDashNumbers(allShow);
     printWindowCards(toPrint);
+    downloadTallySheet(allShow);
+  }
+
+  // Toolbar's standalone "📋 Tally Sheet" button — regenerates the sheet
+  // (assigning numbers to any newly-added cars first) without printing or
+  // reprinting any window cards. For an officer who needs a fresh paper copy
+  // after Status/"In Car Show?" edits, without wanting to reprint every card.
+  function downloadTallySheetForShow() {
+    var allShow = carsInShow();
+    if (!allShow.length) return;
+    ensureDashNumbers(allShow);
+    downloadTallySheet(allShow);
   }
 
   // A bare "YYYY-MM-DD" string (what <input type=date> — e.g. the payment
@@ -4767,6 +4950,12 @@
     ingestTshirtPurchases: function (list) {
       state.tshirtPurchases = Array.isArray(list) ? list : [];
       renderTshirtPurchasePage();
+    },
+    // Called by index.php's boot script with the judging-day Dash # map read
+    // fresh from the server on this page load — see the dashNumbers state
+    // field above and ensureDashNumbers() below.
+    ingestDashNumbers: function (map) {
+      state.dashNumbers = (map && typeof map === "object") ? map : {};
     },
     // Called by index.php's boot script with the member roster read fresh
     // from the server on this page load — used by the Add Registration

@@ -130,7 +130,8 @@ $perShowUrls = [
     'windowCardPdfApiUrl' => 'window-card-pdf.php',
     'sendTshirtOrderEmailApiUrl' => 'send-tshirt-order-email.php',
     'sponsorPaymentsApiUrl' => 'sponsor-payments.php',
-    'tshirtPurchasesApiUrl' => 'tshirt-purchases.php'
+    'tshirtPurchasesApiUrl' => 'tshirt-purchases.php',
+    'dashNumbersApiUrl' => 'dash-numbers.php'
 ];
 $siteConfig = [];
 foreach ($perShowUrls as $key => $file) {
@@ -190,6 +191,15 @@ if ($year !== null) {
     // independent of everything else, just read fresh on every page load.
     $tshirtPurchases = carshow_read_json_list(carshow_show_file($year, 'tshirt-purchases.json'));
     $bootParts[] = "    window.__carshow.ingestTshirtPurchases(" . carshow_safe_inline_json($tshirtPurchases) . ");\n";
+
+    // Judging-day placard numbers (Dash #), assigned once per car the first
+    // time its window card is printed / the Tally Sheet is generated — see
+    // deploy/dash-numbers.php and app.js's ensureDashNumbers(). Independent of
+    // everything else, just read fresh on every page load.
+    $dashNumbersRaw = carshow_show_file($year, 'dash-numbers.json');
+    $dashNumbersJson = ($dashNumbersRaw !== null && is_file($dashNumbersRaw)) ? json_decode(file_get_contents($dashNumbersRaw), true) : [];
+    $dashNumbers = is_array($dashNumbersJson) ? $dashNumbersJson : [];
+    $bootParts[] = "    window.__carshow.ingestDashNumbers(" . carshow_safe_inline_json($dashNumbers) . ");\n";
 
     // Member roster (name + member number, if the last CSV import had that
     // column — see members-import.php) — used by the Add Registration form to

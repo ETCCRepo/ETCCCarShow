@@ -349,7 +349,8 @@ function carshow_show_files() {
         'registration-overrides.json',
         'registrations-data.json',
         'paid-registrations-cache.json',
-        'app-settings.json'
+        'app-settings.json',
+        'dash-numbers.json'
     ];
 }
 

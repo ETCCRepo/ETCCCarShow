@@ -79,6 +79,19 @@
     var last = String(rec["Last Name"] || "").trim();
     return (first + (spouse ? " and " + spouse : "") + " " + last).trim();
   }
+
+  // "First [& Spouse] Last" — the Owner name shown on the Judging Tally
+  // Sheet (excel.js's buildTallySheet()). Deliberately a separate function
+  // from sponsorshipDefaultText() above even though the fields are the
+  // same: that one feeds a stored, user-editable field and joins with
+  // "and"; this one is display-only, computed fresh every time, and joins
+  // with "&" to match the club's existing paper tally sheet's convention.
+  function ownerDisplayName(rec) {
+    var first = String(rec["First Name"] || "").trim();
+    var spouse = String(rec["Spouse First Name"] || "").trim();
+    var last = String(rec["Last Name"] || "").trim();
+    return (first + (spouse ? " & " + spouse : "") + " " + last).trim();
+  }
   // Insert-only, same rationale as the Sponsors-tab Reg Date backfill: fires
   // only while "Ind. Spon. Text" is still blank, so it never
   // overwrites an officer's hand-edit (including a deliberate blank — if
@@ -428,7 +441,7 @@
     return name ? name + " Registration List" : CONFIG.title;
   }
 
-  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault };
+  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName };
   root.CarShowLogic = API;
   if (typeof module !== "undefined" && module.exports) module.exports = API;
 })(typeof globalThis !== "undefined" ? globalThis : this);
