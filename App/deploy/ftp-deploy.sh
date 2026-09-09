@@ -124,6 +124,15 @@ upload "logout.php"
 # canonical copy lives in ../assets/, shared with the main app's build.js (which
 # embeds it as base64) — see assets/ETCClogoWhiteBackground.png
 upload "ETCClogoWhiteBackground.png" "$DIR/../assets/ETCClogoWhiteBackground.png"
+# Static marketing flyer PDF — opened directly (window.open) by the Reports
+# tab's "Print Flyer" button, not rendered/filled by the app like
+# window-card.pdf is. Canonical copy lives in ../assets/, same convention as
+# the logo above; replace that file and redeploy to update the flyer.
+upload "CarShowFlyer.pdf" "$DIR/../assets/CarShowFlyer.pdf"
+# Static People's Choice voting sheet PDF — same "opened directly, not
+# rendered by the app" pattern as the flyer above, for the Reports tab's
+# "Print Voting Sheet" button.
+upload "VotingSheet.pdf" "$DIR/../assets/VotingSheet.pdf"
 upload ".htaccess"
 # secrets.php is deliberately NEVER uploaded here (unlike earlier versions of this
 # script) — reset-password.php now rewrites the LIVE copy directly when someone

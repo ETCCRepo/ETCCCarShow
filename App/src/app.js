@@ -787,17 +787,6 @@
     var printCardsBtn = el("button", { class: "btn", id: "regPrintCardsBtn", disabled: "disabled" }, ["🪟 Print Window Cards"]);
     printCardsBtn.addEventListener("click", printSelectedWindowCards);
 
-    // Not selection-dependent like printCardsBtn — always enabled once
-    // there's at least one In Car Show car, so an officer can pull a fresh
-    // paper copy at any time (e.g. after a batch of Status/In Car Show
-    // edits) without needing to reprint any window cards. Opens the
-    // browser's print preview, same as every other report in the app
-    // (printRegistration/printSponsors/etc.) — not a file download.
-    var tallyBtn = el("button", { class: "btn", id: "regTallySheetBtn", title: "Print the judging Tally Sheet (assigns Dash #s to any newly-added cars)" },
-      ["📋 Print Tally Sheet"]);
-    tallyBtn.addEventListener("click", printTallySheetForShow);
-    if (!carsInShow().length) tallyBtn.setAttribute("disabled", "disabled");
-
     var addBtn = el("button", { class: "btn primary" }, ["+ Add Registration"]);
     addBtn.addEventListener("click", openAddRegistration);
 
@@ -819,7 +808,7 @@
       el("span", { class: "spacer" }),
       zoomGroup
     ];
-    kids.push(printCardsBtn, tallyBtn, delBtn, prn);
+    kids.push(printCardsBtn, delBtn, prn);
     return el("div", { class: "toolbar no-print" }, kids);
   }
   function buildSummaryToolbar() {
@@ -3467,8 +3456,8 @@
     printWindowCards(toPrint);
   }
 
-  // Toolbar's standalone "📋 Print Tally Sheet" button — the only place the
-  // Tally Sheet is generated from. Assigns Dash # numbers across the WHOLE
+  // Reports tab's standalone "📋 Print Tally Sheet" button — the only place
+  // the Tally Sheet is generated from. Assigns Dash # numbers across the WHOLE
   // In-Car-Show roster (not just whatever's been printed so far) so the
   // printed sheet always lists every car currently showing, with a number
   // for each, then opens the browser's print preview. Doesn't print or
@@ -4536,7 +4525,20 @@
     sponsorBtn.addEventListener("click", printSponsorReport);
     var tshirtBtn = el("button", { class: "btn" }, ["👕 T-Shirt Report"]);
     tshirtBtn.addEventListener("click", printTshirtReport);
-    var buttonCol = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start" }, [summaryBtn, regBtn, memberBtn, sponsorBtn, tshirtBtn]);
+    // Moved here from the Registration tab toolbar — not selection-dependent
+    // like Print Window Cards, always enabled once there's at least one In
+    // Car Show car, so an officer can pull a fresh paper copy at any time
+    // (e.g. after a batch of Status/In Car Show edits) without needing to
+    // reprint any window cards first.
+    var tallyBtn = el("button", { class: "btn", id: "reportsTallySheetBtn", title: "Print the judging Tally Sheet (assigns Dash #s to any newly-added cars)" },
+      ["📋 Print Tally Sheet"]);
+    tallyBtn.addEventListener("click", printTallySheetForShow);
+    if (!carsInShow().length) tallyBtn.setAttribute("disabled", "disabled");
+    var votingBtn = el("button", { class: "btn" }, ["🗳️ Print Voting Sheet"]);
+    votingBtn.addEventListener("click", printVotingSheet);
+    var flyerBtn = el("button", { class: "btn" }, ["🖨️ Print Flyer"]);
+    flyerBtn.addEventListener("click", printFlyer);
+    var buttonCol = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start" }, [summaryBtn, regBtn, memberBtn, sponsorBtn, tshirtBtn, tallyBtn, votingBtn, flyerBtn]);
     var row = el("div", { class: "reports-row" }, []);
     if (window.__carshowReportsBanner) {
       row.appendChild(el("img", { src: window.__carshowReportsBanner, class: "reports-banner", alt: "Reports" }));
@@ -4628,6 +4630,28 @@
     host.appendChild(el("table", { class: "grid report-table centered-report-table" }, [thead, tbody]));
     host.appendChild(buildPrintFooter());
     window.print();
+  }
+
+  // ---------- Car Show Voting Sheet (print) ----------
+  // A static, already-designed People's Choice ballot PDF (VotingSheet.pdf,
+  // uploaded alongside the flyer/logo — see ftp-deploy.sh) — opened directly
+  // in a new tab, same "use the real file as-is" pattern as printFlyer()
+  // below, rather than reimplemented as HTML/CSS. An earlier version of this
+  // button rebuilt the design from a reference image; the club provided the
+  // actual print-ready PDF instead, which is authoritative.
+  function printVotingSheet() {
+    window.open("VotingSheet.pdf", "_blank");
+  }
+
+  // ---------- Car Show Flyer (print) ----------
+  // A static, already-designed marketing PDF (CarShowFlyer.pdf, uploaded
+  // alongside the logo — see ftp-deploy.sh) — opened directly in a new tab
+  // rather than rendered through this app's print pipeline, so the browser's
+  // own PDF viewer handles printing. Nothing here touches #printHost/
+  // window.print(); unlike every other Reports-tab button, this one doesn't
+  // produce a report from app data at all.
+  function printFlyer() {
+    window.open("CarShowFlyer.pdf", "_blank");
   }
 
   // ---------- Sponsor Report (full-page screen) ----------
