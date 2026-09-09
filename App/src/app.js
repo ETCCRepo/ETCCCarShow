@@ -1,12 +1,12 @@
 /* app.js — DOM wiring and rendering for the hosted site. Globals: CarShowConfig,
- * CarShowLogic, CarShowExcel, Papa, ExcelJS (Papa is only exercised here via
- * the Developer > Run Regression Tests round-trip, see runRegressionTests();
- * ExcelJS also backs the Judging Tally Sheet download, see downloadTallySheet()). */
+ * CarShowLogic, Papa, ExcelJS (ExcelJS/Papa are only exercised here via the
+ * Developer > Run Regression Tests round-trip, see runRegressionTests()). The
+ * Judging Tally Sheet (printTallySheet() below) is plain HTML + window.print(),
+ * same as every other report in the app — it does NOT use excel.js/ExcelJS. */
 (function () {
   "use strict";
   var CONFIG = window.CarShowConfig;
   var LOGIC = window.CarShowLogic;
-  var EXCEL = window.CarShowExcel;
 
   var state = {
     reg: null,   // { name, rows }
@@ -122,7 +122,6 @@
     // window card. Filled by ingestDashNumbers(); see App/deploy/dash-numbers.php.
     dashNumbers: {},
     dashNumberSyncError: null,
-    tallySheetBuilding: false,
     tshirtPurchaseName: "",    // Buy T-Shirt form's in-progress Name field
     tshirtPurchaseCost: "",    // Buy T-Shirt form's in-progress Cost field (defaults from settings when opened)
     tshirtPurchaseSize: "",    // Buy T-Shirt form's in-progress T-Shirt Size field (e.g. "Men's Large")
@@ -791,11 +790,13 @@
     // Not selection-dependent like printCardsBtn — always enabled once
     // there's at least one In Car Show car, so an officer can pull a fresh
     // paper copy at any time (e.g. after a batch of Status/In Car Show
-    // edits) without needing to reprint any window cards.
-    var tallyBtn = el("button", { class: "btn", id: "regTallySheetBtn", title: "Download the judging Tally Sheet (assigns Dash #s to any newly-added cars)" },
-      [state.tallySheetBuilding ? "Building…" : "📋 Tally Sheet"]);
-    tallyBtn.addEventListener("click", downloadTallySheetForShow);
-    if (state.tallySheetBuilding || !carsInShow().length) tallyBtn.setAttribute("disabled", "disabled");
+    // edits) without needing to reprint any window cards. Opens the
+    // browser's print preview, same as every other report in the app
+    // (printRegistration/printSponsors/etc.) — not a file download.
+    var tallyBtn = el("button", { class: "btn", id: "regTallySheetBtn", title: "Print the judging Tally Sheet (assigns Dash #s to any newly-added cars)" },
+      ["📋 Print Tally Sheet"]);
+    tallyBtn.addEventListener("click", printTallySheetForShow);
+    if (!carsInShow().length) tallyBtn.setAttribute("disabled", "disabled");
 
     var addBtn = el("button", { class: "btn primary" }, ["+ Add Registration"]);
     addBtn.addEventListener("click", openAddRegistration);
@@ -1066,7 +1067,7 @@
   // collides with a car outside it that already has one.
   //
   // Local state is updated synchronously (before this returns) so callers —
-  // printSelectedWindowCards()/downloadTallySheet() — can rely on
+  // printSelectedWindowCards()/printTallySheetForShow() — can rely on
   // state.dashNumbers being complete immediately after calling this, without
   // waiting on the network push.
   function ensureDashNumbers(rows) {
@@ -1103,49 +1104,76 @@
     });
   }
 
-  // Builds the Judging Tally Sheet workbook for every car currently In Car
-  // Show and triggers a browser download — same vendored ExcelJS the
-  // Excel-export regression round-trip already uses (see excel.js), just
-  // wired to an actual button for the first time. Assumes every row in
-  // `cars` already has a Dash # (the caller runs ensureDashNumbers() first).
-  function downloadTallySheet(cars) {
-    var ExcelJS = window.ExcelJS;
-    if (!ExcelJS) { alert("Excel library failed to load — try reloading the page."); return; }
-    var rows = cars.map(function (r) {
-      return {
-        gen: r["Gen"],
-        dashNumber: state.dashNumbers[rowKey(r)],
-        owner: LOGIC.ownerDisplayName(r),
-        year: r["Year"],
-        color: r["Color"]
-      };
-    });
-    var meta = {
-      title: CONFIG.title.replace(/\s*Registration List$/, ""),
-      generatedAt: new Date(),
-      generations: CONFIG.corvetteGenerations
-    };
-    state.tallySheetBuilding = true;
-    renderViews();
-    Promise.resolve()
-      .then(function () { return EXCEL.buildTallySheet(ExcelJS, rows, meta); })
-      .then(function (wb) { return wb.xlsx.writeBuffer(); })
-      .then(function (buf) {
-        var blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-        var url = URL.createObjectURL(blob);
-        var a = el("a", { href: url, download: meta.title + " Tally Sheet.xlsx" });
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-      })
-      .catch(function (err) {
-        alert("Could not generate the Tally Sheet: " + (err && err.message || err));
-      })
-      .then(function () {
-        state.tallySheetBuilding = false;
-        renderViews();
+  // Builds the Judging Tally Sheet as an HTML table into #printHost and opens
+  // the browser's print preview — same convention every other report in the
+  // app uses (printRegistration/printSponsors/printRegistrationReport/etc.,
+  // see buildPrintHeader() above), rather than a spreadsheet file download.
+  // Assumes every row in `cars` already has a Dash # (the caller runs
+  // ensureDashNumbers() first). One row per registered car, grouped by
+  // generation (the Car Class label only on that block's first row) — no
+  // blank buffer/separator rows, so the printed sheet is exactly as long as
+  // the actual roster. Mirrors excel.js's buildTallySheet() column set, but
+  // that Excel version is no longer reachable from the UI; it's kept only
+  // for the regression suite's round-trip coverage (see excel.js's own
+  // comment) and still has its own buffer rows for that context.
+  function printTallySheet(cars) {
+    var host = $("#printHost");
+    host.innerHTML = "";
+
+    var thead = el("thead", {}, [el("tr", {}, [
+      el("th", { text: "Car Class" }), el("th", { text: "Dash #" }),
+      el("th", { text: "General Votes" }), el("th", { text: "Best of Show Votes" }),
+      el("th", { text: "Owner" }), el("th", { text: "Year" }), el("th", { text: "Color" })
+    ])]);
+
+    var bodyRows = [];
+    function dataRow(cells) {
+      bodyRows.push(el("tr", {}, cells.map(function (v) {
+        return el("td", { text: v == null ? "" : String(v) });
+      })));
+    }
+
+    CONFIG.corvetteGenerations.forEach(function (g) {
+      var inGen = cars
+        .filter(function (r) { return r["Gen"] === g.gen; })
+        .map(function (r) { return { r: r, dashNumber: state.dashNumbers[rowKey(r)] }; })
+        .sort(function (a, b) { return (a.dashNumber || 0) - (b.dashNumber || 0); });
+      if (!inGen.length) return; // no entrants in this generation — no row at all
+      inGen.forEach(function (c, ci) {
+        dataRow([ci === 0 ? g.gen : "", c.dashNumber, "", "", LOGIC.ownerDisplayName(c.r), c.r["Year"] || "", c.r["Color"] || ""]);
       });
+    });
+
+    var tbody = el("tbody", {}, bodyRows);
+    var title = CONFIG.title.replace(/\s*Registration List$/, "") + " — Judging Tally Sheet";
+    host.appendChild(buildPrintHeader(title));
+    host.appendChild(el("table", { class: "grid report-table tally-print-table" }, [thead, tbody]));
+
+    // ---- Summary block — same shape as excel.js's buildTallySheet(): total
+    // cars, then a count + percentage per generation.
+    var summaryRows = [];
+    summaryRows.push(el("tr", {}, [
+      el("td", { class: "tally-summary-label", text: "Total Cars Entered in the show" }),
+      el("td", { text: String(cars.length) })
+    ]));
+    CONFIG.corvetteGenerations.forEach(function (g) {
+      var count = cars.filter(function (r) { return r["Gen"] === g.gen; }).length;
+      var pct = cars.length ? Math.round((count / cars.length) * 100) : 0;
+      summaryRows.push(el("tr", {}, [
+        el("td", { class: "tally-summary-label", text: g.gen }),
+        el("td", { text: count + " (" + pct + "%)" })
+      ]));
+    });
+    // Decided live at the show, not derivable from registration data — left
+    // blank for hand-writing on the printed page, same as the club's own
+    // paper template.
+    ["Most participation from visiting club", "Best of Show", "Dealers Choice"].forEach(function (label) {
+      summaryRows.push(el("tr", {}, [el("td", { class: "tally-summary-label", text: label }), el("td", { text: "" })]));
+    });
+    host.appendChild(el("table", { class: "grid report-table tally-summary-table" }, [el("tbody", {}, summaryRows)]));
+
+    host.appendChild(buildPrintFooter());
+    window.print();
   }
 
   // ---------- Registration tab row selection + bulk delete ----------
@@ -3431,13 +3459,11 @@
   // rows whose In Car Show? is exactly "Yes" actually print; a selected row
   // with any other value is silently skipped (see the toolbar button's own
   // count, which already only counts qualifying rows, so nothing here comes
-  // as a surprise at print time).
-  //
-  // Also assigns Dash # numbers across the WHOLE In-Car-Show roster (not
-  // just the batch being (re)printed) and downloads a fresh Judging Tally
-  // Sheet, so the paper sheet judges use always lists every car currently
-  // showing, with a number for each — not just whichever subset happened to
-  // be selected for this particular reprint.
+  // as a surprise at print time). Prints ONLY — it does not touch the Tally
+  // Sheet; use the separate "📋 Print Tally Sheet" button (printTallySheetForShow
+  // below) for that. printWindowCards() below still assigns a Dash # to any
+  // printed row that doesn't already have one (every printed card needs a
+  // number on it), but only for this batch, not the whole roster.
   function printSelectedWindowCards() {
     var byKey = {};
     allRegistrations().forEach(function (r) { byKey[rowKey(r)] = r; });
@@ -3445,21 +3471,20 @@
       .map(function (key) { return byKey[key]; })
       .filter(function (r) { return r && String(r["In Car Show?"]).trim().toLowerCase() === "yes"; });
     if (!toPrint.length) return;
-    var allShow = carsInShow();
-    ensureDashNumbers(allShow);
     printWindowCards(toPrint);
-    downloadTallySheet(allShow);
   }
 
-  // Toolbar's standalone "📋 Tally Sheet" button — regenerates the sheet
-  // (assigning numbers to any newly-added cars first) without printing or
-  // reprinting any window cards. For an officer who needs a fresh paper copy
-  // after Status/"In Car Show?" edits, without wanting to reprint every card.
-  function downloadTallySheetForShow() {
+  // Toolbar's standalone "📋 Print Tally Sheet" button — the only place the
+  // Tally Sheet is generated from. Assigns Dash # numbers across the WHOLE
+  // In-Car-Show roster (not just whatever's been printed so far) so the
+  // printed sheet always lists every car currently showing, with a number
+  // for each, then opens the browser's print preview. Doesn't print or
+  // reprint any window cards.
+  function printTallySheetForShow() {
     var allShow = carsInShow();
     if (!allShow.length) return;
     ensureDashNumbers(allShow);
-    downloadTallySheet(allShow);
+    printTallySheet(allShow);
   }
 
   // A bare "YYYY-MM-DD" string (what <input type=date> — e.g. the payment

@@ -165,6 +165,14 @@
   // same column set/order and the same per-generation block layout, with a
   // few blank Dash#-only rows left after each generation's real entrants
   // for a late walk-in car to be added by hand on show day.
+  //
+  // NOT reachable from the UI — the "📋 Print Tally Sheet" button builds an
+  // HTML table + window.print() instead (app.js's printTallySheet()), same
+  // convention as every other printed report in the app. This function is
+  // kept only for the regression suite's Excel-round-trip coverage (same
+  // status as build() above — see that function's own history). If the two
+  // implementations' layouts are ever changed, keep them in sync by hand;
+  // nothing enforces that automatically.
   // ---------------------------------------------------------------------
   var TALLY_BUFFER_ROWS = 3;
   var TALLY_HEADERS = ["Car Class", "Dash #", "General Votes", "Best of Show Votes", "Owner", "Year", "Color"];
