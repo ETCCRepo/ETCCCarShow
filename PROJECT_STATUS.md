@@ -1,6 +1,29 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-09 (end of session, latest). **This session refined yesterday's
+Last updated: 2026-09-09 (end of session, latest — second session today). **This session
+added two new Reports-tab print buttons and relocated a third.** "Print Voting Sheet" and
+"Print Flyer" both open a static, club-designed PDF directly in a new tab
+(`window.open("VotingSheet.pdf"/"CarShowFlyer.pdf", "_blank")`) rather than rendering
+through the app's print pipeline — same pattern, new canonical copies live in
+`App/assets/`, uploaded by `ftp-deploy.sh` alongside the logo. **The Voting Sheet went
+through a full HTML/CSS rebuild first** (from a reference image the user attached,
+matching its red-banner/checkmark-badge/numbered-instructions design as closely as
+possible without the corvette-photo/checkered-flag graphics, which aren't app assets) —
+**then the user provided the actual print-ready PDF and said "do not convert document but
+use as is,"** so all of that HTML/CSS was deleted and replaced with the simple
+window.open() approach once the real file existed. **Watch for this if a future session
+is asked to make a print output "look like" an attached image**: check whether an actual
+print-ready file exists or is coming before investing in a pixel-matching HTML rebuild —
+it may get thrown away. Also moved the existing "📋 Print Tally Sheet" button from the
+Registration tab toolbar to the Reports tab (same handler/enable-when-nonempty logic, just
+relocated) per explicit request, so all print-oriented buttons now live in one place. One
+full `/ETCCCarShowCheckpoint`: **`a538f1b`**, pushed to `origin/main`; live site is
+**v4.20** and reflects everything through that commit. `/ETCCCarShowTest` was **not** run
+this session (not requested), but `node test/run-tests.js` was run once to confirm the
+baseline while writing this update: **125 passed, 0 failed** — current and unaffected,
+since nothing this session touches `logic.js`/`excel.js`/`config.js`.
+
+Previous update, same day (2026-09-09, earlier session): **That session refined yesterday's
 Dash # / Judging Tally Sheet feature through three user corrections**, each landing
 promptly after the previous one shipped. (1) "Print Window Cards" was doing two jobs —
 printing cards AND generating the Tally Sheet — split apart: the print button now only
@@ -198,7 +221,91 @@ the auto-mode safety classifier (deleting a live server file is treated as destr
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
 
-## This session's work (2026-09-09)
+## This session's work (2026-09-09, second session — print buttons)
+
+**1. Print Voting Sheet.** User attached an image of a club-designed "Car Show Voting
+Sheet / People's Choice Awards" ballot (red banner header, numbered voting instructions,
+a checkmark icon, two-column C1–C8 + Best of Show category grid with blank Car # boxes,
+comments section, footer thank-you) and asked to add a button to print it.
+- **First pass**: built it as real HTML/CSS in `App/src/app.js` (`printVotingSheet()`, plus
+  helper functions `votingSheetCategories()`/`votingSheetCategoryRow()`/
+  `votingSheetCategoryTable()`) and a matching `.vs-*` block in `App/src/styles.css`,
+  reusing `CONFIG.corvetteGenerations` so the category list couldn't drift from the app's
+  own generation table. Since every other print report in this app is landscape, this
+  needed its own **named `@page` + `:has()` selector**
+  (`#printHost:has(.voting-sheet) { page: voting-sheet; }`) to print portrait without
+  leaking that setting into other reports — worth remembering as a technique if a future
+  portrait-vs-landscape print need comes up again.
+- **User then attached a follow-up image asking for closer visual fidelity** — added a
+  red circular checkmark badge, numbered red-circle instruction steps, a top-left
+  "Cars/People/Community/Charity" tag stack with a red underline rule, and bolder
+  condensed uppercase title styling. Deployed and working at this point.
+- **User then attached the actual print-ready PDF** (`Z:\Backup\ETCC\Car
+  Show\Forms\VotingSheet.pdf`) and said **"do not convert document but use as is."**
+  All of the HTML/CSS from both passes above was deleted — `printVotingSheet()` is now a
+  single line, `window.open("VotingSheet.pdf", "_blank")`, identical in spirit to
+  `printFlyer()` below. The PDF was copied to `App/assets/VotingSheet.pdf` (canonical
+  copy, same convention as the logo) and `ftp-deploy.sh` uploads it alongside the app.
+- **Watch for this pattern in a future session**: when asked to reproduce an attached
+  design as a print output, confirm whether a real print-ready file exists (or is coming)
+  before investing in a pixel-matching HTML/CSS rebuild — here two rounds of that work
+  were built, deployed, and then thrown away once the actual PDF arrived. Asking up front
+  ("do you have a print-ready file, or should I build this from the image?") would have
+  saved the rework.
+
+**2. Print Flyer.** Companion request: "add button to print flyer," attaching
+`Z:\Backup\ETCC\Car Show\Flyer\CarShowFlyer.pdf` (a 2.8MB marketing flyer, already
+designed). Same `window.open()` pattern from the start — no HTML rebuild attempted this
+time, applying the lesson from item 1 immediately. Copied to `App/assets/CarShowFlyer.pdf`,
+uploaded by `ftp-deploy.sh` the same way.
+
+**3. Moved "Print Tally Sheet" to the Reports tab.** Explicit request: "move print tally
+sheet to reports tab." It had lived in the Registration tab's toolbar
+(`buildRegToolbar()`) since the 2026-09-08 session. Moved the button (and its
+enable-only-when-`carsInShow().length`-is-nonzero guard) into `buildReportsView()`
+alongside the other report/print buttons, unchanged otherwise — same
+`printTallySheetForShow()` handler. Renamed its DOM id from `regTallySheetBtn` to
+`reportsTallySheetBtn` to match its new home (confirmed via grep that nothing else
+referenced the old id first) and updated a stale code comment that still said
+"Toolbar's standalone" to say "Reports tab's standalone."
+
+**Checkpoint this session**: one full `/ETCCCarShowCheckpoint` run (build/version bump →
+FTP deploy → commit → push):
+- `a538f1b` — "Add Print Voting Sheet / Print Flyer buttons, move Tally Sheet to Reports"
+  (6 files: `App/src/app.js`, `App/deploy/ftp-deploy.sh`, new
+  `App/assets/CarShowFlyer.pdf`, new `App/assets/VotingSheet.pdf`, plus built
+  `App/ETCCCarShow.html`/`App/version.json`; 90 insertions / 33 deletions — note
+  `App/src/styles.css` shows as unmodified in this commit despite the mid-session CSS
+  add/remove churn, since the net result matched the pre-session file exactly). Pushed to
+  `origin/main`, working tree clean.
+- `version.json` was at minor `17` going in (from the earlier session today); this build
+  stamped **v4.20** into the live footer and left `version.json` at minor `21` for next
+  time (usual one-ahead offset, plus a couple of intermediate un-checkpointed builds
+  during the Voting Sheet iteration).
+- All 32 deploy files uploaded successfully on attempt 1; no errors.
+
+**Tests**: `/ETCCCarShowTest` was **not** run/invoked as a skill this session, but
+`node test/run-tests.js` was run once directly (to source this update's baseline number)
+and came back **125 passed, 0 failed** — nothing in this session's changes touches the
+Node-testable layer (`logic.js`/`excel.js`/`config.js`) either way.
+
+## Known follow-ups / things a new session might need to know (2026-09-09 session, print buttons)
+
+- **No automated coverage for any of this session's UI/DOM changes** (the two new
+  window.open() buttons, the Tally Sheet button's relocation) — same class of gap called
+  out for every other `app.js`-level UI change in this document.
+- **The Voting Sheet and Flyer PDFs are static assets an officer must replace by hand**
+  when the club updates either design: drop a new file at
+  `App/assets/VotingSheet.pdf`/`App/assets/CarShowFlyer.pdf` and redeploy (`ftp-deploy.sh`
+  uploads whatever's there — it doesn't know or care about the PDF's actual content).
+- All prior open items from earlier sessions (multi-year show isolation not yet
+  human-verified, Bill Greene's row still needing a manual "Revert to CSV" click if that
+  hasn't happened yet, orphaned `sponsor-form.php`/`deleted-sponsors.php` files on the
+  live server, 5 internal pages still without any favicon link at all, etc. — see the
+  2026-09-09 (earlier session)/2026-09-08 and older sections below) remain exactly as they
+  were; none were touched this session.
+
+## This session's work (2026-09-09, earlier session — Dash # / Tally Sheet refinement)
 
 Three quick, sequential user corrections against yesterday's Dash # / Judging Tally Sheet
 feature (see the 2026-09-08 section below for the feature's original design), each
@@ -276,7 +383,7 @@ standing "always deploy" rule but not yet committed). **`d380b14`** (v4.16) ship
 test-coverage extraction from item 4. Both pushed to `origin/main`; live site is
 **v4.16**.
 
-## Known follow-ups / things a new session might need to know (2026-09-09 session)
+## Known follow-ups / things a new session might need to know (2026-09-09 session, earlier — Dash # / Tally Sheet refinement)
 
 - **The printed Tally Sheet has never actually been looked at by a human.** Everything
   from today's session was verified by code review and the new pure-function regression
