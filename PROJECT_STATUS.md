@@ -1,6 +1,34 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-08 (end of session, latest). **This session added judging-day
+Last updated: 2026-09-09 (end of session, latest). **This session refined yesterday's
+Dash # / Judging Tally Sheet feature through three user corrections**, each landing
+promptly after the previous one shipped. (1) "Print Window Cards" was doing two jobs —
+printing cards AND generating the Tally Sheet — split apart: the print button now only
+prints (still assigns a Dash # to whatever it's printing, but only that batch), and a new
+standalone **"📋 Print Tally Sheet"** button is the sole place the sheet comes from,
+assigning numbers across the whole In-Car-Show roster first so it's always complete. (2)
+"tally sheet should print with a print preview" — the Tally Sheet button had been
+downloading an `.xlsx` file via the vendored ExcelJS; **replaced entirely** with the same
+convention every other report in the app uses (Registration, Sponsors, Member Report,
+etc.): build an HTML table into `#printHost` and call `window.print()`. `excel.js`'s
+`buildTallySheet()` is no longer reachable from the UI at all — same status as `build()`,
+kept only for the regression suite's round-trip coverage. (3) "remove extra lines from
+tally sheet" — dropped the blank Dash#-only buffer rows, the blank separator row between
+generation blocks, and generations with zero entrants entirely; the printed sheet is now
+exactly as long as the real roster, one row per car. A follow-up `/ETCCCarShowTest` pass
+(after the user separately said "update regression tests" mid-turn) extracted the printed
+sheet's row-grouping/sorting/labeling and summary-block math out of `app.js`'s
+`printTallySheet()` — which had been DOM/print-entangled and untestable — into two new
+pure functions in `logic.js`: `tallySheetRows()` and `tallySheetSummary()`, with 18 new
+assertions (107 → 125 passing) covering the exact "no buffer rows / no empty-generation
+rows" behavior from correction (3) above. Two `/ETCCCarShowCheckpoint` runs this session:
+**`ff49b27`** (v4.15 — all three corrections) and **`d380b14`** (v4.16 — the test
+extraction), both pushed to `origin/main`; live site is **v4.16**. **Still open**: the
+printed Tally Sheet layout (correction 2 and 3's actual visual output) has never been
+looked at by a human — only code review and the new pure-function assertions confirm the
+row *content*, not how it actually lays out on paper. See "Known follow-ups" below.
+
+Previous update: 2026-09-08 (end of session). **That session added judging-day
 Dash # numbering and a Judging Tally Sheet export**, then closed out the regression
 coverage for it in a follow-up pass. What started as "generate a spreadsheet in the
 attached format with the cars in the registrations" (against the club's paper template,
@@ -169,6 +197,109 @@ unlinked — Claude's attempt to delete it via a one-off FTP `DELE` command was 
 the auto-mode safety classifier (deleting a live server file is treated as destructive),
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
+
+## This session's work (2026-09-09)
+
+Three quick, sequential user corrections against yesterday's Dash # / Judging Tally Sheet
+feature (see the 2026-09-08 section below for the feature's original design), each
+addressed and shipped before the next one landed — no plan mode, no back-and-forth
+clarification needed, since each request was self-contained.
+
+**1. "The print windows cards does 2 tasks. It creates a tally sheet and prints window
+cards. Create a separate button to just create the tally sheet. Have print window cards
+just print the cards."**
+- `App/src/app.js`'s `printSelectedWindowCards()` (the Registration tab's bulk "🪟 Print
+  Window Cards" button) no longer calls `downloadTallySheet()`/assigns Dash #s across the
+  whole roster — it now only assigns numbers to (and prints) the specific batch selected,
+  via the existing `printWindowCards(list)` → `ensureDashNumbers(list)` path. Printing a
+  handful of cards no longer has the side effect of regenerating and downloading a
+  spreadsheet nobody asked for at that moment.
+- The pre-existing standalone Tally Sheet button (added the same day as the feature
+  itself, apparently for exactly this reason) is now the **only** place the sheet comes
+  from — renamed `downloadTallySheetForShow()` at the time, later renamed again in
+  correction 2 below. It still assigns Dash #s across the **whole** In-Car-Show roster
+  first (not just whatever's been printed), so the sheet is always complete regardless of
+  which cards have physically been printed yet.
+
+**2. "tally sheet should print with a print preview."**
+- The Tally Sheet button had been downloading an `.xlsx` file (built via the vendored
+  ExcelJS, triggered by a synthetic `<a download>` click) — the app's only file-download
+  UI action, and inconsistent with how every other report works. **Replaced entirely**:
+  new `printTallySheet(cars)` in `app.js` builds an HTML table into `#printHost` via
+  `buildPrintHeader()`/`buildPrintFooter()` (the same helpers `printRegistration()`/
+  `printSponsors()`/`printRegistrationReport()`/etc. all use) and calls `window.print()`.
+  The button is now **"📋 Print Tally Sheet"**, calling renamed
+  `printTallySheetForShow()`.
+- `excel.js`'s `buildTallySheet()` (from the 2026-09-08 session) is **no longer reachable
+  from the UI at all**. It's kept only for the regression suite's Excel round-trip
+  coverage — explicitly documented as such in both files' comments now, matching
+  `build()`'s own long-standing status (test-only, never wired to a button). Dropped the
+  now-dead `var EXCEL = window.CarShowExcel;` and the `CarShowExcel`/`ExcelJS`-for-Tally-
+  Sheet mention from `app.js`'s top-of-file globals comment.
+- New print-specific CSS in `styles.css`'s `@media print` block: `.tally-print-table`
+  (full page width — judges write votes by hand into the General/Best of Show columns, so
+  those two get extra `min-width`) and `.tally-summary-table` (bold labels, no borders,
+  narrower than the main data table).
+
+**3. "remove extra lines from tally sheet."**
+- The printed sheet had inherited the Excel version's padding: 3 blank Dash#-only buffer
+  rows after each generation's real cars (for late walk-ins to be hand-added), a blank
+  separator row between generation blocks, and a header-only row for any generation with
+  zero entrants. **All removed.** The printed sheet is now exactly as long as the actual
+  roster — one row per real car, grouped by generation with the Car Class label only on
+  that block's first row, and a generation with no entrants gets no row at all. Removed
+  the now-dead `TALLY_BUFFER_ROWS` var and `.tally-sep` CSS rule from the print path
+  (excel.js's own `TALLY_BUFFER_ROWS` is untouched — that code path still buffers, since
+  it's a separate, still-tested-but-unused implementation, not something this correction
+  was asked to touch).
+
+**4. Follow-up `/ETCCCarShowTest` pass** (triggered by an explicit "update regression
+tests" message sent mid-turn, right after the checkpoint that shipped corrections 1-3):
+`app.js`'s `printTallySheet()` had picked up real logic (generation grouping, Dash #
+sorting, Car Class labeling, the "skip empty generations" rule from correction 3) with
+zero test coverage, since it's a DOM/print-entangled function the Node suite can't touch
+directly. Extracted the row-building and summary-block math into two new pure functions
+in `logic.js`: `tallySheetRows(carsWithDash, generations)` (takes pre-resolved
+`{rec, dashNumber}` pairs — deliberately doesn't take a `rowKey` function or app state,
+keeping `logic.js` free of app-layer concerns) and `tallySheetSummary(cars, generations)`.
+`app.js`'s `printTallySheet()` now just calls these and renders the result — a
+simplification, not just a test-coverage exercise. Added 18 new assertions
+(`tallySheetRowAssertions()` in `regression-tests.js`) covering generation ordering,
+within-generation Dash-# sorting, the Car-Class-label-on-first-row-only rule, the
+zero-rows-for-zero-cars case, and percentage rounding (including the empty-roster
+0%-not-NaN case). **107 → 125 passing**, no stale assertions, no bugs found — this was
+pure new-coverage work.
+
+**Checkpoints**: two `/ETCCCarShowCheckpoint` runs. **`ff49b27`** (v4.15) shipped
+corrections 1-3 together (they'd been deployed live incrementally via this project's
+standing "always deploy" rule but not yet committed). **`d380b14`** (v4.16) shipped the
+test-coverage extraction from item 4. Both pushed to `origin/main`; live site is
+**v4.16**.
+
+## Known follow-ups / things a new session might need to know (2026-09-09 session)
+
+- **The printed Tally Sheet has never actually been looked at by a human.** Everything
+  from today's session was verified by code review and the new pure-function regression
+  assertions (which check row *content* — the right cars, right order, right Dash #s) —
+  nobody has opened the print preview on the live site and confirmed it actually looks
+  right on paper (column widths, whether the vote-writing columns are wide enough, page
+  breaks with a large roster, etc.). Do this before relying on it at the actual show.
+- **This still inherits the unverified status from the 2026-09-08 session**: the whole
+  Dash # feature (numbers actually getting assigned correctly on print, persisting
+  server-side, showing up right on the physical window card) has never been exercised
+  against real live registration data either. See that session's own follow-up note below
+  for the full context — still open, not newly introduced today.
+- **`excel.js`'s `buildTallySheet()` is now confirmed-orphaned, not just under-used.**
+  Before today it was still reachable (the download button called it); as of correction 2
+  it's purely regression-suite-only code, like `build()`. If a future session wants an
+  actual Excel-download option back (some officers may prefer a spreadsheet they can edit
+  before printing themselves), that function and its assertions are still there and
+  passing — it would just need a button again.
+- **The old paper template's ad-hoc buffer-row counts (which correction 3 walked away
+  from entirely) are gone from the live UI now.** If the club specifically wants room on
+  the printed sheet to hand-write in late walk-in cars, that would need to come back as an
+  explicit, deliberate design choice next time, not a byproduct of matching the old
+  spreadsheet's shape.
 
 ## This session's work (2026-09-08)
 
