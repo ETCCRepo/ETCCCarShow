@@ -19,10 +19,12 @@
  * - Payment recording in Edit Sponsor modal
  * - Member Report (Reports tab): rows sorted by Last Name, Reg # column shows
  *   each member's Member Number, independent of any loaded registration CSV
- * - ensureDashNumbers()/printSelectedWindowCards()/downloadTallySheetForShow()
- *   (app.js): the DOM/fetch-dependent wiring around Dash # assignment and
- *   the Tally Sheet download button — the pure numbering math they call
- *   (LOGIC.dashNumberBase/nextDashNumber) and the workbook shape it produces
+ * - ensureDashNumbers()/printSelectedWindowCards()/printTallySheetForShow()/
+ *   printTallySheet() (app.js): the DOM/fetch/print-dependent wiring around
+ *   Dash # assignment and the "📋 Print Tally Sheet" button — the pure
+ *   numbering math (LOGIC.dashNumberBase/nextDashNumber), the printed
+ *   sheet's row list and summary (LOGIC.tallySheetRows/tallySheetSummary),
+ *   and the (now UI-unreachable, kept only for this) Excel workbook shape
  *   (excel.js's buildTallySheet()) ARE covered below.
  * This file covers logic layer and Excel export round-trip only.
  */
@@ -113,6 +115,7 @@
     multiShowAssertions(results);
     ownerDisplayNameAssertions(results);
     dashNumberAssertions(results);
+    tallySheetRowAssertions(results);
 
     return { out: out, results: results };
   }
@@ -285,6 +288,56 @@
       "nextDashNumber: a gap in already-assigned numbers is not backfilled");
     eq(results, LOGIC.nextDashNumber("", { a: 100 }, gens), null,
       "nextDashNumber: blank Gen returns null rather than guessing a block");
+  }
+
+  // LOGIC.tallySheetRows()/tallySheetSummary() — the row list and bottom
+  // summary block behind the "📋 Print Tally Sheet" button's printTallySheet()
+  // in app.js. Extracted so the grouping/sorting/labeling logic — the part
+  // most likely to regress — has test coverage without needing DOM/print
+  // machinery. As of the "remove extra lines from tally sheet" change, the
+  // printed sheet has NO blank buffer/separator rows and skips any
+  // generation with zero entrants entirely — deliberately different from
+  // excel.js's buildTallySheet() (still buffered, see its own comment),
+  // which is why these two are asserted separately rather than shared.
+  function tallySheetRowAssertions(results) {
+    var gens = CONFIG.corvetteGenerations;
+    var alice = { "Gen": "C6", "Year": "2010", "Color": "Red", "First Name": "Alice", "Last Name": "Sample" };
+    var bob = { "Gen": "C6", "Year": "2012", "Color": "Blue", "First Name": "Bob", "Last Name": "Jones" };
+    var carol = { "Gen": "C1", "Year": "1960", "Color": "White", "First Name": "Carol", "Spouse First Name": "Dan", "Last Name": "Lee" };
+
+    var rows = LOGIC.tallySheetRows([
+      { rec: bob, dashNumber: 601 },
+      { rec: alice, dashNumber: 600 },
+      { rec: carol, dashNumber: 100 }
+    ], gens);
+
+    eq(results, rows.length, 3, "tallySheetRows: one row per car, no buffer/blank rows");
+    eq(results, rows[0].carClass, "C1", "tallySheetRows: generations are ordered C1 first regardless of input order");
+    eq(results, rows[0].dashNumber, 100, "tallySheetRows: C1's one car keeps its Dash #");
+    eq(results, rows[0].owner, "Carol & Dan Lee", "tallySheetRows: owner uses ownerDisplayName()");
+    eq(results, rows[1].dashNumber, 600, "tallySheetRows: within a generation, rows are sorted by Dash #");
+    eq(results, rows[1].carClass, "C6", "tallySheetRows: first row of a block carries the Car Class label");
+    eq(results, rows[2].carClass, "", "tallySheetRows: second row of a block leaves Car Class blank");
+    eq(results, rows[2].dashNumber, 601, "tallySheetRows: second car in the block");
+    eq(results, rows[2].year, "2012", "tallySheetRows: Year passed through");
+    eq(results, rows[2].color, "Blue", "tallySheetRows: Color passed through");
+
+    eq(results, LOGIC.tallySheetRows([], gens).length, 0,
+      "tallySheetRows: no cars -> no rows, not even generation headers");
+    eq(results, LOGIC.tallySheetRows([{ rec: alice, dashNumber: 600 }], gens).length, 1,
+      "tallySheetRows: a generation with zero entrants contributes no row at all");
+
+    var summary = LOGIC.tallySheetSummary([alice, bob, carol], gens);
+    eq(results, summary.total, 3, "tallySheetSummary: total car count");
+    var c1 = summary.byGen.filter(function (g) { return g.gen === "C1"; })[0];
+    var c6 = summary.byGen.filter(function (g) { return g.gen === "C6"; })[0];
+    eq(results, c1.count, 1, "tallySheetSummary: C1 count");
+    eq(results, c1.pct, 33, "tallySheetSummary: C1 percentage rounded to a whole number");
+    eq(results, c6.count, 2, "tallySheetSummary: C6 count");
+    eq(results, summary.byGen.length, gens.length,
+      "tallySheetSummary: every generation is listed, including ones with zero cars");
+    eq(results, LOGIC.tallySheetSummary([], gens).byGen[0].pct, 0,
+      "tallySheetSummary: an empty roster reports 0%, not NaN/Infinity");
   }
 
   // Excel export round-trip (build a workbook, reload it, check shape).

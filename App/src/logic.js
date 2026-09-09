@@ -127,6 +127,50 @@
     var last = String(rec["Last Name"] || "").trim();
     return (first + (spouse ? " & " + spouse : "") + " " + last).trim();
   }
+
+  // The printed Judging Tally Sheet's row list, factored out of app.js's
+  // printTallySheet() so the grouping/sorting/labeling logic — the part most
+  // likely to regress — has test coverage without needing DOM/print
+  // machinery. carsWithDash: [{ rec, dashNumber }, ...], one entry per car
+  // already In Car Show; the caller resolves each row's Dash # from its own
+  // state.dashNumbers map (an app-layer concern this function doesn't need
+  // to know about). Real cars only, sorted by Dash # within each
+  // generation, with the Car Class label on that block's first row and
+  // blank on the rest (matching the printed table). A generation with no
+  // entrants contributes no rows at all.
+  function tallySheetRows(carsWithDash, generations) {
+    generations = generations || CONFIG.corvetteGenerations;
+    var rows = [];
+    generations.forEach(function (g) {
+      var inGen = carsWithDash
+        .filter(function (c) { return c.rec["Gen"] === g.gen; })
+        .slice()
+        .sort(function (a, b) { return (a.dashNumber || 0) - (b.dashNumber || 0); });
+      inGen.forEach(function (c, ci) {
+        rows.push({
+          carClass: ci === 0 ? g.gen : "",
+          dashNumber: c.dashNumber,
+          owner: ownerDisplayName(c.rec),
+          year: c.rec["Year"] || "",
+          color: c.rec["Color"] || ""
+        });
+      });
+    });
+    return rows;
+  }
+
+  // The Tally Sheet's bottom summary block: total car count, then each
+  // generation's count and its percentage of the total (rounded to a whole
+  // percent; 0 for an empty roster rather than dividing by zero).
+  function tallySheetSummary(cars, generations) {
+    generations = generations || CONFIG.corvetteGenerations;
+    var total = cars.length;
+    var byGen = generations.map(function (g) {
+      var count = cars.filter(function (r) { return r["Gen"] === g.gen; }).length;
+      return { gen: g.gen, count: count, pct: total ? Math.round((count / total) * 100) : 0 };
+    });
+    return { total: total, byGen: byGen };
+  }
   // Insert-only, same rationale as the Sponsors-tab Reg Date backfill: fires
   // only while "Ind. Spon. Text" is still blank, so it never
   // overwrites an officer's hand-edit (including a deliberate blank — if
@@ -476,7 +520,7 @@
     return name ? name + " Registration List" : CONFIG.title;
   }
 
-  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName, dashNumberBase: dashNumberBase, nextDashNumber: nextDashNumber };
+  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName, dashNumberBase: dashNumberBase, nextDashNumber: nextDashNumber, tallySheetRows: tallySheetRows, tallySheetSummary: tallySheetSummary };
   root.CarShowLogic = API;
   if (typeof module !== "undefined" && module.exports) module.exports = API;
 })(typeof globalThis !== "undefined" ? globalThis : this);

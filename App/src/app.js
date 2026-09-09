@@ -1133,15 +1133,9 @@
       })));
     }
 
-    CONFIG.corvetteGenerations.forEach(function (g) {
-      var inGen = cars
-        .filter(function (r) { return r["Gen"] === g.gen; })
-        .map(function (r) { return { r: r, dashNumber: state.dashNumbers[rowKey(r)] }; })
-        .sort(function (a, b) { return (a.dashNumber || 0) - (b.dashNumber || 0); });
-      if (!inGen.length) return; // no entrants in this generation — no row at all
-      inGen.forEach(function (c, ci) {
-        dataRow([ci === 0 ? g.gen : "", c.dashNumber, "", "", LOGIC.ownerDisplayName(c.r), c.r["Year"] || "", c.r["Color"] || ""]);
-      });
+    var carsWithDash = cars.map(function (r) { return { rec: r, dashNumber: state.dashNumbers[rowKey(r)] }; });
+    LOGIC.tallySheetRows(carsWithDash, CONFIG.corvetteGenerations).forEach(function (row) {
+      dataRow([row.carClass, row.dashNumber, "", "", row.owner, row.year, row.color]);
     });
 
     var tbody = el("tbody", {}, bodyRows);
@@ -1151,17 +1145,16 @@
 
     // ---- Summary block — same shape as excel.js's buildTallySheet(): total
     // cars, then a count + percentage per generation.
+    var summary = LOGIC.tallySheetSummary(cars, CONFIG.corvetteGenerations);
     var summaryRows = [];
     summaryRows.push(el("tr", {}, [
       el("td", { class: "tally-summary-label", text: "Total Cars Entered in the show" }),
-      el("td", { text: String(cars.length) })
+      el("td", { text: String(summary.total) })
     ]));
-    CONFIG.corvetteGenerations.forEach(function (g) {
-      var count = cars.filter(function (r) { return r["Gen"] === g.gen; }).length;
-      var pct = cars.length ? Math.round((count / cars.length) * 100) : 0;
+    summary.byGen.forEach(function (g) {
       summaryRows.push(el("tr", {}, [
         el("td", { class: "tally-summary-label", text: g.gen }),
-        el("td", { text: count + " (" + pct + "%)" })
+        el("td", { text: g.count + " (" + g.pct + "%)" })
       ]));
     });
     // Decided live at the show, not derivable from registration data — left

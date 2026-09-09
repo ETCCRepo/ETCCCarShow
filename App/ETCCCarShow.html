@@ -437,7 +437,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div>v4.14 &middot; Deployed 09/09/2026 04:44 AM</div>
+  <div>v4.15 &middot; Deployed 09/09/2026 04:48 AM</div>
   <div class="footer-credit">Website by Business Web Express &middot; <a href="mailto:info@businesswebexpress.com">info@businesswebexpress.com</a></div>
   <div class="footer-credit">&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
@@ -877,6 +877,50 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     var last = String(rec["Last Name"] || "").trim();
     return (first + (spouse ? " & " + spouse : "") + " " + last).trim();
   }
+
+  // The printed Judging Tally Sheet's row list, factored out of app.js's
+  // printTallySheet() so the grouping/sorting/labeling logic — the part most
+  // likely to regress — has test coverage without needing DOM/print
+  // machinery. carsWithDash: [{ rec, dashNumber }, ...], one entry per car
+  // already In Car Show; the caller resolves each row's Dash # from its own
+  // state.dashNumbers map (an app-layer concern this function doesn't need
+  // to know about). Real cars only, sorted by Dash # within each
+  // generation, with the Car Class label on that block's first row and
+  // blank on the rest (matching the printed table). A generation with no
+  // entrants contributes no rows at all.
+  function tallySheetRows(carsWithDash, generations) {
+    generations = generations || CONFIG.corvetteGenerations;
+    var rows = [];
+    generations.forEach(function (g) {
+      var inGen = carsWithDash
+        .filter(function (c) { return c.rec["Gen"] === g.gen; })
+        .slice()
+        .sort(function (a, b) { return (a.dashNumber || 0) - (b.dashNumber || 0); });
+      inGen.forEach(function (c, ci) {
+        rows.push({
+          carClass: ci === 0 ? g.gen : "",
+          dashNumber: c.dashNumber,
+          owner: ownerDisplayName(c.rec),
+          year: c.rec["Year"] || "",
+          color: c.rec["Color"] || ""
+        });
+      });
+    });
+    return rows;
+  }
+
+  // The Tally Sheet's bottom summary block: total car count, then each
+  // generation's count and its percentage of the total (rounded to a whole
+  // percent; 0 for an empty roster rather than dividing by zero).
+  function tallySheetSummary(cars, generations) {
+    generations = generations || CONFIG.corvetteGenerations;
+    var total = cars.length;
+    var byGen = generations.map(function (g) {
+      var count = cars.filter(function (r) { return r["Gen"] === g.gen; }).length;
+      return { gen: g.gen, count: count, pct: total ? Math.round((count / total) * 100) : 0 };
+    });
+    return { total: total, byGen: byGen };
+  }
   // Insert-only, same rationale as the Sponsors-tab Reg Date backfill: fires
   // only while "Ind. Spon. Text" is still blank, so it never
   // overwrites an officer's hand-edit (including a deliberate blank — if
@@ -1226,7 +1270,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return name ? name + " Registration List" : CONFIG.title;
   }
 
-  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName, dashNumberBase: dashNumberBase, nextDashNumber: nextDashNumber };
+  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName, dashNumberBase: dashNumberBase, nextDashNumber: nextDashNumber, tallySheetRows: tallySheetRows, tallySheetSummary: tallySheetSummary };
   root.CarShowLogic = API;
   if (typeof module !== "undefined" && module.exports) module.exports = API;
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -1529,10 +1573,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
  * - Payment recording in Edit Sponsor modal
  * - Member Report (Reports tab): rows sorted by Last Name, Reg # column shows
  *   each member's Member Number, independent of any loaded registration CSV
- * - ensureDashNumbers()/printSelectedWindowCards()/downloadTallySheetForShow()
- *   (app.js): the DOM/fetch-dependent wiring around Dash # assignment and
- *   the Tally Sheet download button — the pure numbering math they call
- *   (LOGIC.dashNumberBase/nextDashNumber) and the workbook shape it produces
+ * - ensureDashNumbers()/printSelectedWindowCards()/printTallySheetForShow()/
+ *   printTallySheet() (app.js): the DOM/fetch/print-dependent wiring around
+ *   Dash # assignment and the "📋 Print Tally Sheet" button — the pure
+ *   numbering math (LOGIC.dashNumberBase/nextDashNumber), the printed
+ *   sheet's row list and summary (LOGIC.tallySheetRows/tallySheetSummary),
+ *   and the (now UI-unreachable, kept only for this) Excel workbook shape
  *   (excel.js's buildTallySheet()) ARE covered below.
  * This file covers logic layer and Excel export round-trip only.
  */
@@ -1623,6 +1669,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     multiShowAssertions(results);
     ownerDisplayNameAssertions(results);
     dashNumberAssertions(results);
+    tallySheetRowAssertions(results);
 
     return { out: out, results: results };
   }
@@ -1795,6 +1842,56 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       "nextDashNumber: a gap in already-assigned numbers is not backfilled");
     eq(results, LOGIC.nextDashNumber("", { a: 100 }, gens), null,
       "nextDashNumber: blank Gen returns null rather than guessing a block");
+  }
+
+  // LOGIC.tallySheetRows()/tallySheetSummary() — the row list and bottom
+  // summary block behind the "📋 Print Tally Sheet" button's printTallySheet()
+  // in app.js. Extracted so the grouping/sorting/labeling logic — the part
+  // most likely to regress — has test coverage without needing DOM/print
+  // machinery. As of the "remove extra lines from tally sheet" change, the
+  // printed sheet has NO blank buffer/separator rows and skips any
+  // generation with zero entrants entirely — deliberately different from
+  // excel.js's buildTallySheet() (still buffered, see its own comment),
+  // which is why these two are asserted separately rather than shared.
+  function tallySheetRowAssertions(results) {
+    var gens = CONFIG.corvetteGenerations;
+    var alice = { "Gen": "C6", "Year": "2010", "Color": "Red", "First Name": "Alice", "Last Name": "Sample" };
+    var bob = { "Gen": "C6", "Year": "2012", "Color": "Blue", "First Name": "Bob", "Last Name": "Jones" };
+    var carol = { "Gen": "C1", "Year": "1960", "Color": "White", "First Name": "Carol", "Spouse First Name": "Dan", "Last Name": "Lee" };
+
+    var rows = LOGIC.tallySheetRows([
+      { rec: bob, dashNumber: 601 },
+      { rec: alice, dashNumber: 600 },
+      { rec: carol, dashNumber: 100 }
+    ], gens);
+
+    eq(results, rows.length, 3, "tallySheetRows: one row per car, no buffer/blank rows");
+    eq(results, rows[0].carClass, "C1", "tallySheetRows: generations are ordered C1 first regardless of input order");
+    eq(results, rows[0].dashNumber, 100, "tallySheetRows: C1's one car keeps its Dash #");
+    eq(results, rows[0].owner, "Carol & Dan Lee", "tallySheetRows: owner uses ownerDisplayName()");
+    eq(results, rows[1].dashNumber, 600, "tallySheetRows: within a generation, rows are sorted by Dash #");
+    eq(results, rows[1].carClass, "C6", "tallySheetRows: first row of a block carries the Car Class label");
+    eq(results, rows[2].carClass, "", "tallySheetRows: second row of a block leaves Car Class blank");
+    eq(results, rows[2].dashNumber, 601, "tallySheetRows: second car in the block");
+    eq(results, rows[2].year, "2012", "tallySheetRows: Year passed through");
+    eq(results, rows[2].color, "Blue", "tallySheetRows: Color passed through");
+
+    eq(results, LOGIC.tallySheetRows([], gens).length, 0,
+      "tallySheetRows: no cars -> no rows, not even generation headers");
+    eq(results, LOGIC.tallySheetRows([{ rec: alice, dashNumber: 600 }], gens).length, 1,
+      "tallySheetRows: a generation with zero entrants contributes no row at all");
+
+    var summary = LOGIC.tallySheetSummary([alice, bob, carol], gens);
+    eq(results, summary.total, 3, "tallySheetSummary: total car count");
+    var c1 = summary.byGen.filter(function (g) { return g.gen === "C1"; })[0];
+    var c6 = summary.byGen.filter(function (g) { return g.gen === "C6"; })[0];
+    eq(results, c1.count, 1, "tallySheetSummary: C1 count");
+    eq(results, c1.pct, 33, "tallySheetSummary: C1 percentage rounded to a whole number");
+    eq(results, c6.count, 2, "tallySheetSummary: C6 count");
+    eq(results, summary.byGen.length, gens.length,
+      "tallySheetSummary: every generation is listed, including ones with zero cars");
+    eq(results, LOGIC.tallySheetSummary([], gens).byGen[0].pct, 0,
+      "tallySheetSummary: an empty roster reports 0%, not NaN/Infinity");
   }
 
   // Excel export round-trip (build a workbook, reload it, check shape).
@@ -3020,15 +3117,9 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       })));
     }
 
-    CONFIG.corvetteGenerations.forEach(function (g) {
-      var inGen = cars
-        .filter(function (r) { return r["Gen"] === g.gen; })
-        .map(function (r) { return { r: r, dashNumber: state.dashNumbers[rowKey(r)] }; })
-        .sort(function (a, b) { return (a.dashNumber || 0) - (b.dashNumber || 0); });
-      if (!inGen.length) return; // no entrants in this generation — no row at all
-      inGen.forEach(function (c, ci) {
-        dataRow([ci === 0 ? g.gen : "", c.dashNumber, "", "", LOGIC.ownerDisplayName(c.r), c.r["Year"] || "", c.r["Color"] || ""]);
-      });
+    var carsWithDash = cars.map(function (r) { return { rec: r, dashNumber: state.dashNumbers[rowKey(r)] }; });
+    LOGIC.tallySheetRows(carsWithDash, CONFIG.corvetteGenerations).forEach(function (row) {
+      dataRow([row.carClass, row.dashNumber, "", "", row.owner, row.year, row.color]);
     });
 
     var tbody = el("tbody", {}, bodyRows);
@@ -3038,17 +3129,16 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
 
     // ---- Summary block — same shape as excel.js's buildTallySheet(): total
     // cars, then a count + percentage per generation.
+    var summary = LOGIC.tallySheetSummary(cars, CONFIG.corvetteGenerations);
     var summaryRows = [];
     summaryRows.push(el("tr", {}, [
       el("td", { class: "tally-summary-label", text: "Total Cars Entered in the show" }),
-      el("td", { text: String(cars.length) })
+      el("td", { text: String(summary.total) })
     ]));
-    CONFIG.corvetteGenerations.forEach(function (g) {
-      var count = cars.filter(function (r) { return r["Gen"] === g.gen; }).length;
-      var pct = cars.length ? Math.round((count / cars.length) * 100) : 0;
+    summary.byGen.forEach(function (g) {
       summaryRows.push(el("tr", {}, [
         el("td", { class: "tally-summary-label", text: g.gen }),
-        el("td", { text: count + " (" + pct + "%)" })
+        el("td", { text: g.count + " (" + g.pct + "%)" })
       ]));
     });
     // Decided live at the show, not derivable from registration data — left
