@@ -1,11 +1,35 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-09 (end of session, latest — second session today). **This session
+Last updated: 2026-09-10 (end of session, latest). **This session added a "Setup" tab and
+root-caused why "Import Flyer" wasn't sticking.** New **Setup tab** (after Reports) holds
+three import launchers — **Import Members**, **Import Registrations** (both moved here out
+of the Developer hamburger menu — they're plain officer tools now, gated only by the main
+login session, no Developer password), and a brand-new **Import Flyer** (`flyer-import.php`,
+uploads a replacement `CarShowFlyer.pdf`). **The real bug behind "import flyer does not
+update pdf": `ftp-deploy.sh` was re-uploading `App/assets/CarShowFlyer.pdf` on every
+deploy**, silently overwriting whatever an officer imported — and this project's "always
+deploy on any change" rule means that happened constantly. Fixed by treating
+`CarShowFlyer.pdf` as officer-managed live data (same category as `registrations-data.json`
+et al.): removed from `ftp-deploy.sh`'s upload list, deleted from the repo, gitignored.
+`VotingSheet.pdf` still deploys normally — it has no import page. Also added a click-time
+`?t=<timestamp>` cache-buster to the Print Flyer / Print Voting Sheet buttons (belt-and-
+suspenders; the server actually sends no `Cache-Control` at all, so caching was never the
+cause here — but a future CDN change could make it one). One full `/ETCCCarShowCheckpoint`:
+**`cdb8435`**, pushed to `origin/main`; live site is **v4.24** and reflects everything
+through that commit. `/ETCCCarShowTest` was **not** run (not requested) — last known-good
+125/125 (2026-09-09), unaffected (nothing here touches `logic.js`/`excel.js`/`config.js`).
+**Still open**: the officer's earlier flyer import was lost to the clobbering bug and needs
+re-importing once via Setup → Import Flyer. See "Known follow-ups" below.
+
+Previous update: 2026-09-09 (second session that day). **That session
 added two new Reports-tab print buttons and relocated a third.** "Print Voting Sheet" and
 "Print Flyer" both open a static, club-designed PDF directly in a new tab
 (`window.open("VotingSheet.pdf"/"CarShowFlyer.pdf", "_blank")`) rather than rendering
 through the app's print pipeline — same pattern, new canonical copies live in
-`App/assets/`, uploaded by `ftp-deploy.sh` alongside the logo. **The Voting Sheet went
+`App/assets/`, uploaded by `ftp-deploy.sh` alongside the logo. *(Superseded 2026-09-10:
+`CarShowFlyer.pdf` is no longer in `App/assets/` or uploaded by `ftp-deploy.sh` — it's
+officer-managed via the Setup tab now; `VotingSheet.pdf` still works as described here.)*
+**The Voting Sheet went
 through a full HTML/CSS rebuild first** (from a reference image the user attached,
 matching its red-banner/checkmark-badge/numbered-instructions design as closely as
 possible without the corvette-photo/checkered-flag graphics, which aren't app assets) —
@@ -220,6 +244,102 @@ unlinked — Claude's attempt to delete it via a one-off FTP `DELE` command was 
 the auto-mode safety classifier (deleting a live server file is treated as destructive),
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
+
+## This session's work (2026-09-10 — Setup tab + Import Flyer fix)
+
+**1. New "Setup" tab.** Explicit request: "add a Setup tab after Reports. add the import
+members, import registrations, import flyer." Then, mid-turn: "remove import members and
+registrations from developer."
+- `buildTabs()` (`App/src/app.js`) now appends `mk("setup", "Setup")` after Reports.
+  `renderViews()` handles `state.tab === "setup"` → `buildSetupView()`, placed **before**
+  the `if (!state.result)` empty-state guard so it works with no CSV loaded (like the
+  Sponsors/T-Shirts/Reports tabs).
+- `buildSetupView()` (right after `buildReportsView()`) renders three `<a target="_blank">`
+  launchers with one-line hints: `members-import.php`, `registrations-import.php`,
+  `flyer-import.php`. New `.setup-item` / `.setup-hint` CSS; `.view.setup-view` added to
+  the `@media print` hide list alongside `.reports-view`/`.tshirt-view`.
+- **`buildDeveloperMenuItems()` no longer creates the Import Members / Import
+  Registrations `<a>` items** — the unlocked Developer menu is now Settings / Run
+  Regression Tests / Change Log / API only. Updated the matching stale text: the
+  `developerUnlocked` state comment, the hamburger-menu order comment, the
+  `submitDeveloperPassword()` comment, the Developer-login subtitle copy, the "no data
+  loaded" empty-state message (now says "use the Setup tab → Import Registrations"), and
+  every "Developer > Import Members" comment → "Setup > Import Members".
+- **Access model note**: the import pages were only ever *UI-hidden* behind the Developer
+  password — server-side they check the MAIN login session (`$_SESSION['carshow_authenticated']`),
+  not the Developer password. So moving them to an always-visible tab doesn't weaken
+  anything; a logged-in officer could always reach `members-import.php` by URL.
+
+**2. New `App/deploy/flyer-import.php`.** Officer page (main-session-gated, same as
+`members-import.php`) with a file input that overwrites `CarShowFlyer.pdf` at the web
+root — 15 MB cap, `finfo` MIME check for `application/pdf`, `@chmod 0644` before + after
+the `move_uploaded_file` (in case the existing file isn't PHP-writable),
+`clearstatcache()` so the "current flyer / N KB" line reflects the new upload. Added to
+`ftp-deploy.sh`'s upload list and to `CHANGELOG_DEPLOYED_FILES` in `app.js`. Has the
+favicon + apple-touch-icon `<link>`s like the other standalone pages.
+
+**3. Root-caused "import flyer does not update pdf".** The user imported a flyer, it
+didn't take. **It was NOT caching** — `curl -I` on the live PDF showed the host
+(LiteSpeed/Hostinger) sends *no* `Cache-Control` header at all. The real cause:
+`ftp-deploy.sh` had an `upload "CarShowFlyer.pdf" "$DIR/../assets/CarShowFlyer.pdf"` line
+(added the day before, when the flyer was deploy-managed). Every deploy — and this
+project deploys on *every* change — re-uploaded the stale repo copy over whatever the
+officer had imported.
+- **Fix**: `CarShowFlyer.pdf` is now officer-managed live data, same treatment as
+  `registrations-data.json` / `members-data.json`: the `upload` line is gone from
+  `ftp-deploy.sh` (replaced with a comment explaining why), the file was `git rm`'d from
+  `App/assets/`, and `App/assets/CarShowFlyer.pdf` is now in `.gitignore`. The live copy
+  on the server is untouched by deploys from now on.
+- **`VotingSheet.pdf` is deliberately still deploy-managed** — it has no import page, so
+  `ftp-deploy.sh` still uploads it from `App/assets/VotingSheet.pdf`. To change the voting
+  sheet: replace that file and redeploy.
+- **Belt-and-suspenders**: added `pdfCacheBust(name)` → `name + "?t=" + Date.now()`, used
+  by both `printFlyer()` and `printVotingSheet()` and the import page's "view" link.
+  Not needed today (no cache headers) but cheap insurance if a CDN is ever added.
+- **Watch for this pattern**: any file that becomes officer-editable via an upload page
+  must be removed from `ftp-deploy.sh`'s upload list at the same time, or the next deploy
+  silently reverts it. The script's trailing comment block already lists the JSON data
+  files this applies to — `CarShowFlyer.pdf` is now in that same conceptual bucket.
+
+**4. Skill mix-up (no effect).** The user accidentally invoked `/ETCCSAMCheckpoint`
+(SilentAuctionManager's skill) while in this repo with uncommitted CarShow work. Flagged
+it rather than running it; the user re-invoked `/ETCCCarShowCheckpoint` and it proceeded
+normally. Nothing in the SAM repo was touched.
+
+**Checkpoint this session**: one full `/ETCCCarShowCheckpoint` run (build/version bump →
+FTP deploy → commit → push):
+- `cdb8435` — "Add Setup tab (Import Members/Registrations/Flyer); stop clobbering the
+  flyer" (8 files: `.gitignore`, `App/src/app.js`, `App/src/styles.css`,
+  `App/deploy/ftp-deploy.sh`, new `App/deploy/flyer-import.php`, deleted
+  `App/assets/CarShowFlyer.pdf`, plus built `App/ETCCCarShow.html`/`App/version.json`;
+  293 insertions / 67 deletions). Pushed to `origin/main`, working tree clean.
+- `version.json` was at minor `21` going in; several intermediate builds during the
+  session's iteration left it higher — this checkpoint's build stamped **v4.24** into the
+  live footer and left `version.json` at minor `25` for next time.
+- Deploy confirmed `CarShowFlyer.pdf` was NOT re-uploaded (its server timestamp stayed at
+  the previous deploy's), which is the whole point of fix #3.
+
+**Tests**: `/ETCCCarShowTest` not run/invoked (not requested); nothing this session
+touches the Node-testable layer. Baseline remains **125/125** (2026-09-09).
+
+## Known follow-ups / things a new session might need to know (2026-09-10 session)
+
+- **The officer needs to re-import the flyer once.** Their earlier import was overwritten
+  by a deploy before fix #3 landed; the live `CarShowFlyer.pdf` is currently the old
+  generic marketing PDF from the (now-deleted) repo asset. Setup → Import Flyer, once,
+  and it will stick.
+- **`CHANGELOG_DEPLOYED_FILES` in `app.js` is still stale** (pre-existing, noted in older
+  sessions) — `flyer-import.php` was added to it this session, but other deployed files
+  are still missing. Out of scope again; if a future session is asked to fix Developer >
+  Change Log's "Files Deployed" count, that array is where to look.
+- **No automated coverage for the Setup tab or `flyer-import.php`** — all UI/PHP,
+  outside the Node regression suite's reach (same standing gap as every other
+  `app.js`/`deploy/` change).
+- All prior open items from earlier sessions (multi-year show isolation not yet
+  human-verified, Bill Greene's row still needing a manual "Revert to CSV" click if that
+  hasn't happened, orphaned `sponsor-form.php`/`deleted-sponsors.php` on the live server,
+  5 internal pages still without a favicon link — see older sections below) remain
+  unchanged; none were touched this session.
 
 ## This session's work (2026-09-09, second session — print buttons)
 
