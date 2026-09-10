@@ -116,6 +116,7 @@ upload "tshirt-purchases.php"
 upload "registrations-upload.php"
 upload "members-import.php"
 upload "registrations-import.php"
+upload "flyer-import.php"
 upload "forgot-password.php"
 upload "reset-password.php"
 upload "dev-forgot-password.php"
@@ -124,14 +125,17 @@ upload "logout.php"
 # canonical copy lives in ../assets/, shared with the main app's build.js (which
 # embeds it as base64) — see assets/ETCClogoWhiteBackground.png
 upload "ETCClogoWhiteBackground.png" "$DIR/../assets/ETCClogoWhiteBackground.png"
-# Static marketing flyer PDF — opened directly (window.open) by the Reports
-# tab's "Print Flyer" button, not rendered/filled by the app like
-# window-card.pdf is. Canonical copy lives in ../assets/, same convention as
-# the logo above; replace that file and redeploy to update the flyer.
-upload "CarShowFlyer.pdf" "$DIR/../assets/CarShowFlyer.pdf"
-# Static People's Choice voting sheet PDF — same "opened directly, not
-# rendered by the app" pattern as the flyer above, for the Reports tab's
-# "Print Voting Sheet" button.
+# CarShowFlyer.pdf is DELIBERATELY NOT uploaded here — it's officer-managed
+# live data now (replaced via the Setup tab's Import Flyer page /
+# flyer-import.php), same category as registrations-data.json et al. below.
+# Re-uploading a repo copy on every deploy would silently clobber whatever
+# an officer imported. If a fresh server ever needs a starting flyer, import
+# one through the Setup tab.
+#
+# Static People's Choice voting sheet PDF — opened directly (window.open) by
+# the Reports tab's "Print Voting Sheet" button, not rendered/filled by the
+# app. No import page for this one, so it stays deploy-managed: canonical
+# copy lives in ../assets/, replace that file and redeploy to update it.
 upload "VotingSheet.pdf" "$DIR/../assets/VotingSheet.pdf"
 upload ".htaccess"
 # secrets.php is deliberately NEVER uploaded here (unlike earlier versions of this

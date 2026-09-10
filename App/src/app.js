@@ -60,7 +60,7 @@
     deleteSelectedOpen: false, // "Delete selected sponsors" confirmation modal
     developerLoginOpen: false, // "Developer Login" full-page screen (see openDeveloperLogin())
     developerVerifying: false, // password check in flight
-    developerUnlocked: false,  // password verified this page load — reveals Import Members/Registrations
+    developerUnlocked: false,  // password verified this page load — reveals Settings/Regression Tests/Change Log/API
     developerError: null,      // developer password error message, or null
     changelogOpen: false,      // "Change Log" full page (Developer submenu)
     changelogLoading: false,
@@ -368,7 +368,7 @@
   }
 
   // Backfills Spouse First Name from the member roster (members-data.json,
-  // via Developer > Import Members) for a CSV-imported registration whose
+  // via Setup > Import Members) for a CSV-imported registration whose
   // own Reg # (the registrant's real ETCC member number) matches a
   // roster entry with a spouseFirstName on file — see members-import.php's
   // comment. Insert-only, same as applySponsorshipTextDefault: never
@@ -484,9 +484,18 @@
       return;
     }
 
+    // Setup tab — the officer-facing home for the import pages (members,
+    // registrations, flyer). Each opens its own standalone PHP page; all are
+    // gated server-side by the main login session, so no CSV data or
+    // Developer unlock is needed to reach them.
+    if (state.tab === "setup") {
+      app.appendChild(buildSetupView());
+      return;
+    }
+
     if (!state.result) {
       app.appendChild(el("div", { class: "empty-state" },
-        ["No registration data loaded yet — use the menu's Developer → Import Registrations to load the first CSV export."]));
+        ["No registration data loaded yet — use the Setup tab → Import Registrations to load the first CSV export."]));
       return;
     }
     if (!state.result.ok) {
@@ -514,7 +523,7 @@
       t.addEventListener("click", function () { state.tab = id; renderViews(); });
       return t;
     };
-    return el("div", { class: "tabs no-print" }, [mk("sum", "Summary"), mk("reg", "Registration"), mk("sponsors", "Sponsors"), mk("tsh", "T-Shirts"), mk("reports", "Reports")]);
+    return el("div", { class: "tabs no-print" }, [mk("sum", "Summary"), mk("reg", "Registration"), mk("sponsors", "Sponsors"), mk("tsh", "T-Shirts"), mk("reports", "Reports"), mk("setup", "Setup")]);
   }
 
   // ---------- Car Shows picker (the landing screen, shown before the tabs) ----------
@@ -3085,7 +3094,7 @@
     row("Reg Type", regTypeSel);
 
     // Walk-In Member only: type a name and pick a match from the imported
-    // roster (state.members, from Developer > Import Members) to auto-fill
+    // roster (state.members, from Setup > Import Members) to auto-fill
     // the whole form — Last/First Name, Reg #, and whichever contact
     // fields that roster entry has — same "Last, First" datalist pattern
     // member-sponsor-form.php's "ETCC Member Name" field uses. Manual entry still
@@ -3500,8 +3509,8 @@
   }
 
   // ---------- header menu (hamburger) / settings ----------
-  // Order: Logout, Developer (password-gated — reveals Import Members /
-  // Import Registrations / Run Regression Tests / Change Log once unlocked).
+  // Order: Logout, Developer (password-gated — reveals Settings / Run
+  // Regression Tests / Change Log / API once unlocked).
   function buildHeaderMenu() {
     var header = $("header.app");
     if (!header) return;
@@ -3535,11 +3544,12 @@
   }
   // Checks against a SEPARATE Developer password (index.php's action=dev_login,
   // $DEV_PASSWORD_HASH in secrets.php) — a distinct credential from the main
-  // site login, without ever exposing either hash to this script. Every
-  // Import Members/Registrations link is still independently session-gated
-  // server-side using the MAIN login's session (see members-import.php/
-  // registrations-import.php) — this step is only about hiding those links
-  // from the menu until the Developer password is entered.
+  // site login, without ever exposing either hash to this script. This step
+  // only hides the Settings / Regression Tests / Change Log / API menu items
+  // until the Developer password is entered; each of those still does its own
+  // server-side auth. (The import pages moved to the always-visible Setup tab
+  // and are gated only by the MAIN login session — see members-import.php /
+  // registrations-import.php / flyer-import.php.)
   function submitDeveloperPassword(password) {
     return fetch(location.pathname, {
       method: "POST",
@@ -3612,8 +3622,8 @@
     if (logoImg) kids.push(logoImg);
     kids.push(el("h1", { class: "dev-login-title", text: "Developer Login" }));
     kids.push(el("p", { class: "dev-login-subtitle" },
-      ["Unlocks Import Members, Import Registrations, Settings, Regression Tests, " +
-       "Change Log, and API — a separate password from the main site login."]));
+      ["Unlocks Settings, Regression Tests, Change Log, and API — a separate " +
+       "password from the main site login."]));
     kids.push(pwInput);
     if (state.developerError) kids.push(el("div", { class: "dev-login-error" }, [state.developerError]));
     kids.push(goBtn);
@@ -3629,10 +3639,8 @@
 
   function buildDeveloperMenuItems() {
     if (state.developerUnlocked) {
-      var importMembers = el("a", { class: "hdr-menu-item", href: "members-import.php", target: "_blank", rel: "noopener" }, ["👥 Import Members"]);
-      importMembers.addEventListener("click", closeMenu);
-      var importRegs = el("a", { class: "hdr-menu-item", href: "registrations-import.php", target: "_blank", rel: "noopener" }, ["📋 Import Registrations"]);
-      importRegs.addEventListener("click", closeMenu);
+      // Import Members / Import Registrations moved to the Setup tab (a plain
+      // officer tool, no Developer unlock needed) — see buildSetupView().
       var settings = el("button", { class: "hdr-menu-item" }, ["⚙ Settings"]);
       settings.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openSettings(); });
       var regTests = el("button", { class: "hdr-menu-item" }, ["🧪 Run Regression Tests"]);
@@ -3641,7 +3649,7 @@
       changelog.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openChangelog(); });
       var apiItem = el("button", { class: "hdr-menu-item" }, ["🔌 API"]);
       apiItem.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openApiPage(); });
-      return [importMembers, importRegs, settings, regTests, changelog, apiItem];
+      return [settings, regTests, changelog, apiItem];
     }
     var devBtn = el("button", { class: "hdr-menu-item" }, ["🛠 Developer"]);
     devBtn.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openDeveloperLogin(); });
@@ -3994,7 +4002,7 @@
   var CHANGELOG_DEPLOYED_FILES = [
     "ETCCCarShow.html", "_login.html", "index.php", "lib.php", "member-sponsor-form.php",
     "sponsor-submissions.php", "registrations-upload.php", "members-import.php",
-    "registrations-import.php", "forgot-password.php", "reset-password.php",
+    "registrations-import.php", "flyer-import.php", "forgot-password.php", "reset-password.php",
     "logout.php", "ETCClogoWhiteBackground.png", ".htaccess"
   ];
   var CHANGELOG_TEXT_EXTS = ["html", "js", "css", "md", "php", "json", "txt", "sh", "htaccess"];
@@ -4552,6 +4560,31 @@
     ]);
   }
 
+  // ---------- Setup tab ----------
+  // Launchers into the three standalone import pages. Each is its own PHP
+  // page (opened in a new tab) gated server-side by the main login session —
+  // Import Members and Import Registrations used to live behind the
+  // Developer-menu unlock; they're plain officer tools now. Import Flyer
+  // (flyer-import.php) uploads a replacement CarShowFlyer.pdf, the file the
+  // Reports tab's "Print Flyer" button opens.
+  function buildSetupView() {
+    var mk = function (href, label, hint) {
+      var link = el("a", { class: "btn", href: href, target: "_blank", rel: "noopener" }, [label]);
+      return el("div", { class: "setup-item" }, [link, el("div", { class: "setup-hint", text: hint })]);
+    };
+    var col = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start; gap: 14px" }, [
+      mk("members-import.php", "👥 Import Members", "Upload the ETCC membership roster CSV (used for name lookup / sponsor-form validation)."),
+      mk("registrations-import.php", "📋 Import Registrations", "Upload the ClubExpress registration + activity CSV export for the current show."),
+      mk("flyer-import.php", "🖼️ Import Flyer", "Upload a replacement car show flyer PDF (opened by the Reports tab's Print Flyer button).")
+    ]);
+    return el("div", { class: "view setup-view" }, [
+      el("div", { class: "panel" }, [
+        el("h3", { text: "Setup" }),
+        col
+      ])
+    ]);
+  }
+
   // ---------- Car Show Summary Report (print) ----------
   // Reuses buildSummaryView() verbatim (the same panels the Summary tab
   // shows on screen), cloned into #printHost, so this report can never drift
@@ -4601,7 +4634,7 @@
 
   // ---------- Member Report (print) ----------
   // Last Name / First Name / Reg # for every club member on the roster
-  // (state.members, from Developer > Import Members) — independent of any
+  // (state.members, from Setup > Import Members) — independent of any
   // loaded registration CSV, always sorted by Last Name. "Reg #" here is the
   // member's own Member Number, same value used as "Reg #" elsewhere in the
   // app for a member's registration.
@@ -4632,6 +4665,15 @@
     window.print();
   }
 
+  // Cache-buster for the static PDFs opened by the two buttons below. These
+  // files are replaced in place (VotingSheet.pdf by ftp-deploy.sh,
+  // CarShowFlyer.pdf by flyer-import.php) at the SAME URL, and the host
+  // (LiteSpeed on Hostinger) serves them with a long default max-age — so
+  // without a unique query string the browser keeps showing the old copy
+  // after a re-upload. A fresh timestamp per click always fetches the
+  // current file.
+  function pdfCacheBust(name) { return name + "?t=" + Date.now(); }
+
   // ---------- Car Show Voting Sheet (print) ----------
   // A static, already-designed People's Choice ballot PDF (VotingSheet.pdf,
   // uploaded alongside the flyer/logo — see ftp-deploy.sh) — opened directly
@@ -4640,18 +4682,18 @@
   // button rebuilt the design from a reference image; the club provided the
   // actual print-ready PDF instead, which is authoritative.
   function printVotingSheet() {
-    window.open("VotingSheet.pdf", "_blank");
+    window.open(pdfCacheBust("VotingSheet.pdf"), "_blank");
   }
 
   // ---------- Car Show Flyer (print) ----------
-  // A static, already-designed marketing PDF (CarShowFlyer.pdf, uploaded
-  // alongside the logo — see ftp-deploy.sh) — opened directly in a new tab
-  // rather than rendered through this app's print pipeline, so the browser's
-  // own PDF viewer handles printing. Nothing here touches #printHost/
+  // A static, already-designed marketing PDF (CarShowFlyer.pdf, replaced by
+  // the Setup tab's Import Flyer page) — opened directly in a new tab rather
+  // than rendered through this app's print pipeline, so the browser's own
+  // PDF viewer handles printing. Nothing here touches #printHost/
   // window.print(); unlike every other Reports-tab button, this one doesn't
   // produce a report from app data at all.
   function printFlyer() {
-    window.open("CarShowFlyer.pdf", "_blank");
+    window.open(pdfCacheBust("CarShowFlyer.pdf"), "_blank");
   }
 
   // ---------- Sponsor Report (full-page screen) ----------

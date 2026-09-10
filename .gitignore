@@ -19,3 +19,9 @@ App/deploy/sponsor-submissions.json
 App/deploy/registrations-data.json
 App/deploy/members-data.json
 App/deploy/password-reset.json
+
+# The car show flyer is officer-managed live data too (replaced via the Setup
+# tab's Import Flyer page). Not committed, not uploaded by ftp-deploy.sh — a
+# stray local copy here would only invite someone to "fix" the flyer by
+# editing a file that does nothing.
+App/assets/CarShowFlyer.pdf

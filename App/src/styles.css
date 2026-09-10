@@ -353,7 +353,7 @@ a.show-open:hover { text-decoration: underline; }
      both are single-class selectors with equal specificity, so source order
      decides the winner, and the tab-specific hide needs to beat the generic
      "always show the current tab" rule. */
-  .view.tshirt-view, .view.reports-view { display: none !important; }
+  .view.tshirt-view, .view.reports-view, .view.setup-view { display: none !important; }
   body { background: #fff; }
   /* Registration tab: hide the on-screen (collapsed-columns) table and show the
      full-column print-only table built fresh by printRegistration() instead.
@@ -415,3 +415,7 @@ a.show-open:hover { text-decoration: underline; }
 /* ── Reports tab banner row ── */
 .reports-row { display: flex; align-items: center; justify-content: center; gap: 24px; flex-wrap: wrap; margin-top: 10px; }
 .reports-banner { display: block; max-width: 360px; width: 100%; height: auto; border-radius: 10px; flex-shrink: 0; }
+
+/* ── Setup tab ── */
+.setup-item { display: flex; flex-direction: column; gap: 3px; }
+.setup-hint { font-size: 12px; color: var(--muted); max-width: 520px; }
