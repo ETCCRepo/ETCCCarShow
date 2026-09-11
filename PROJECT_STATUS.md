@@ -1,6 +1,38 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-10 (end of session, latest). **This session added a "Setup" tab and
+Last updated: 2026-09-11 (end of session, latest). **This session started as "sponsor form:
+add option for a sponsor to order more than one t-shirt" and ended up scoped down to
+admin-only, plus added ClubExpress export instructions to the Setup tab.** First pass added
+multi-shirt ordering to BOTH the public sign-up forms (member-sponsor-form.php/
+public-sponsor-form.php, a repeatable "+ Add Another Shirt" row) and the Sponsors tab's Edit
+Sponsor modal — but the user then corrected this explicitly: **"sponsor forms should be
+unchanged and only support one tshirt. The sponsor tab is the only place where multiple
+sponsor tshirts are allowed."** The two public PHP forms were reverted via `git checkout --`
+back to their single-`shirtSize`-field state (confirmed clean — zero diff against the last
+commit) and redeployed; only the Sponsors tab's Edit Sponsor modal kept the repeatable
+add/remove shirt-size rows. **Current, correct state**: a sponsor's shirt order is stored as
+a `shirtSizes` array (plural, canonical) with `shirtSize` (singular, first entry) kept
+alongside purely for backward compatibility — new `LOGIC.sponsorShirtSizes(sp)` in
+`App/src/logic.js` is the one normalization point every reader goes through (the Sponsors
+table's T-Shirt column + its print view, the Excel export, and the Summary tab's per-type
+and combined shirt-size tallies `sponsorStatsByType()`/`allSponsorShirtCounts()` — all now
+count every shirt ordered, not just the first). `excel.js` gained a `require("./logic.js")`
+it didn't have before. Separately, added a shared **"❓ Instructions"** modal
+(`state.importHelp`) next to the Setup tab's Import Members and Import Registrations
+buttons — documents the exact, otherwise-unwritten-down ClubExpress click-path for each CSV
+export (roster: Control Panel → People → Additional Member Data → Export Answers → Export;
+registration+activity pair: Control Panel → Admin Options → Exports → Registration Data /
+Activity Registrant Data → Export → save as `registration_data.csv` /
+`activity_registrant_data.csv`), refined twice more in-session as the user corrected the
+exact steps and filenames. One full `/ETCCCarShowCheckpoint`: **`df76f9b`**, pushed to
+`origin/main`; live site is **v4.31** and reflects everything through that commit.
+`/ETCCCarShowTest` was **not** run this session (not requested) — **flagged explicitly as a
+gap**: the sponsor shirt-count math in three separate tally functions changed from reading
+one field to iterating a list, with zero automated coverage of that change. Last known-good
+suite run remains 125/125 (2026-09-09), unaffected by and not re-verified against this
+session's changes. See "Known follow-ups" below.
+
+Previous update: 2026-09-10 (end of session). **That session added a "Setup" tab and
 root-caused why "Import Flyer" wasn't sticking.** New **Setup tab** (after Reports) holds
 three import launchers — **Import Members**, **Import Registrations** (both moved here out
 of the Developer hamburger menu — they're plain officer tools now, gated only by the main
@@ -244,6 +276,115 @@ unlinked — Claude's attempt to delete it via a one-off FTP `DELE` command was 
 the auto-mode safety classifier (deleting a live server file is treated as destructive),
 so it's still awaiting **manual removal by the user** via their hosting file manager or
 an FTP client. See "Known follow-ups" below.
+
+## This session's work (2026-09-11 — sponsor multi-shirt + Setup instructions)
+
+**Request 1**: "Sponsor form: add option for a sponsor to order more than one t-shirt."
+
+**First pass (later partially reverted — see Request 2)**: added a repeatable
+"+ Add Another Shirt" row to BOTH public sign-up forms
+(`App/deploy/member-sponsor-form.php`, `App/deploy/public-sponsor-form.php` — vanilla-JS
+add/remove, posted as `shirtSize[]`) AND the Sponsors tab's Edit Sponsor modal, plus all the
+supporting admin-side changes described below.
+
+**Request 2 (correction)**: **"sponsor forms should be unchanged and only support one
+tshirt. The sponsor tab is the only place where multiple sponsor tshirts are allowed."**
+Reverted both PHP forms with `git checkout -- App/deploy/member-sponsor-form.php
+App/deploy/public-sponsor-form.php` (both were still uncommitted at that point, so this was
+a clean revert with zero risk — confirmed `git status` showed no diff afterward), then
+rebuilt and redeployed so the live public forms went back to their original single-select
+state. **Current, correct architecture**:
+- Public forms: unchanged, single `shirtSize` field, exactly as before this session.
+- Sponsors tab (`App/src/app.js`) Edit Sponsor modal: the ONLY place multiple shirts can be
+  entered. `blankSponsor()` now defaults `shirtSizes: []` (plural); `openSponsorForm()`
+  normalizes whatever it's handed (an existing sponsor might only have the old singular
+  `shirtSize`) via the new `LOGIC.sponsorShirtSizes()` before rendering, so the modal always
+  works with a plain array regardless of how the record was originally saved.
+- The modal's shirt UI (`buildShirtSelect()`/`addShirtRow()`/`updateShirtRemoveButtons()`/
+  `getShirtSizeValues()`, all local to `renderSponsorFormModal()`) does plain DOM
+  add/remove — NOT a full modal re-render — specifically so it doesn't disturb focus or the
+  existing 1500ms debounced autosave while an officer is mid-edit elsewhere in the form.
+  Autosave wiring is delegated (`shirtRowsWrap.addEventListener('input'/'change', ...)`)
+  rather than per-`<select>`, so a row added/removed after initial render is covered
+  automatically with no extra bookkeeping.
+- `buildSponsorRecord()` now takes the current array of chosen sizes (read fresh via
+  `getShirtSizeValues()` at save time) instead of a single select's value, and writes BOTH
+  `shirtSizes` (canonical, plural) and `shirtSize: shirtSizes[0] || ""` (kept for backward
+  compatibility with anything — none currently — that might still read the old field
+  directly).
+- New `LOGIC.sponsorShirtSizes(sp)` in `App/src/logic.js` — the single normalization point:
+  returns `sp.shirtSizes` if it's a non-empty array, else falls back to `[sp.shirtSize]` if
+  that's set, else `[]`. Every consumer of a sponsor's shirt data now goes through this
+  instead of reading `.shirtSize` directly:
+  - `sponsorFieldText()` (the Sponsors table's T-Shirt column, and by extension its print
+    view at the same code path) — joins with `", "`.
+  - `allSponsorShirtCounts()` and `sponsorStatsByType()` (Summary tab's combined and
+    per-type shirt-size tallies) — both now iterate every ordered shirt instead of checking
+    one field, so a sponsor with 3 shirts counts as 3 in the matrix, not 1.
+  - `excel.js`'s `sponsorSheet()` T-Shirt export column — joins with `", "`. `excel.js`
+    gained a top-of-file `require("./logic.js")` (mirroring its existing `config.js`
+    require) since it didn't previously depend on `logic.js` at all.
+- **Not done, deliberately out of scope**: no UI anywhere shows a sponsor's shirt COUNT as
+  a distinct number (e.g. "3 shirts") — it's always the joined size list. No dedicated
+  "quantity" input; ordering the same size twice just means adding two rows with that size
+  selected in each.
+
+**Request 3**: "next to import members, add an instructions button" documenting a specific
+6-step ClubExpress export path (Control Panel → People → Additional Member Data → Export
+Answers → Export → save as `answers.csv`) plus a 7th line, "Import answers.csv", describing
+what to do with the file afterward (not itself a ClubExpress step).
+
+**Requests 4–6** (three follow-up corrections in quick succession, same session): "next to
+import registrations, add an instructions button" with its own steps, then two corrections
+refining exactly what those registration steps and filenames should be — the final,
+shipped version covers BOTH of Import Registrations' two file fields (`reg_csv` required,
+`act_csv` optional) in one modal: Control Panel → Admin Options → Exports → Registration
+Data → Export → save as `registration_data.csv` → Exports → Activity Registrant Data →
+Export → save as `activity_registrant_data.csv`.
+
+**Implementation** — one shared, reusable modal rather than one flag/render-function pair
+per button (the natural design once a second button needed the same treatment):
+- `state.importHelp` — `null` when closed, else `{ title, steps }` for whichever button
+  opened it.
+- `openImportHelp(title, steps)` / `closeImportHelp()` / `renderImportHelp()` — a plain
+  `.modal`/`.modal-backdrop` (same pattern as `renderClearSponsorsConfirm()`) rendered into
+  a new `#importHelpHost` div (added to `init()`'s host-div list), with an ordered `<ol>` of
+  the steps and a closing line pointing back at "the matching Import button above" (kept
+  deliberately generic after the second correction, once two different import types needed
+  different saved filenames — an earlier draft hardcoded "upload that answers.csv file").
+  Escape-key wired in the same keydown handler as every other modal in the app.
+- `MEMBER_IMPORT_STEPS` / `REGISTRATION_IMPORT_STEPS` — two plain string arrays; each
+  Setup-tab import row's `helpBtn(title, steps)` closure wires its own "❓ Instructions"
+  button to `openImportHelp()` with the right pair. `buildSetupView()`'s `mk()` helper
+  gained an optional 4th `extraBtn` param so the button can sit inline next to the
+  Import link without disturbing the two other rows (Import Flyer has no Instructions
+  button — it's a plain file upload with nothing ClubExpress-specific to document).
+
+**Checkpoint**: `node build.js` (v4.31) → `bash deploy/ftp-deploy.sh` → commit `df76f9b` →
+push to `origin/main`. Live site is v4.31.
+
+## Known follow-ups / things a new session might need to know (2026-09-11 session)
+
+- **No automated test coverage for this session's sponsor shirt-count changes.**
+  `/ETCCCarShowTest` was not run. `sponsorFieldText()`, `allSponsorShirtCounts()`, and
+  `sponsorStatsByType()` all changed from reading one field to iterating
+  `LOGIC.sponsorShirtSizes()`'s result — a genuine behavior change to three separate tally
+  paths, currently verified only by code review. A future `/ETCCCarShowTest` pass should add
+  assertions for `LOGIC.sponsorShirtSizes()` itself (old single-field records, new
+  plural-array records, and the empty case) at minimum; the app.js tally functions remain
+  UI-only/manually-tested per this file's standing convention.
+- **This has never been exercised on the live site by a human.** Nobody has actually opened
+  the Sponsors tab, added a sponsor with 2+ shirts via the new repeatable rows, saved, and
+  confirmed the Summary tab's shirt matrix and the Excel export both reflect the right
+  counts. Worth doing before the next show.
+- **The public forms' revert was verified clean** (`git status` showed zero diff against
+  the last commit for both files before rebuilding) — nothing partial or half-reverted was
+  left behind. Confirmed working as of the v4.31 deploy.
+- **The Setup tab's import instructions are transcribed from the user's own step lists**,
+  not independently verified against a live ClubExpress account by Claude — if ClubExpress's
+  actual menu wording or path ever drifts from what's now hardcoded in
+  `MEMBER_IMPORT_STEPS`/`REGISTRATION_IMPORT_STEPS`, those two arrays in `App/src/app.js`
+  are the only place to update.
 
 ## This session's work (2026-09-10 — Setup tab + Import Flyer fix)
 
