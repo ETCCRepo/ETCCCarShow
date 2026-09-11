@@ -6,6 +6,8 @@
   "use strict";
   var CONFIG = root.CarShowConfig ||
     (typeof require !== "undefined" ? require("./config.js") : null);
+  var LOGIC = root.CarShowLogic ||
+    (typeof require !== "undefined" ? require("./logic.js") : null);
 
   var GREY = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF1F4" } };
   var YELLOW = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF7CC" } };
@@ -60,7 +62,11 @@
     });
     sponsors.forEach(function (s, ri) {
       SPONSOR_COLS.forEach(function (c, ci) {
-        var v = c.key === "sponsorType" ? sponsorTypeLabel(s.sponsorType) : s[c.key];
+        // A sponsor can order more than one shirt (see LOGIC.sponsorShirtSizes)
+        // — exported as a comma list rather than just the first.
+        var v = c.key === "sponsorType" ? sponsorTypeLabel(s.sponsorType)
+          : c.key === "shirtSize" ? LOGIC.sponsorShirtSizes(s).join(", ")
+          : s[c.key];
         var cell = ws.getCell(2 + ri, ci + 1);
         cell.value = v || ""; cell.border = border();
       });

@@ -128,6 +128,24 @@
     return (first + (spouse ? " & " + spouse : "") + " " + last).trim();
   }
 
+  // Normalizes a sponsor record's shirt order to a plain array of
+  // CONFIG.SPONSOR_SHIRT_SIZES strings, in the order chosen, with blanks
+  // dropped. A sponsor can order more than one shirt (member-sponsor-form.php/
+  // public-sponsor-form.php's repeatable "+ Add Another Shirt" row, and the
+  // Edit Sponsor modal's matching UI) — the current, canonical field is the
+  // plural `shirtSizes` array; the singular `shirtSize` string is kept
+  // read-only for every sponsor saved before this feature existed (and as
+  // the plural array's first entry, for anything that still only reads the
+  // singular field). This is the one place that reconciles the two shapes,
+  // so every consumer (the Sponsors tab table/print, the Excel export, the
+  // Summary tab's per-type and combined shirt-size tallies) counts every
+  // ordered shirt instead of just the first.
+  function sponsorShirtSizes(sp) {
+    var list = (sp && Array.isArray(sp.shirtSizes)) ? sp.shirtSizes : [];
+    if (!list.length && sp && sp.shirtSize) list = [sp.shirtSize];
+    return list.filter(function (s) { return s; });
+  }
+
   // The printed Judging Tally Sheet's row list, factored out of app.js's
   // printTallySheet() so the grouping/sorting/labeling logic — the part most
   // likely to regress — has test coverage without needing DOM/print
@@ -520,7 +538,7 @@
     return name ? name + " Registration List" : CONFIG.title;
   }
 
-  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName, dashNumberBase: dashNumberBase, nextDashNumber: nextDashNumber, tallySheetRows: tallySheetRows, tallySheetSummary: tallySheetSummary };
+  var API = { validShowYear: validShowYear, showRegistrationTitle: showRegistrationTitle, generate: generate, summarizeRecords: summarizeRecords, formatPhone: formatPhone, pickLatestPayment: pickLatestPayment, genFromYear: genFromYear, dtKey: dtKey, buildManualRegistration: buildManualRegistration, toInt: toInt, toNum: toNum, applySponsorshipTextDefault: applySponsorshipTextDefault, ownerDisplayName: ownerDisplayName, dashNumberBase: dashNumberBase, nextDashNumber: nextDashNumber, tallySheetRows: tallySheetRows, tallySheetSummary: tallySheetSummary, sponsorShirtSizes: sponsorShirtSizes };
   root.CarShowLogic = API;
   if (typeof module !== "undefined" && module.exports) module.exports = API;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -56,6 +56,7 @@
     sponsorPaymentError: null, // error message in payment modal
     sponsorSyncError: null, // set when a push to the server fails; shown in the Sponsors tab
     clearSponsorsOpen: false, // "Remove All Sponsors" confirmation modal
+    importHelp: null, // Setup tab's "❓ Instructions" modal — { title, steps } or null when closed
     sponsorSelected: {},    // id -> true, for the Sponsors tab's row checkboxes
     deleteSelectedOpen: false, // "Delete selected sponsors" confirmation modal
     developerLoginOpen: false, // "Developer Login" full-page screen (see openDeveloperLogin())
@@ -1823,17 +1824,21 @@
     var body = withShirtMatrixTotals(head, sizeRows, C.GROUPS);
     return el("table", { class: "matrix" }, [el("thead", {}, [head]), el("tbody", {}, body)]);
   }
-  // Every sponsor of any type picks one shirt (no Free/Xtra distinction like
-  // registrants — see CONFIG.SPONSOR_SIZE_INDEX), so this tallies all of
-  // state.sponsors regardless of sponsorType, unlike sponsorStatsByType()
-  // which is per-type for the Sponsors summary cards.
+  // Every sponsor of any type can order one or more shirts (no Free/Xtra
+  // distinction like registrants — see CONFIG.SPONSOR_SIZE_INDEX; and see
+  // LOGIC.sponsorShirtSizes for how a sponsor's shirt order is normalized to
+  // a list), so this tallies all of state.sponsors regardless of
+  // sponsorType, unlike sponsorStatsByType() which is per-type for the
+  // Sponsors summary cards.
   function allSponsorShirtCounts() {
     var counts = {};
     CONFIG.SIZES.forEach(function (sz) { counts[sz.key] = { mens: 0, womens: 0 }; });
     state.sponsors.forEach(function (sp) {
-      var info = sp.shirtSize && CONFIG.SPONSOR_SIZE_INDEX[sp.shirtSize];
-      if (!info || !counts[info.sizeKey]) return;
-      if (info.gender === "Men's") counts[info.sizeKey].mens++; else counts[info.sizeKey].womens++;
+      LOGIC.sponsorShirtSizes(sp).forEach(function (size) {
+        var info = CONFIG.SPONSOR_SIZE_INDEX[size];
+        if (!info || !counts[info.sizeKey]) return;
+        if (info.gender === "Men's") counts[info.sizeKey].mens++; else counts[info.sizeKey].womens++;
+      });
     });
     return counts;
   }
@@ -2039,18 +2044,20 @@
   }
 
   // Per-type totals + shirt-size breakdown for the Summary tab's sponsor cards.
-  // Each sponsor picks exactly one shirt (no free/xtra quantities like
-  // registrants), so this just tallies which of the 12 sizes each sponsor of
-  // this type chose.
+  // A sponsor can order more than one shirt (see LOGIC.sponsorShirtSizes),
+  // so this tallies every size each sponsor of this type ordered, not just
+  // their first — no free/xtra quantities like registrants have, though.
   function sponsorStatsByType(typeKey) {
     var typeCfg = CONFIG.SPONSOR_TYPES.filter(function (t) { return t.key === typeKey; })[0];
     var matches = state.sponsors.filter(function (s) { return s.sponsorType === typeKey; });
     var sizeCounts = {};
     CONFIG.SIZES.forEach(function (sz) { sizeCounts[sz.key] = { mens: 0, womens: 0 }; });
     matches.forEach(function (s) {
-      var info = s.shirtSize && CONFIG.SPONSOR_SIZE_INDEX[s.shirtSize];
-      if (!info || !sizeCounts[info.sizeKey]) return;
-      if (info.gender === "Men's") sizeCounts[info.sizeKey].mens++; else sizeCounts[info.sizeKey].womens++;
+      LOGIC.sponsorShirtSizes(s).forEach(function (size) {
+        var info = CONFIG.SPONSOR_SIZE_INDEX[size];
+        if (!info || !sizeCounts[info.sizeKey]) return;
+        if (info.gender === "Men's") sizeCounts[info.sizeKey].mens++; else sizeCounts[info.sizeKey].womens++;
+      });
     });
     // Sum each sponsor's actual last-recorded payment (same value the
     // Sponsors table's own "Paid" column shows via getLastPaymentForSponsor)
@@ -2137,6 +2144,9 @@
       return "";
     }
     if (colKey === "phone") return fmtPhone(s.phone) || "";
+    // A sponsor can order more than one shirt (see LOGIC.sponsorShirtSizes) —
+    // shown as a comma list here rather than just the first.
+    if (colKey === "shirtSize") return LOGIC.sponsorShirtSizes(s).join(", ");
     var v = s[colKey];
     return v == null ? "" : String(v);
   }
@@ -2608,7 +2618,7 @@
   function blankSponsor() {
     return {
       id: null, name: "", contactPerson: "", phone: "", email: "", address: "", website: "",
-      etccMemberName: "", sponsorType: CONFIG.SPONSOR_TYPES[0].key, shirtSize: "",
+      etccMemberName: "", sponsorType: CONFIG.SPONSOR_TYPES[0].key, shirtSizes: [],
       individualSponsorshipText: ""
     };
   }
@@ -2616,12 +2626,23 @@
     var src = sponsor || blankSponsor();
     var copy = {};
     Object.keys(src).forEach(function (k) { copy[k] = src[k]; });
+    // Normalize to the plural array once, here, so the rest of the modal
+    // (and buildSponsorRecord below) only ever deals with one shape — even
+    // for a sponsor saved before "order more than one shirt" existed and
+    // only has the old singular shirtSize field.
+    copy.shirtSizes = LOGIC.sponsorShirtSizes(copy);
     state.sponsorEditing = copy;
     renderSponsorFormModal();
   }
   function closeSponsorForm() { state.sponsorEditing = null; renderSponsorFormModal(); }
 
-  function buildSponsorRecord(editing, fieldEls, typeSel, shirtSel) {
+  // shirtValues: every non-blank size currently chosen in the modal's
+  // repeatable shirt-size rows, in order — see the "T-Shirt(s)" section of
+  // renderSponsorFormModal() below. shirtSizes is the current, canonical
+  // field; shirtSize (singular, first entry or "") is kept alongside it
+  // purely for any older code/report that still reads the old field name —
+  // see LOGIC.sponsorShirtSizes's own comment.
+  function buildSponsorRecord(editing, fieldEls, typeSel, shirtValues) {
     var name = fieldEls.name.value.trim();
     if (!name) return null;
     return {
@@ -2637,7 +2658,8 @@
       etccMemberName: fieldEls.etccMemberName.value.trim(),
       individualSponsorshipText: fieldEls.individualSponsorshipText.value.trim() || name,
       sponsorType: typeSel.value,
-      shirtSize: shirtSel.value
+      shirtSizes: shirtValues,
+      shirtSize: shirtValues[0] || ""
     };
   }
 
@@ -2684,14 +2706,60 @@
     });
     body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "Sponsor Type" }), typeSel]));
 
-    var shirtSel = el("select", {});
-    shirtSel.appendChild(el("option", { value: "", text: "— none —" }));
-    CONFIG.SPONSOR_SHIRT_SIZES.forEach(function (sz) {
-      var o = el("option", { value: sz, text: sz });
-      if (editing.shirtSize === sz) o.setAttribute("selected", "selected");
-      shirtSel.appendChild(o);
-    });
-    body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "T-Shirt" }), shirtSel]));
+    // ---- T-Shirt(s) — a sponsor can order more than one, each its own
+    // size (e.g. one for each of several employees). One <select> per shirt
+    // ordered, a "+ Add Another Shirt" button appends a blank one, and each
+    // row past the first gets a "✕" to remove it. Plain DOM add/remove
+    // (not a full modal re-render) so this doesn't disturb focus or the
+    // debounced autosave below while an officer is mid-edit elsewhere in
+    // the form. buildSponsorRecord() reads every row's current value at
+    // save time via getShirtSizeValues() — nothing needs to track them in a
+    // separate array.
+    function buildShirtSelect(value) {
+      var sel = el("select", {});
+      sel.appendChild(el("option", { value: "", text: "— none —" }));
+      CONFIG.SPONSOR_SHIRT_SIZES.forEach(function (sz) {
+        var o = el("option", { value: sz, text: sz });
+        if (value === sz) o.setAttribute("selected", "selected");
+        sel.appendChild(o);
+      });
+      return sel;
+    }
+    function updateShirtRemoveButtons() {
+      var showRemove = shirtRowsWrap.children.length > 1;
+      Array.prototype.forEach.call(shirtRowsWrap.children, function (row) {
+        row.querySelector(".shirt-remove-btn").style.display = showRemove ? "" : "none";
+      });
+    }
+    function addShirtRow(value) {
+      var sel = buildShirtSelect(value);
+      var removeBtn = el("button", { type: "button", class: "btn shirt-remove-btn", title: "Remove this shirt", style: "padding:6px 10px" }, ["✕"]);
+      var row = el("div", { style: "display:flex; gap:6px; margin-bottom:6px" }, [sel, removeBtn]);
+      removeBtn.addEventListener("click", function () {
+        shirtRowsWrap.removeChild(row);
+        updateShirtRemoveButtons();
+        autoSaveSponsor();
+      });
+      shirtRowsWrap.appendChild(row);
+      updateShirtRemoveButtons();
+    }
+    function getShirtSizeValues() {
+      return Array.prototype.map.call(shirtRowsWrap.querySelectorAll("select"), function (s) { return s.value; })
+        .filter(function (v) { return v; });
+    }
+    var shirtRowsWrap = el("div", {});
+    (editing.shirtSizes.length ? editing.shirtSizes : [""]).forEach(function (v) { addShirtRow(v); });
+    var addShirtBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["+ Add Another Shirt"]);
+    addShirtBtn.addEventListener("click", function () { addShirtRow(""); });
+    body.appendChild(el("div", { class: "form-row" }, [
+      el("span", { class: "form-label", text: "T-Shirt(s)" }),
+      el("div", {}, [shirtRowsWrap, addShirtBtn])
+    ]));
+    // Delegated (not per-select) so a row added/removed after this point is
+    // covered automatically — see fieldsToWatch below, which does NOT
+    // include the individual shirt <select>s for the same reason.
+    shirtRowsWrap.addEventListener("input", function () { autoSaveSponsor(); });
+    shirtRowsWrap.addEventListener("change", function () { autoSaveSponsor(); });
 
     body.appendChild(el("div", { style: "border-top: 1px solid var(--line); margin: 20px 0; padding-top: 20px" }, [
       el("h4", { text: "Record Payment", style: "margin: 0 0 15px 0; font-size: 13px; color: var(--muted); text-transform: uppercase" })
@@ -2767,10 +2835,10 @@
     body.appendChild(errorMsg);
 
     var autoSaveSponsor = debounce(function () {
-      var record = buildSponsorRecord(editing, fieldEls, typeSel, shirtSel);
+      var record = buildSponsorRecord(editing, fieldEls, typeSel, getShirtSizeValues());
       if (record) { upsertSponsor(record); renderSponsorsBody(); }
     }, 1500);
-    var fieldsToWatch = [fieldEls.name, fieldEls.contactPerson, fieldEls.phone, fieldEls.email, fieldEls.address, fieldEls.website, fieldEls.etccMemberName, fieldEls.individualSponsorshipText, typeSel, shirtSel];
+    var fieldsToWatch = [fieldEls.name, fieldEls.contactPerson, fieldEls.phone, fieldEls.email, fieldEls.address, fieldEls.website, fieldEls.etccMemberName, fieldEls.individualSponsorshipText, typeSel];
     fieldsToWatch.forEach(function (field) {
       field.addEventListener("input", autoSaveSponsor);
       field.addEventListener("change", autoSaveSponsor);
@@ -2778,7 +2846,7 @@
 
     var saveBtn = el("button", { class: "btn primary" }, ["Save"]);
     saveBtn.addEventListener("click", function () {
-      var record = buildSponsorRecord(editing, fieldEls, typeSel, shirtSel);
+      var record = buildSponsorRecord(editing, fieldEls, typeSel, getShirtSizeValues());
       if (!record) { errorMsg.textContent = "Sponsor Name is required."; return; }
       upsertSponsor(record);
 
@@ -4568,13 +4636,21 @@
   // (flyer-import.php) uploads a replacement CarShowFlyer.pdf, the file the
   // Reports tab's "Print Flyer" button opens.
   function buildSetupView() {
-    var mk = function (href, label, hint) {
+    var mk = function (href, label, hint, extraBtn) {
       var link = el("a", { class: "btn", href: href, target: "_blank", rel: "noopener" }, [label]);
-      return el("div", { class: "setup-item" }, [link, el("div", { class: "setup-hint", text: hint })]);
+      var linkRow = extraBtn ? el("div", { style: "display:flex; align-items:center; gap:8px" }, [link, extraBtn]) : link;
+      return el("div", { class: "setup-item" }, [linkRow, el("div", { class: "setup-hint", text: hint })]);
+    };
+    var helpBtn = function (title, steps) {
+      var btn = el("button", { class: "btn", type: "button", title: "How to export this CSV from ClubExpress" }, ["❓ Instructions"]);
+      btn.addEventListener("click", function () { openImportHelp(title, steps); });
+      return btn;
     };
     var col = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start; gap: 14px" }, [
-      mk("members-import.php", "👥 Import Members", "Upload the ETCC membership roster CSV (used for name lookup / sponsor-form validation)."),
-      mk("registrations-import.php", "📋 Import Registrations", "Upload the ClubExpress registration + activity CSV export for the current show."),
+      mk("members-import.php", "👥 Import Members", "Upload the ETCC membership roster CSV (used for name lookup / sponsor-form validation).",
+        helpBtn("Exporting the Member CSV from ClubExpress", MEMBER_IMPORT_STEPS)),
+      mk("registrations-import.php", "📋 Import Registrations", "Upload the ClubExpress registration + activity CSV export for the current show.",
+        helpBtn("Exporting the Registration CSV from ClubExpress", REGISTRATION_IMPORT_STEPS)),
       mk("flyer-import.php", "🖼️ Import Flyer", "Upload a replacement car show flyer PDF (opened by the Reports tab's Print Flyer button).")
     ]);
     return el("div", { class: "view setup-view" }, [
@@ -4583,6 +4659,68 @@
         col
       ])
     ]);
+  }
+
+  // "❓ Instructions" next to an import button on the Setup tab — a static,
+  // no-data modal documenting the exact ClubExpress steps to produce the CSV
+  // that button expects, since those export paths are buried a few screens
+  // deep in ClubExpress and aren't otherwise written down anywhere in this
+  // app. One shared modal (state.importHelp holds which button opened it),
+  // not a separate flag/render function per button.
+  function openImportHelp(title, steps) { state.importHelp = { title: title, steps: steps }; renderImportHelp(); }
+  function closeImportHelp() { state.importHelp = null; renderImportHelp(); }
+  var MEMBER_IMPORT_STEPS = [
+    "Control Panel",
+    "People",
+    "Additional Member Data",
+    "Export Answers",
+    "Export",
+    'Save the download as "answers.csv"'
+  ];
+  var REGISTRATION_IMPORT_STEPS = [
+    "Select the event",
+    "Admin Options",
+    "Exports",
+    "Registration Data",
+    "Export",
+    'Save the download as "registration_data.csv"',
+    "Exports",
+    "Activity Registrant Data",
+    "Export",
+    'Save the download as "activity_registrant_data.csv"'
+  ];
+  function renderImportHelp() {
+    var host = $("#importHelpHost");
+    if (!host) return;
+    host.innerHTML = "";
+    var help = state.importHelp;
+    if (!help) return;
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", closeImportHelp);
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: help.title }),
+      el("span", { class: "spacer" }), closeBtn
+    ]);
+
+    var stepsList = el("ol", { style: "margin:0; padding-left: 20px; line-height: 1.8" },
+      help.steps.map(function (step) { return el("li", { text: step }); }));
+
+    var doneBtn = el("button", { class: "btn primary" }, ["Got it"]);
+    doneBtn.addEventListener("click", closeImportHelp);
+
+    var body = el("div", { class: "modal-body" }, [
+      el("p", {}, ["In ClubExpress:"]),
+      stepsList,
+      el("p", { style: "margin-top: 14px" }, ["Then come back here and use the matching Import button above to upload that file."]),
+      el("div", { class: "settings-actions" }, [doneBtn])
+    ]);
+
+    var modal = el("div", { class: "modal" }, [head, body]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", closeImportHelp);
+    host.appendChild(backdrop);
   }
 
   // ---------- Car Show Summary Report (print) ----------
@@ -4925,6 +5063,7 @@
     document.body.appendChild(el("div", { id: "paymentHost" }));
     document.body.appendChild(el("div", { id: "addRegHost" }));
     document.body.appendChild(el("div", { id: "confirmHost" }));
+    document.body.appendChild(el("div", { id: "importHelpHost" }));
     document.body.appendChild(el("div", { id: "testsHost" }));
     document.body.appendChild(el("div", { id: "developerLoginHost" }));
     // window.__carshowSite is set (by index.php, before this script runs) —
@@ -4951,6 +5090,7 @@
       if (e.key === "Escape" && state.addRegOpen) { closeAddRegistration(); return; }
       if (e.key === "Escape" && state.showPendingDelete) { cancelDeleteShow(); return; }
       if (e.key === "Escape" && state.clearSponsorsOpen) { closeClearSponsorsConfirm(); return; }
+      if (e.key === "Escape" && state.importHelp) { closeImportHelp(); return; }
       if (e.key === "Escape" && state.deleteSelectedOpen) { closeDeleteSelectedConfirm(); return; }
       if (e.key === "Escape" && state.deleteRegSelectedOpen) { closeDeleteRegSelectedConfirm(); return; }
       if (e.key === "Escape" && state.menuOpen) { closeMenu(); return; }
