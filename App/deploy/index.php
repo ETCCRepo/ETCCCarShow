@@ -131,7 +131,8 @@ $perShowUrls = [
     'sendTshirtOrderEmailApiUrl' => 'send-tshirt-order-email.php',
     'sponsorPaymentsApiUrl' => 'sponsor-payments.php',
     'tshirtPurchasesApiUrl' => 'tshirt-purchases.php',
-    'dashNumbersApiUrl' => 'dash-numbers.php'
+    'dashNumbersApiUrl' => 'dash-numbers.php',
+    'importScheduleApiUrl' => 'import-schedule.php'
 ];
 $siteConfig = [];
 foreach ($perShowUrls as $key => $file) {
@@ -224,7 +225,12 @@ if ($year !== null) {
         'sponsorEmailTo' => '',
         'sponsorEmailCc' => '',
         'sponsorEmailBcc' => '',
-        'sponsorEmailSubject' => 'New Sponsor Submission'
+        'sponsorEmailSubject' => 'New Sponsor Submission',
+        'eventUrl' => '',
+        'autoImportEnabled' => false,
+        'autoImportTimes' => [],
+        'autoImportStartDate' => '',
+        'autoImportEndDate' => ''
     ];
     $appSettings = array_merge($appSettingsDefaults, is_array($appSettingsRaw) ? $appSettingsRaw : []);
     // externalApiKey is GLOBAL, not per-show (data/api-key.json, generated on

@@ -366,7 +366,9 @@ function carshow_show_files() {
         'paid-registrations-cache.json',
         'app-settings.json',
         'dash-numbers.json',
-        'import-history.json'
+        'import-history.json',
+        'import-request.json',
+        'import-schedule-state.json'
     ];
 }
 

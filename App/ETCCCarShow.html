@@ -441,7 +441,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div>v4.32 &middot; Deployed 09/11/2026 08:26 PM</div>
+  <div>v4.34 &middot; Deployed 09/12/2026 06:51 AM</div>
   <div class="footer-credit">Website by Business Web Express &middot; <a href="mailto:info@businesswebexpress.com">info@businesswebexpress.com</a></div>
   <div class="footer-credit">&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
@@ -2104,11 +2104,27 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       sponsorEmailTo: "",
       sponsorEmailCc: "",
       sponsorEmailBcc: "",
-      sponsorEmailSubject: "New Sponsor Submission"
+      sponsorEmailSubject: "New Sponsor Submission",
+      eventUrl: "",
+      autoImportEnabled: false,
+      autoImportTimes: [],
+      autoImportStartDate: "",
+      autoImportEndDate: ""
     },
     appSettingsSaving: false,
     appSettingsError: null,   // set when a Settings save fails; shown in the Settings modal
     appSettingsSaved: false,  // brief "Saved" confirmation after a successful save
+    // Setup tab > Import Schedule — separate save state from the Settings
+    // modal's above (different section of the page, explicit Save button
+    // rather than per-field autosave, so this can safely re-render the whole
+    // Setup tab on completion without risking the modal's focus-stealing bug).
+    importScheduleSaving: false,
+    importScheduleError: null,
+    importScheduleSaved: false,
+    // Setup tab > Import Schedule > "Import Now" button — brief inline status
+    // text ("Requested — the next check will run within ~5 minutes." /
+    // an error), cleared on next render pass through a fresh click.
+    importRequestStatus: null,
     apiPageOpen: false,       // Developer > API full-page screen
     apiKeyRevealed: false,
     apiTesting: false,
@@ -5811,6 +5827,63 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     });
   }
 
+  // Setup tab > Import Schedule's own save — same app-settings.php endpoint
+  // and patch shape as saveAppSettings() above, but a SEPARATE function
+  // rather than reusing it: saveAppSettings deliberately skips re-rendering
+  // until its request settles (see the comment on it) because it's wired to
+  // per-field blur events that fire while someone might still be tabbing
+  // through the Settings modal. This one is wired to a single explicit Save
+  // button click instead, so re-rendering immediately (to show "Saving…")
+  // and again on completion carries none of that focus-stealing risk.
+  function saveImportScheduleSettings(patch) {
+    Object.keys(patch).forEach(function (k) { state.appSettings[k] = patch[k]; });
+    state.importScheduleSaving = true;
+    state.importScheduleError = null;
+    state.importScheduleSaved = false;
+    renderViews();
+    if (!SITE_CONFIG.appSettingsApiUrl) { state.importScheduleSaving = false; renderViews(); return; }
+    fetch(SITE_CONFIG.appSettingsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", settings: patch })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      state.importScheduleSaving = false;
+      state.importScheduleSaved = true;
+      renderViews();
+    }).catch(function () {
+      state.importScheduleSaving = false;
+      state.importScheduleError = "Could not save — check your connection and try again.";
+      renderViews();
+    });
+  }
+
+  // Setup tab > Import Schedule > "Import Now" — leaves a request flag
+  // (import-schedule.php action=request) for the scheduled Claude Code task
+  // on an officer's machine to pick up on its next poll (every ~5 minutes).
+  // This endpoint cannot itself drive a browser through ClubExpress, so
+  // there's an inherent delay — the status text says so rather than implying
+  // anything happens instantly.
+  function requestImportNow() {
+    if (!SITE_CONFIG.importScheduleApiUrl) return;
+    state.importRequestStatus = "Requesting…";
+    renderViews();
+    fetch(SITE_CONFIG.importScheduleApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "request" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.importRequestStatus = (r.ok && r.data && r.data.ok)
+          ? "Requested — the next scheduled check (within ~5 minutes) will run the import."
+          : "Could not request an import — please try again.";
+        renderViews();
+      }).catch(function () {
+        state.importRequestStatus = "Could not request an import — check your connection and try again.";
+        renderViews();
+      });
+  }
+
   // Multipart upload (not JSON like every other settings save, since it's a
   // real file) for the Car Show Window Card fillable PDF template — see
   // window-card-pdf.php, which saves it to disk and updates
@@ -6679,7 +6752,91 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       el("div", { class: "panel" }, [
         el("h3", { text: "Setup" }),
         col
-      ])
+      ]),
+      buildImportScheduleSection()
+    ]);
+  }
+
+  // Setup tab > Import Schedule — the ClubExpress event URL (used by the
+  // /ETCCCarShowImportData Claude skill instead of a hardcoded URL that goes
+  // stale every year), an "Import Now" button, and an auto-import schedule
+  // (enable checkbox, one or more daily times, and an optional active-date
+  // range). None of this runs anything itself — see import-schedule.php's
+  // header comment and app.js's requestImportNow()/saveImportScheduleSettings()
+  // above for how it actually reaches the scheduled task on an officer's
+  // machine, which is the only thing that can drive a real ClubExpress export.
+  function buildImportScheduleSection() {
+    var s = state.appSettings;
+
+    var eventUrlInput = el("input", { type: "text", value: s.eventUrl || "", placeholder: "https://www.etccwebsite.com/content.aspx?...&item_id=..." });
+
+    var importNowBtn = el("button", { type: "button", class: "btn primary" }, ["▶ Import Now"]);
+    importNowBtn.addEventListener("click", requestImportNow);
+    var importNowRow = el("div", { style: "display:flex; align-items:center; gap:10px" }, [importNowBtn]);
+    if (state.importRequestStatus) importNowRow.appendChild(el("span", { class: "count" }, [state.importRequestStatus]));
+
+    var enableCb = el("input", { type: "checkbox" }); enableCb.checked = !!s.autoImportEnabled;
+
+    var startDateInput = el("input", { type: "date", value: s.autoImportStartDate || "" });
+    var endDateInput = el("input", { type: "date", value: s.autoImportEndDate || "" });
+
+    // One <input type=time> per configured daily run time, same repeatable
+    // add/remove-row pattern as the Sponsors tab's "+ Add Another Shirt"
+    // rows — plain DOM add/remove rather than tracking a parallel array in
+    // state, since Save reads every row's current value straight off the DOM.
+    var timesWrap = el("div", {});
+    function addTimeRow(value) {
+      var input = el("input", { type: "time", value: value || "" });
+      var removeBtn = el("button", { type: "button", class: "btn", style: "padding:4px 10px" }, ["✕"]);
+      var row = el("div", { style: "display:flex; gap:6px; margin-bottom:6px; align-items:center" }, [input, removeBtn]);
+      removeBtn.addEventListener("click", function () { timesWrap.removeChild(row); });
+      timesWrap.appendChild(row);
+    }
+    (s.autoImportTimes || []).forEach(function (t) { addTimeRow(t); });
+    var addTimeBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["+ Add Time"]);
+    addTimeBtn.addEventListener("click", function () { addTimeRow(""); });
+
+    var saveBtn = el("button", { type: "button", class: "btn primary" }, ["Save"]);
+    if (state.importScheduleSaving) saveBtn.setAttribute("disabled", "disabled");
+    saveBtn.addEventListener("click", function () {
+      var times = Array.prototype.map.call(timesWrap.querySelectorAll("input[type=time]"), function (i) { return i.value; })
+        .filter(function (v) { return v; });
+      saveImportScheduleSettings({
+        eventUrl: eventUrlInput.value.trim(),
+        autoImportEnabled: enableCb.checked,
+        autoImportTimes: times,
+        autoImportStartDate: startDateInput.value,
+        autoImportEndDate: endDateInput.value
+      });
+    });
+    var saveStatus = [];
+    if (state.importScheduleSaving) saveStatus.push(el("span", { class: "count" }, ["Saving…"]));
+    else if (state.importScheduleSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
+    if (state.importScheduleError) saveStatus.push(el("div", { class: "form-error" }, [state.importScheduleError]));
+
+    return el("div", { class: "panel", style: "margin-top:16px" }, [
+      el("h3", { text: "Import Schedule" }),
+      el("div", { class: "hint", style: "margin-bottom:10px" }, [
+        "Controls the /ETCCCarShowImportData automation that pulls fresh ClubExpress data — that " +
+        "still only runs on the machine where Claude Code and Chrome are set up for it, and it checks " +
+        "in here roughly every 5 minutes, so Import Now and scheduled times take effect within a few minutes, not instantly."
+      ]),
+      el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "Event URL" }), eventUrlInput]),
+      el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "" }), importNowRow]),
+      el("div", { class: "form-row" }, [
+        el("label", {}, [enableCb, document.createTextNode(" Enable automatic imports")])
+      ]),
+      el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "Active dates" }),
+        el("div", { style: "display:flex; gap:8px; align-items:center" }, [
+          startDateInput, document.createTextNode("to"), endDateInput
+        ])
+      ]),
+      el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "Times" }),
+        el("div", {}, [timesWrap, addTimeBtn])
+      ]),
+      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus))
     ]);
   }
 
@@ -6700,14 +6857,16 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
           el("th", { text: "Imported" }),
           el("th", { text: "Registrations" }),
           el("th", { text: "Activities" }),
-          el("th", { text: "Source" })
+          el("th", { text: "Source" }),
+          el("th", { text: "Event URL" })
         ])]),
         el("tbody", {}, rows.map(function (r) {
           return el("tr", {}, [
             el("td", { text: r.timestamp ? fmtDate(new Date(r.timestamp)) : "" }),
             el("td", { text: String(r.regRows != null ? r.regRows : "") }),
             el("td", { text: String(r.actRows != null ? r.actRows : "") }),
-            el("td", { text: r.source === "cli" ? "Scheduled sync" : "Manual upload" })
+            el("td", { text: r.source === "cli" ? "Scheduled sync" : "Manual upload" }),
+            el("td", { style: "max-width:260px; overflow-wrap:break-word" }, [r.eventUrl || "—"])
           ]);
         }))
       ]);

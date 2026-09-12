@@ -42,6 +42,10 @@ var actCsvPath = process.argv[3] || newestMatching(EXPORTS_DIR, "activity_regist
 var url = process.argv[4] || DEFAULT_URL;
 var password = process.env.CARSHOW_SITE_PASSWORD;
 var year = process.env.CARSHOW_YEAR || String(new Date().getFullYear());
+// Optional — the ClubExpress event URL this export actually came from, for
+// the History tab's audit trail. If unset, registrations-upload.php falls
+// back to whatever's currently configured in the Setup tab.
+var eventUrl = process.env.CARSHOW_EVENT_URL || "";
 
 if (!password) {
   console.error("Set CARSHOW_SITE_PASSWORD to the site's login password before running this.");
@@ -59,7 +63,7 @@ var actCsv = fs.readFileSync(actCsvPath, "utf8");
 // the newer of the two files' mtimes, not upload time.
 var generatedAtMs = Math.max(fs.statSync(regCsvPath).mtimeMs, fs.statSync(actCsvPath).mtimeMs);
 
-var payload = JSON.stringify({ regCsv: regCsv, actCsv: actCsv, generatedAt: generatedAtMs, password: password, year: year });
+var payload = JSON.stringify({ regCsv: regCsv, actCsv: actCsv, generatedAt: generatedAtMs, password: password, year: year, eventUrl: eventUrl });
 var u = new URL(url);
 
 var req = https.request({

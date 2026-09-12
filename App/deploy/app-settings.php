@@ -32,6 +32,20 @@
 //    blocks the actual submission) whenever a sponsorship is submitted.
 //    Leave sponsorEmailTo blank to disable sending entirely. To/CC/BCC each
 //    accept comma/semicolon-separated multiple addresses.
+//  - eventUrl: the ClubExpress event Admin Panels URL for this show's year
+//    (Setup tab > Import Schedule). Read by the scheduled Claude Code task
+//    that drives the actual ClubExpress export (see import-schedule.php's
+//    'check' action) instead of that task having a hardcoded URL that goes
+//    stale every year.
+//  - autoImportEnabled / autoImportTimes / autoImportStartDate /
+//    autoImportEndDate: the Setup tab's auto-import schedule. autoImportTimes
+//    is a list of "HH:MM" (24-hour, America/New_York — matches the event's
+//    own displayed timezone) local times to run an import each day; the
+//    start/end dates (YYYY-MM-DD, either may be blank for "no bound") let
+//    officers scope auto-imports to the show's active season. None of this is
+//    read or enforced by this file — it's just storage. import-schedule.php's
+//    'check' action (polled every 5 minutes by a Claude Code scheduled task
+//    on an officer's machine) is what actually decides whether to run.
 //  - externalApiKey: credential for the EXTERNAL Paid Registrations API
 //    (paid-registrations-api.php) — a separate, narrower credential than
 //    this app's own site password, meant to be handed to another website's
@@ -100,7 +114,12 @@ $defaults = [
     'sponsorEmailTo' => '',
     'sponsorEmailCc' => '',
     'sponsorEmailBcc' => '',
-    'sponsorEmailSubject' => 'New Sponsor Submission'
+    'sponsorEmailSubject' => 'New Sponsor Submission',
+    'eventUrl' => '',
+    'autoImportEnabled' => false,
+    'autoImportTimes' => [],
+    'autoImportStartDate' => '',
+    'autoImportEndDate' => ''
 ];
 
 if ($action === 'get') {

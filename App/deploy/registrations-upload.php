@@ -67,13 +67,24 @@ if (!carshow_write_json($regFile, $data)) {
 }
 
 // Log this import for the History tab — one entry per successful import,
-// CLI or browser (see registrations-import.php), oldest first.
+// CLI or browser (see registrations-import.php), oldest first. eventUrl: the
+// caller (deploy/upload-registrations.js) may pass the ClubExpress URL it
+// actually exported from; if it didn't, fall back to whatever's currently
+// configured in the Setup tab (app-settings.json) as a best-effort record —
+// right in the common case where nothing's changed since the export.
+$eventUrl = (string)($input['eventUrl'] ?? '');
+if ($eventUrl === '') {
+    $settingsFile = carshow_show_file($year, 'app-settings.json');
+    $settingsRaw = is_file($settingsFile) ? json_decode(file_get_contents($settingsFile), true) : [];
+    $eventUrl = is_array($settingsRaw) ? (string)($settingsRaw['eventUrl'] ?? '') : '';
+}
 $historyFile = carshow_show_file($year, 'import-history.json');
 carshow_append_json_list($historyFile, [
     'timestamp' => gmdate('c'),
     'regRows' => carshow_csv_data_row_count($regCsv),
     'actRows' => carshow_csv_data_row_count($actCsv),
     'source' => 'cli',
+    'eventUrl' => $eventUrl,
 ]);
 
 echo json_encode(['ok' => true]);

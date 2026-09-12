@@ -37,6 +37,7 @@ if ($year === null) {
     exit;
 }
 $REG_FILE = carshow_show_file($year, 'registrations-data.json');
+$SETTINGS_FILE = carshow_show_file($year, 'app-settings.json');
 $errors = [];
 $imported = null; // ['regRows' => int, 'actRows' => int] on success
 
@@ -64,11 +65,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['reg_csv'])) {
             ];
             if (carshow_write_json($REG_FILE, $data)) {
                 $imported = ['regRows' => $regRows, 'actRows' => $actRows];
+                // Best-effort: this page has no per-request event URL of its
+                // own (it's a manual file picker, not a ClubExpress-driving
+                // script), so record whatever's currently configured in the
+                // Setup tab as the URL this import was presumably taken from.
+                $settingsRaw = is_file($SETTINGS_FILE) ? json_decode(file_get_contents($SETTINGS_FILE), true) : [];
+                $eventUrl = is_array($settingsRaw) ? (string)($settingsRaw['eventUrl'] ?? '') : '';
                 carshow_append_json_list(carshow_show_file($year, 'import-history.json'), [
                     'timestamp' => gmdate('c'),
                     'regRows' => $regRows,
                     'actRows' => $actRows,
                     'source' => 'browser',
+                    'eventUrl' => $eventUrl,
                 ]);
             } else {
                 $errors[] = 'Could not save the registration data — please try again.';
