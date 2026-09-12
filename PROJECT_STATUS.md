@@ -1,9 +1,27 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-12 (end of session, latest — supersedes the v5.0 entry below, same
-day). **This session was all about import-automation reliability, triggered by "the data
-import did not run at 11am". Live site is now v5.7; four checkpoints: `aec82a9` (v5.3),
-`1b971b1` (v5.4), `984339c` (v5.7), plus this write-up.**
+Last updated: 2026-09-12 (end of session, latest — a later session the same day,
+supersedes the reliability entry below). **The ClubExpress import no longer depends on
+Claude.** `App/deploy/sync-registrations.js` (Playwright), run every 15 minutes by the
+Windows Task Scheduler task `carshow-sync-registrations`, now does the whole unattended
+import — a port of what the Vette Fest app switched to earlier that afternoon. The Claude
+Code scheduled tasks are **gone** (they had silently dropped out of the scheduler; that's
+what turned the Setup tab's Automation line red). Verified live: a real import (83 / 116
+rows, upload 200, 4.8 s) and the task's first self-scheduled fire (result 0). **Watch for
+this**: the task runs **Interactive as the Windows account `Admin`**, which is *not* an
+administrator on this machine — imports only run while `Admin` is signed in, and stop
+after a reboot until someone signs back in. One checkpoint: **`bc509ae`** (v5.9, deployed
+and pushed). `/ETCCCarShowTest` not run (not requested; last known-good 125/125). Three
+fixes found while porting were **ported back to Vette Fest** — uncommitted in that repo.
+See "This session's work (2026-09-12 — Claude-free import)".
+
+Previous update: 2026-09-12 (earlier the same day, supersedes the v5.0 entry below).
+**That session was all about import-automation reliability, triggered by "the data
+import did not run at 11am". Live site was then v5.7; four checkpoints: `aec82a9` (v5.3),
+`1b971b1` (v5.4), `984339c` (v5.7), plus its write-up.** *(Superseded by the Claude-free
+import above wherever it describes the Claude Code poll tasks, their PushNotifications,
+or Claude usage limits as a cause of missed imports — the server-side fixes it describes
+(catch-up window, 15-minute polling, heartbeat) all still apply unchanged.)*
 
 **Footer (v5.5–5.7, cosmetic).** The footer's three stacked lines (version/deploy, site
 credit, copyright) were collapsed into one line joined with `&middot;` separators, in
@@ -37,7 +55,9 @@ inherited the same bad value and would have failed identically on its first real
 Both skills now carry an explicit warning block about the trap. **Watch for this**: if
 anyone copies an event URL out of ClubExpress's address bar while viewing the public
 event page, it carries `4091` and silently breaks every import — keep the `item_id`, swap
-`page_id` to `4055`.
+`page_id` to `4055`. *(Update, later that day: the stored Setup-tab URL was found to be
+`4091` **again** — see the Claude-free import section. `clubexpress.js` now rewrites 4091 →
+4055 at run time, so this trap can no longer break an import on its own.)*
 
 **Why 11:00 was missed (a different, unrelated cause).** Claude **usage limits** failed
 every poll from 10:54 to 11:26 (`You've hit your session limit · resets 11:30am`), which
@@ -72,6 +92,9 @@ The built-in `notifyOnCompletion` flag was rejected for this: it fires on every 
 poll task (96/day, mostly no-ops) and subscribes only *the session that set it*, so it
 would go stale. **Known gap**: a task that can't start can't send a failure notification
 either — that class of silence is only visible via the heartbeat line in Setup.
+*(Superseded: those Claude tasks no longer exist, so there are **no push notifications**
+any more. A failure now surfaces as a non-zero Task Scheduler "Last Run Result", a FAILED
+row in History, the Setup tab's "Last run" line, and `deploy/sync-registrations.local.log`.)*
 
 **Vette Fest** (same architecture, separate app/task): auto-import **enabled**, hourly,
 active window extended to **9/27** (was 9/20 — it ended *before* the Sept 25–26 event).
@@ -82,7 +105,10 @@ so it will also import at :10 and :20 past noon daily until someone clears them.
 **Watch for this**: the scheduled-task SKILL.mds and the `/ETCC*ImportData` skills live in
 `C:\Users\Admin\.claude\` — **outside this repo, unversioned**. The `page_id` fix, the
 notification wiring, and the 15-minute interval text all live there and are *not* covered
-by any commit here. The `ClaudeConfig` repo copy is already known stale.
+by any commit here. The `ClaudeConfig` repo copy is already known stale. *(Superseded
+for the automation itself: it now lives **in this repo** — `App/deploy/sync-registrations.js`
+and friends. The `/ETCCCarShowImportData` skill remains outside the repo as a manual
+fallback; the old task folders under `C:\Users\Admin\.claude\scheduled-tasks\` are dead.)*
 
 Previous update: 2026-09-12 (earlier, v5.0). **That session built out the Import
 Schedule / logging system on the Setup tab across three checkpoints, then fixed a
@@ -171,6 +197,139 @@ project's own workflow, but worth noting since they were built in this session):
 Checkpoint then End skill in sequence, stopping early with a clear report if the
 checkpoint fails (SAM's version additionally respects its manual test-green gate rather
 than skipping past it). All three live under `C:\Users\Admin\.claude\skills\`.
+
+## This session's work (2026-09-12 — Claude-free import)
+
+**Trigger.** The user sent a screenshot of Setup → Import Schedule showing the red
+Automation warning: "last checked in 106 minutes ago (01:32 PM) … the scheduled task
+isn't running." Diagnosis: **the Claude Code scheduler had no registered tasks at all**
+(`list_scheduled_tasks` → empty), while both task definitions were still intact on disk
+at `C:\Users\Admin\.claude\scheduled-tasks\{carshow,vettefest}-sync-registrations\SKILL.md`.
+Nothing was firing them, so this wasn't the morning's usage-limit problem. **Why they were
+unregistered was never determined.** The Vette Fest app's own session earlier that afternoon
+replaced its Claude task and recorded "the Claude Code scheduled task list is empty"; the
+CarShow task may have gone at the same time.
+
+**Decision (user).** Offered: re-register the Claude tasks. The user instead asked to
+**"apply the same Claude-free import to the car show app that was done in vette fest."**
+So this app now follows Vette Fest's architecture (see its `PROJECT_STATUS.md`, "This
+session's work (2026-09-12 — third session)", for the original discoveries).
+
+**1. The port — four new local-only files in `App/deploy/`** (none are uploaded by
+`ftp-deploy.sh`, which uses explicit `upload` lines; `*.log` is already gitignored):
+- **`sync-registrations.js`** — the poll loop. `check` → exit silently if nothing due →
+  `mark_start` → exports → spawn `upload-registrations.js` (unchanged; it already read
+  `CARSHOW_EVENT_URL` / `CARSHOW_LOG_FILE` / `CARSHOW_EXPORTS_DIR`) → `logs.php` `store` →
+  `mark_run`. Flags `--force` (report as "manual") and `--headed`. Env:
+  `CARSHOW_SITE_PASSWORD` (required), `CARSHOW_YEAR`, `CARSHOW_EXPORTS_DIR`,
+  `CARSHOW_EVENT_URL`. Log filenames match `logs.php`'s allowlist `sync-YYYYMMDD-HHMMSS.log`.
+  **Server side unchanged** — and the Setup tab's Automation heartbeat keeps working,
+  because `check` itself writes `lastPollAt`, whoever calls it.
+- **`clubexpress.js`** — opens the dedicated Chrome profile headless, confirms the Admin
+  Panels page, reads the Exports popup URL out of the toolbar button's `onclick`, and
+  **replays the WebForms Export postback as a plain form POST** (clicking can't work under
+  automation — Telerik bundles 403 headless, MS-AJAX throws when scripted). Refuses any
+  non-CSV response.
+- **`clubexpress-login.js`** — one-time visible-window sign-in helper; reports DURABLE vs
+  session-only ("Remember Me" not ticked).
+- **`install-scheduled-task.ps1`** — registers the Windows task with a preflight that
+  checks the *target* account's `CARSHOW_SITE_PASSWORD` and ClubExpress profile.
+- `App/package.json` gained **`playwright-core` ^1.63.0** (drives the system's real Chrome;
+  no browser download). `npm audit`'s 4 findings are pre-existing (`exceljs`/`jsdom`
+  transitive deps), not from this.
+
+**2. Three fixes found while porting** (all three then ported back to Vette Fest):
+- **`page_id=4091` repair.** `normalizeClubExpressUrl()` already added `www.`; it now also
+  rewrites `page_id=4091` → `4055` (only 4091, only on etccwebsite.com). **The live stored
+  Event URL was `4091` again** (the screenshot showed it, despite the morning's fix), and
+  **the first live run only succeeded because of this repair** — the log shows
+  `Event URL normalized (www host / Admin Panels page_id=4055)`.
+- **Shared-profile collisions.** The ClubExpress profile at
+  `%LOCALAPPDATA%\ETCC\clubexpress-profile` is **shared with Vette Fest's sync** (same site,
+  same officer login — one sign-in serves both), and Chrome allows one process per profile.
+  `openContext()` now retries a failed launch 4× at 15 s intervals. **And the first task
+  install landed 11 seconds behind Vette Fest's task, every 15 minutes, forever** —
+  `install-scheduled-task.ps1` now starts half an interval (7.5 min) after the sibling
+  task's next fire. Current phase: **CarShow :12:54 / :27:54 / :42:54 / :57:54**, Vette Fest
+  :05:24 / :20:24 / :35:24 / :50:24.
+- **Login helper could never confirm.** Vette Fest's `sessionIsLive()` looked for
+  `a:text-is("Exports")` or a *button* named Exports. **Verified live against a signed-in
+  profile on both events: 0 matches** — the Exports control is a link whose text is
+  `"outputExports"` (icon ligature + label). It would have sat at "Not signed in yet"
+  forever. CarShow's helper uses the sync's own `exportsButtonCandidates` +
+  `firstVisibleInAnyFrame`, which find it.
+
+**3. Wording.** Every place that told officers to check "the Claude desktop app" or
+"Claude usage limits" now describes the Windows task: the Setup tab's Import Schedule
+hint (now also says to run `clubexpress-login.js` on a "session not logged in" error), the
+red Automation warning (now: check the machine is on and its Windows account signed in,
+then Task Scheduler → `carshow-sync-registrations`, Last Run Result 0 = fine), the Import Now
+failure text ("see the History tab's log for details", was "ask Claude…"), plus comments in
+`app.js`, `import-schedule.php`, `app-settings.php`, `logs.php`, `registrations-upload.php`.
+`App/deploy/README.md` gained an "Automated imports (no Claude subscription required)"
+section.
+
+**4. Verification.**
+- Normal (non-forced) poll from the shell: it picked up a **stranded Import Now request**
+  (`Run due: manual`), exported 83 registration / 116 activity rows, upload `Status: 200`,
+  4.8 s, exit 0. `import-schedule.php` `run_status` confirmed `status: success`, the log
+  archived as `sync-20260912-161907.log`, and a fresh `lastPollAt`.
+- Task registered **`-Interactive`** as `NBKFF3A-BEELINK\Admin` (the Vette Fest mode —
+  S4U was refused there). `Start-ScheduledTask` → result 0; after the stagger reinstall,
+  the **first self-scheduled fire at 4:27:54 PM → result 0**.
+
+**5. The `Admin` Windows account (user asked "what is the admin windows account").**
+Checked on the machine: `Admin` is a local account and is **not in the Administrators
+group** — a standard user despite the name. The real administrator is the local `User`
+account (the built-in `Administrator` is disabled). That's why UAC elevation from `Admin`
+runs as `User`, and most likely why S4U registration was refused. **No automatic sign-in is
+configured** (`AutoAdminLogon` empty); the machine last rebooted at 12:55 PM that day.
+Two ways out were presented and **neither was chosen or changed**: turn on auto-sign-in
+for `Admin` (stores its password in the registry), or re-register both tasks in S4U mode
+from a real administrator session (signed in as `User`).
+
+**6. Port-back to Vette Fest** (user: "port the fixes back to vette fest"). In
+`Z:\Backup\Websites\VetteFest\App\deploy\`: `clubexpress.js` (4091 repair, busy-profile
+retry), `clubexpress-login.js` (shared locators, URL normalization), and
+`install-scheduled-task.ps1` (mirror-image stagger against `carshow-sync-registrations`).
+Its task wasn't reinstalled — it was already 7.5 min apart, and it runs the repo files, so
+the fixes apply from its next poll. Verified: syntax, installer parse, URL-repair cases, the
+fixed login detection **true** on Vette Fest's own event (old logic: false), and a Task
+Scheduler run with the updated files → result 0. **Not committed in that repo.**
+
+**Checkpoint:** one `/ETCCCarShowCheckpoint` (via `/ETCCCarShowAll`) — **`bc509ae`**
+"Replace the Claude Code import task with a standalone Playwright sync (v5.9)", 15 files.
+Build stamped **v5.9** (`version.json` now minor `10`); FTP deploy 39 uploads, no
+failures, `CarShowFlyer.pdf` correctly untouched. An intermediate v5.8 build was also
+deployed mid-session for the wording changes.
+
+## Known follow-ups / things a new session might need to know (2026-09-12, Claude-free import)
+
+- **Imports need the `Admin` Windows account signed in.** Locked screen is fine; signed
+  out, switched to `User`, or rebooted-and-not-signed-in means no imports, and the only
+  sign is the Setup tab's red Automation line after ~35 min. The auto-sign-in vs S4U
+  decision is still open (see item 5 above).
+- **The stored Event URL on the live server is still `page_id=4091`.** Imports work anyway
+  (runtime repair), but the History tab records the 4091 URL, and the manual
+  `/ETCCCarShowImportData` skill reads the same setting without that repair. Change it to
+  `page_id=4055` in Setup → Import Schedule → Event URL. Not changed this session.
+- **Vette Fest's port-back is uncommitted** in `Z:\Backup\Websites\VetteFest`, and its
+  `PROJECT_STATUS.md` doesn't mention it yet — `/ETCCVetteFestAll` would checkpoint and
+  document it. Vette Fest had no app-code change, so nothing needs deploying there.
+- **The two apps' `clubexpress.js` / `clubexpress-login.js` are now twins** — both carry
+  "keep the copies in sync" comments. A ClubExpress fix in one belongs in the other.
+- **One shared ClubExpress session.** If it lapses, **both** imports fail with
+  "ClubExpress session not logged in" until someone runs `node deploy/clubexpress-login.js`
+  (from either repo) as `Admin` and signs in with Remember Me ticked.
+- **No push notifications for failed imports any more** (they were a Claude feature).
+  Check the History tab / Setup "Last run" line, or Task Scheduler.
+- **Dead leftovers:** `C:\Users\Admin\.claude\scheduled-tasks\carshow-sync-registrations\`
+  and `…\vettefest-sync-registrations\` are unregistered Claude task folders; safe to delete
+  (not done — outside the repo).
+- **No automated test coverage** for the sync scripts (they need Chrome, ClubExpress, and
+  the live site). The regression suite was not run this session.
+- **Cosmetic, from the triggering screenshot:** the Setup tab's "🖼 Import Flyer" launcher
+  button renders ~475px wide while "Import Members" is compact. Not fixed.
 
 ## This session's work (2026-09-12 — Import Schedule build-out, table-height fix, v5.0)
 
