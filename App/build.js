@@ -97,7 +97,7 @@ var html =
 '</div>\n' +
 '<footer class="app-footer">\n' +
 '  <div>v' + versionString + ' &middot; Deployed ' + fmtDateTime(deployedAt) + '</div>\n' +
-'  <div class="footer-credit">Website by Business Web Express &middot; <a href="mailto:info@businesswebexpress.com">info@businesswebexpress.com</a></div>\n' +
+'  <div class="footer-credit">Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a></div>\n' +
 '  <div class="footer-credit">&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>\n' +
 '</footer>\n' +
 scripts.map(function (s) { return '<script>\n' + s + '\n</script>'; }).join("\n") +

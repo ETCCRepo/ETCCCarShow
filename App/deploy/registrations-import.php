@@ -77,6 +77,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['reg_csv'])) {
                     'actRows' => $actRows,
                     'source' => 'browser',
                     'eventUrl' => $eventUrl,
+                    'outcome' => 'success',
+                    'logFile' => '', // no Claude skill/log involved in a manual browser upload
                 ]);
             } else {
                 $errors[] = 'Could not save the registration data — please try again.';

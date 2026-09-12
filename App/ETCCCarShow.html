@@ -441,8 +441,8 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div>v4.34 &middot; Deployed 09/12/2026 06:51 AM</div>
-  <div class="footer-credit">Website by Business Web Express &middot; <a href="mailto:info@businesswebexpress.com">info@businesswebexpress.com</a></div>
+  <div>v4.46 &middot; Deployed 09/12/2026 08:06 AM</div>
+  <div class="footer-credit">Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a></div>
   <div class="footer-credit">&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
 <script>
@@ -2108,6 +2108,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       eventUrl: "",
       autoImportEnabled: false,
       autoImportTimes: [],
+      autoImportIntervalHours: 0,
       autoImportStartDate: "",
       autoImportEndDate: ""
     },
@@ -2125,6 +2126,20 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     // text ("Requested — the next check will run within ~5 minutes." /
     // an error), cleared on next render pass through a fresh click.
     importRequestStatus: null,
+    // Setup tab > Import Schedule > "View Logs" — server-archived log files
+    // (see logs.php); null until first opened/loaded, then an array of
+    // {name, size, mtime}. Purged server-side after 7 days.
+    logsPanelOpen: false,
+    logsList: null,
+    logsLoading: false,
+    logsError: null,
+    // Setup tab > Import Schedule > persisted "Last run" status (see
+    // import-schedule.php's mark_start/mark_run/run_status actions) —
+    // {startedAt, reason, completedAt, status, error, logFile} | null.
+    // Unlike importRequestStatus above (one click's own ephemeral status,
+    // reset on reload), this survives reloads and reflects whichever run
+    // happened most recently, manual or scheduled.
+    runStatus: null,
     apiPageOpen: false,       // Developer > API full-page screen
     apiKeyRevealed: false,
     apiTesting: false,
@@ -2187,6 +2202,10 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // add/edit/delete is pushed straight to sponsorsApiUrl — so every officer
   // viewing the site sees the same live list.
   var SITE_CONFIG = {};
+  // Setup tab > Import Schedule > "Import Now" polling timer handle — plain
+  // module var, not app state, since it's a live JS interval id rather than
+  // anything rendered. See requestImportNow()/pollImportRequestStatus() below.
+  var importRequestPollTimer = null;
 
   var NUMERIC_BASE = { "Reg #": 1, "Total Fee": 1, "Individual Sponsorship": 1, "Year": 1, "#": 1 };
   // These headers are far wider than their data (a few digits, "Yes"/"No") —
@@ -2559,7 +2578,18 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   function buildTabs() {
     var mk = function (id, label) {
       var t = el("div", { class: "tab" + (state.tab === id ? " active" : ""), text: label });
-      t.addEventListener("click", function () { state.tab = id; renderViews(); });
+      t.addEventListener("click", function () {
+        state.tab = id;
+        renderViews();
+        // History tab: refresh from the server every time it's selected, not
+        // just at page load — otherwise a scheduled or manual import that
+        // landed after this page opened wouldn't show up until a full reload.
+        if (id === "history") loadImportHistory();
+        // Setup tab: refresh the persisted "Last run" status every time it's
+        // selected — a scheduled run started/completed by another visitor (or
+        // by the automation itself) should show up without a full reload.
+        if (id === "setup") loadRunStatus();
+      });
       return t;
     };
     return el("div", { class: "tabs no-print" }, [mk("sum", "Summary"), mk("reg", "Registration"), mk("sponsors", "Sponsors"), mk("tsh", "T-Shirts"), mk("reports", "Reports"), mk("setup", "Setup"), mk("history", "History")]);
@@ -5866,6 +5896,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // anything happens instantly.
   function requestImportNow() {
     if (!SITE_CONFIG.importScheduleApiUrl) return;
+    stopImportRequestPolling();
     state.importRequestStatus = "Requesting…";
     renderViews();
     fetch(SITE_CONFIG.importScheduleApiUrl, {
@@ -5874,12 +5905,125 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       body: JSON.stringify({ action: "request" })
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
       .then(function (r) {
-        state.importRequestStatus = (r.ok && r.data && r.data.ok)
-          ? "Requested — the next scheduled check (within ~5 minutes) will run the import."
-          : "Could not request an import — please try again.";
+        if (r.ok && r.data && r.data.ok) {
+          state.importRequestStatus = "Requested — the next scheduled check (within ~5 minutes) will run the import.";
+          startImportRequestPolling(r.data.requestedAt);
+        } else {
+          state.importRequestStatus = "Could not request an import — please try again.";
+        }
         renderViews();
       }).catch(function () {
         state.importRequestStatus = "Could not request an import — check your connection and try again.";
+        renderViews();
+      });
+  }
+
+  // Polls import-schedule.php's 'status' action every 30s until the
+  // scheduled task marks this specific request handled (handledAt catches up
+  // to the requestedAt this click produced — comparing timestamps, not just
+  // "handledAt is set", so a stale handledAt from a PRIOR click can't be
+  // mistaken for this one having run), then flips the status text from
+  // "Requested…" to "Ran at <time>". Capped at 40 attempts (~20 minutes) so a
+  // page left open indefinitely doesn't poll forever if something's stuck.
+  function stopImportRequestPolling() {
+    if (importRequestPollTimer) { clearInterval(importRequestPollTimer); importRequestPollTimer = null; }
+  }
+  function startImportRequestPolling(requestedAt) {
+    var attempts = 0;
+    importRequestPollTimer = setInterval(function () {
+      attempts++;
+      if (attempts > 40) { stopImportRequestPolling(); return; }
+      fetch(SITE_CONFIG.importScheduleApiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "status" })
+      }).then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (data && data.ok && data.handledAt && (!requestedAt || new Date(data.handledAt) >= new Date(requestedAt))) {
+            var when = fmtDate(new Date(data.handledAt));
+            state.importRequestStatus = data.lastStatus === "failed"
+              ? "Failed at " + when + (data.lastError ? ": " + data.lastError : "") + " — see the History tab or ask Claude to check the sync log."
+              : "Succeeded at " + when + ".";
+            stopImportRequestPolling();
+            renderViews();
+          }
+        }).catch(function () { /* transient network hiccup — keep polling, don't surface it */ });
+    }, 30000);
+  }
+
+  // History tab — re-fetches import-history.json fresh from the server every
+  // time the tab is selected (see buildTabs()'s click handler). index.php's
+  // ingestImportHistory() only covers what existed at page load, so without
+  // this a scheduled/manual import that landed since then wouldn't appear
+  // until a full page reload. Silent on failure — the tab just keeps
+  // whatever it already had rather than showing an error for a background
+  // refresh nobody explicitly asked to retry.
+  function loadImportHistory() {
+    if (!SITE_CONFIG.importHistoryApiUrl) return;
+    fetch(SITE_CONFIG.importHistoryApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok && Array.isArray(r.data.history)) {
+          state.importHistory = r.data.history;
+          if (state.tab === "history") renderViews();
+        }
+      }).catch(function () { /* keep showing whatever's already loaded */ });
+  }
+
+  // Setup tab > Import Schedule > persisted "Last run" status — fetched on
+  // Setup tab select (see buildTabs()) and again by startImportRequestPolling
+  // whenever an Import Now click's own polling resolves, so both the
+  // one-click status text and this always-visible line update together.
+  function loadRunStatus() {
+    if (!SITE_CONFIG.importScheduleApiUrl) return;
+    fetch(SITE_CONFIG.importScheduleApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "run_status" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok) {
+          state.runStatus = r.data.runStatus || null;
+          if (state.tab === "setup") renderViews();
+        }
+      }).catch(function () { /* keep showing whatever's already loaded */ });
+  }
+
+  // Setup tab > Import Schedule > "View Logs" — server-archived log files
+  // (logs.php action=list/get), so the directory is browsable from any
+  // machine logged into the site, not just the one that ran the import.
+  function toggleLogsPanel() {
+    state.logsPanelOpen = !state.logsPanelOpen;
+    if (state.logsPanelOpen && state.logsList === null) {
+      loadLogsList();
+      return; // loadLogsList() already re-renders
+    }
+    renderViews();
+  }
+  function loadLogsList() {
+    if (!SITE_CONFIG.logsApiUrl) return;
+    state.logsLoading = true;
+    state.logsError = null;
+    renderViews();
+    fetch(SITE_CONFIG.logsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.logsLoading = false;
+        if (r.ok && r.data && r.data.ok) {
+          state.logsList = r.data.files || [];
+        } else {
+          state.logsError = "Could not load the log list.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.logsLoading = false;
+        state.logsError = "Could not load the log list — check your connection.";
         renderViews();
       });
   }
@@ -6730,22 +6874,26 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // Developer-menu unlock; they're plain officer tools now. Import Flyer
   // (flyer-import.php) uploads a replacement CarShowFlyer.pdf, the file the
   // Reports tab's "Print Flyer" button opens.
+  // Shared by buildSetupView() and buildImportScheduleSection()'s Manual
+  // subsection — a launcher link (opens its standalone PHP page in a new
+  // tab) with a hint line, optionally paired with a "❓ Instructions" button.
+  function buildSetupLauncher(href, label, hint, extraBtn) {
+    var link = el("a", { class: "btn", href: href, target: "_blank", rel: "noopener" }, [label]);
+    var linkRow = extraBtn ? el("div", { style: "display:flex; align-items:center; gap:8px" }, [link, extraBtn]) : link;
+    return el("div", { class: "setup-item" }, [linkRow, el("div", { class: "setup-hint", text: hint })]);
+  }
+  function buildImportHelpBtn(title, steps) {
+    var btn = el("button", { class: "btn", type: "button", title: "How to export this CSV from ClubExpress" }, ["❓ Instructions"]);
+    btn.addEventListener("click", function () { openImportHelp(title, steps); });
+    return btn;
+  }
+
   function buildSetupView() {
-    var mk = function (href, label, hint, extraBtn) {
-      var link = el("a", { class: "btn", href: href, target: "_blank", rel: "noopener" }, [label]);
-      var linkRow = extraBtn ? el("div", { style: "display:flex; align-items:center; gap:8px" }, [link, extraBtn]) : link;
-      return el("div", { class: "setup-item" }, [linkRow, el("div", { class: "setup-hint", text: hint })]);
-    };
-    var helpBtn = function (title, steps) {
-      var btn = el("button", { class: "btn", type: "button", title: "How to export this CSV from ClubExpress" }, ["❓ Instructions"]);
-      btn.addEventListener("click", function () { openImportHelp(title, steps); });
-      return btn;
-    };
+    var mk = buildSetupLauncher;
+    var helpBtn = buildImportHelpBtn;
     var col = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start; gap: 14px" }, [
       mk("members-import.php", "👥 Import Members", "Upload the ETCC membership roster CSV (used for name lookup / sponsor-form validation).",
         helpBtn("Exporting the Member CSV from ClubExpress", MEMBER_IMPORT_STEPS)),
-      mk("registrations-import.php", "📋 Import Registrations", "Upload the ClubExpress registration + activity CSV export for the current show.",
-        helpBtn("Exporting the Registration CSV from ClubExpress", REGISTRATION_IMPORT_STEPS)),
       mk("flyer-import.php", "🖼️ Import Flyer", "Upload a replacement car show flyer PDF (opened by the Reports tab's Print Flyer button).")
     ]);
     return el("div", { class: "view setup-view" }, [
@@ -6755,6 +6903,77 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       ]),
       buildImportScheduleSection()
     ]);
+  }
+
+  // Setup tab > Import Schedule > "Log Directory" — server-archived run logs
+  // (logs.php), browsable from any machine logged into the site. Purged
+  // after 7 days — see logs.php's CARSHOW_LOG_PURGE_DAYS. No local copy
+  // exists anywhere anymore (see ETCCCarShowImportData's SKILL.md) — this is
+  // the one and only place a run's log lives.
+  function buildLogDirectoryField() {
+    var toggleBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" },
+      [state.logsPanelOpen ? "▲ Hide Logs" : "📂 View Logs"]);
+    toggleBtn.addEventListener("click", toggleLogsPanel);
+
+    var kids = [
+      el("div", {}, [toggleBtn]),
+      el("div", { class: "setup-hint" }, [
+        "Each import run's log is archived here — viewable from anywhere, purged automatically after 7 days."
+      ])
+    ];
+
+    if (state.logsPanelOpen) {
+      if (state.logsLoading) {
+        kids.push(el("div", { class: "hint" }, ["Loading…"]));
+      } else if (state.logsError) {
+        kids.push(el("div", { class: "form-error" }, [state.logsError]));
+      } else if (state.logsList && state.logsList.length) {
+        kids.push(el("table", { class: "grid", style: "margin-top:8px" }, [
+          el("thead", {}, [el("tr", {}, [el("th", { text: "Log" }), el("th", { text: "Saved" }), el("th", { text: "Size" })])]),
+          el("tbody", {}, state.logsList.map(function (f) {
+            var link = el("a", {
+              href: SITE_CONFIG.logsApiUrl + "&action=get&name=" + encodeURIComponent(f.name),
+              target: "_blank", rel: "noopener", text: f.name
+            });
+            return el("tr", {}, [
+              el("td", {}, [link]),
+              el("td", { text: f.mtime ? fmtDate(new Date(f.mtime)) : "" }),
+              el("td", { text: Math.max(1, Math.round(f.size / 1024)) + " KB" })
+            ]);
+          }))
+        ]));
+      } else if (state.logsList) {
+        kids.push(el("div", { class: "hint" }, ["No logs archived yet (or all have aged past the 7-day retention window)."]));
+      }
+    }
+
+    return el("div", {}, kids);
+  }
+
+  // Setup tab > Import Schedule > persisted "Last run" line — reads
+  // state.runStatus (fetched by loadRunStatus(), see buildTabs()'s Setup-tab
+  // select handler). Distinct from the Import Now button's own ephemeral
+  // status text: this reflects whichever run happened most recently
+  // (manual or scheduled), and survives page reloads.
+  function buildLastRunLine() {
+    var rs = state.runStatus;
+    if (!rs || !rs.startedAt) {
+      return el("div", { class: "hint", style: "margin-bottom:10px" }, ["Last run: none recorded yet."]);
+    }
+    var reasonText = rs.reason === "manual" ? "Import Now"
+      : (rs.reason && rs.reason.indexOf("scheduled:") === 0 ? "scheduled " + rs.reason.slice("scheduled:".length) : (rs.reason || ""));
+    var parts = ["Last run: started " + fmtDate(new Date(rs.startedAt)) + (reasonText ? " (" + reasonText + ")" : "")];
+    var style = "margin-bottom:10px";
+    if (!rs.completedAt) {
+      parts.push(" — still running, or the scheduled task didn't get a chance to report completion.");
+    } else if (rs.status === "failed") {
+      parts.push(" — ❌ Failed at " + fmtDate(new Date(rs.completedAt)) + (rs.error ? ": " + rs.error : "") + ".");
+      style += "; color:var(--warn)";
+    } else {
+      parts.push(" — ✅ Succeeded at " + fmtDate(new Date(rs.completedAt)) + ".");
+      style += "; color:var(--good)";
+    }
+    return el("div", { style: style }, [parts.join("")]);
   }
 
   // Setup tab > Import Schedule — the ClubExpress event URL (used by the
@@ -6773,7 +6992,12 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     var importNowBtn = el("button", { type: "button", class: "btn primary" }, ["▶ Import Now"]);
     importNowBtn.addEventListener("click", requestImportNow);
     var importNowRow = el("div", { style: "display:flex; align-items:center; gap:10px" }, [importNowBtn]);
-    if (state.importRequestStatus) importNowRow.appendChild(el("span", { class: "count" }, [state.importRequestStatus]));
+    if (state.importRequestStatus) {
+      var isFailed = state.importRequestStatus.indexOf("Failed at ") === 0;
+      var isSucceeded = state.importRequestStatus.indexOf("Succeeded at ") === 0;
+      var statusStyle = isFailed ? "color:var(--warn)" : (isSucceeded ? "color:var(--good)" : "");
+      importNowRow.appendChild(el("span", { class: "count", style: statusStyle }, [state.importRequestStatus]));
+    }
 
     var enableCb = el("input", { type: "checkbox" }); enableCb.checked = !!s.autoImportEnabled;
 
@@ -6796,6 +7020,20 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     var addTimeBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["+ Add Time"]);
     addTimeBtn.addEventListener("click", function () { addTimeRow(""); });
 
+    // "Every N hours, on the hour" — a simpler alternative (or addition) to
+    // picking explicit times one at a time. 0 = off. Active alongside any
+    // explicit times above, not instead of them — see import-schedule.php's
+    // 'check' action, which unions both into one slot list.
+    var intervalSel = el("select", {});
+    [
+      [0, "Off"], [1, "Every hour"], [2, "Every 2 hours"], [3, "Every 3 hours"],
+      [4, "Every 4 hours"], [6, "Every 6 hours"], [8, "Every 8 hours"], [12, "Every 12 hours"]
+    ].forEach(function (opt) {
+      var o = el("option", { value: String(opt[0]), text: opt[1] });
+      if (Number(s.autoImportIntervalHours) === opt[0]) o.setAttribute("selected", "selected");
+      intervalSel.appendChild(o);
+    });
+
     var saveBtn = el("button", { type: "button", class: "btn primary" }, ["Save"]);
     if (state.importScheduleSaving) saveBtn.setAttribute("disabled", "disabled");
     saveBtn.addEventListener("click", function () {
@@ -6805,6 +7043,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         eventUrl: eventUrlInput.value.trim(),
         autoImportEnabled: enableCb.checked,
         autoImportTimes: times,
+        autoImportIntervalHours: Number(intervalSel.value),
         autoImportStartDate: startDateInput.value,
         autoImportEndDate: endDateInput.value
       });
@@ -6814,6 +7053,19 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     else if (state.importScheduleSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
     if (state.importScheduleError) saveStatus.push(el("div", { class: "form-error" }, [state.importScheduleError]));
 
+    // Manual subsection — the browser-upload alternative to Import Now. Moved
+    // here (out of the plain Setup import-launcher list above) since it's the
+    // fallback path for the same job this whole section automates: pick the
+    // two CSVs by hand when Import Now/the schedule isn't available or
+    // convenient (e.g. the automation machine is off, or an officer already
+    // has the files and doesn't want to wait for a poll).
+    var manualSection = el("div", { style: "margin-top:18px; padding-top:14px; border-top:1px solid var(--line)" }, [
+      el("h4", { text: "Manual", style: "margin:0 0 8px" }),
+      buildSetupLauncher("registrations-import.php", "📋 Import Registrations",
+        "Upload the ClubExpress registration + activity CSV export for the current show, by hand, right now.",
+        buildImportHelpBtn("Exporting the Registration CSV from ClubExpress", REGISTRATION_IMPORT_STEPS))
+    ]);
+
     return el("div", { class: "panel", style: "margin-top:16px" }, [
       el("h3", { text: "Import Schedule" }),
       el("div", { class: "hint", style: "margin-bottom:10px" }, [
@@ -6821,7 +7073,12 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         "still only runs on the machine where Claude Code and Chrome are set up for it, and it checks " +
         "in here roughly every 5 minutes, so Import Now and scheduled times take effect within a few minutes, not instantly."
       ]),
+      buildLastRunLine(),
       el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "Event URL" }), eventUrlInput]),
+      el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "Log Directory" }),
+        buildLogDirectoryField()
+      ]),
       el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "" }), importNowRow]),
       el("div", { class: "form-row" }, [
         el("label", {}, [enableCb, document.createTextNode(" Enable automatic imports")])
@@ -6836,7 +7093,15 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         el("span", { class: "form-label", text: "Times" }),
         el("div", {}, [timesWrap, addTimeBtn])
       ]),
-      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus))
+      el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "Interval" }),
+        el("div", {}, [
+          intervalSel,
+          el("div", { class: "setup-hint" }, ["Runs alongside any Times above, not instead of them."])
+        ])
+      ]),
+      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus)),
+      manualSection
     ]);
   }
 
@@ -6854,6 +7119,8 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     } else {
       var table = el("table", { class: "grid" }, [
         el("thead", {}, [el("tr", {}, [
+          el("th", { text: "" }),
+          el("th", { text: "Log" }),
           el("th", { text: "Imported" }),
           el("th", { text: "Registrations" }),
           el("th", { text: "Activities" }),
@@ -6861,16 +7128,43 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
           el("th", { text: "Event URL" })
         ])]),
         el("tbody", {}, rows.map(function (r) {
+          var failed = r.outcome === "failed";
+          var outcomeCell = el("td", {
+            title: failed ? ("Failed" + (r.error ? ": " + r.error : "")) : "Succeeded",
+            style: "text-align:center"
+          }, [failed ? "❌" : "✅"]);
+
+          // Right next to the outcome icon (not squeezed past a long Event
+          // URL column at the far right) so it's actually noticeable —
+          // labeled with its own header rather than blank.
+          var logCell;
+          if (r.logFile && SITE_CONFIG.logsApiUrl) {
+            // Logs are archived server-side (logs.php) — viewable by anyone
+            // logged into the site, not just the machine that ran the
+            // import. Purged after 7 days.
+            var logLink = el("a", {
+              class: "btn btn-sm",
+              href: SITE_CONFIG.logsApiUrl + "&action=get&name=" + encodeURIComponent(r.logFile),
+              title: "View log (" + r.logFile + ")",
+              target: "_blank", rel: "noopener"
+            }, ["📄 Log"]);
+            logCell = el("td", { style: "text-align:center; white-space:nowrap" }, [logLink]);
+          } else {
+            logCell = el("td", { style: "text-align:center; color:var(--muted)" }, ["—"]);
+          }
+
           return el("tr", {}, [
+            outcomeCell,
+            logCell,
             el("td", { text: r.timestamp ? fmtDate(new Date(r.timestamp)) : "" }),
-            el("td", { text: String(r.regRows != null ? r.regRows : "") }),
-            el("td", { text: String(r.actRows != null ? r.actRows : "") }),
+            el("td", { text: String(r.regRows != null ? r.regRows : "—") }),
+            el("td", { text: String(r.actRows != null ? r.actRows : "—") }),
             el("td", { text: r.source === "cli" ? "Scheduled sync" : "Manual upload" }),
-            el("td", { style: "max-width:260px; overflow-wrap:break-word" }, [r.eventUrl || "—"])
+            el("td", { style: "max-width:260px; white-space:normal; overflow-wrap:break-word; word-break:break-all" }, [r.eventUrl || "—"])
           ]);
         }))
       ]);
-      body = table;
+      body = el("div", { class: "tablewrap" }, [table]);
     }
     return el("div", { class: "view history-view" }, [
       el("div", { class: "panel" }, [

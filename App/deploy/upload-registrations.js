@@ -46,6 +46,10 @@ var year = process.env.CARSHOW_YEAR || String(new Date().getFullYear());
 // the History tab's audit trail. If unset, registrations-upload.php falls
 // back to whatever's currently configured in the Setup tab.
 var eventUrl = process.env.CARSHOW_EVENT_URL || "";
+// Optional — the exact filename (not full path) the calling skill archived
+// this run's log under via logs.php, e.g. "sync-20260912-110000.log". Stored
+// in the History tab entry so its 📄 icon can link straight to it.
+var logFile = process.env.CARSHOW_LOG_FILE || "";
 
 if (!password) {
   console.error("Set CARSHOW_SITE_PASSWORD to the site's login password before running this.");
@@ -63,7 +67,7 @@ var actCsv = fs.readFileSync(actCsvPath, "utf8");
 // the newer of the two files' mtimes, not upload time.
 var generatedAtMs = Math.max(fs.statSync(regCsvPath).mtimeMs, fs.statSync(actCsvPath).mtimeMs);
 
-var payload = JSON.stringify({ regCsv: regCsv, actCsv: actCsv, generatedAt: generatedAtMs, password: password, year: year, eventUrl: eventUrl });
+var payload = JSON.stringify({ regCsv: regCsv, actCsv: actCsv, generatedAt: generatedAtMs, password: password, year: year, eventUrl: eventUrl, logFile: logFile });
 var u = new URL(url);
 
 var req = https.request({

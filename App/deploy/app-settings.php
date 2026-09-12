@@ -37,10 +37,16 @@
 //    that drives the actual ClubExpress export (see import-schedule.php's
 //    'check' action) instead of that task having a hardcoded URL that goes
 //    stale every year.
-//  - autoImportEnabled / autoImportTimes / autoImportStartDate /
-//    autoImportEndDate: the Setup tab's auto-import schedule. autoImportTimes
-//    is a list of "HH:MM" (24-hour, America/New_York — matches the event's
-//    own displayed timezone) local times to run an import each day; the
+//  - autoImportEnabled / autoImportTimes / autoImportIntervalHours /
+//    autoImportStartDate / autoImportEndDate: the Setup tab's auto-import
+//    schedule. autoImportTimes is a list of explicit "HH:MM" (24-hour,
+//    America/New_York — matches the event's own displayed timezone) local
+//    times to run an import each day. autoImportIntervalHours (0 = off) is a
+//    second, simpler way to say the same kind of thing — "every N hours, on
+//    the hour" (e.g. 3 -> 00:00, 03:00, 06:00, ... 21:00) — generated
+//    on the fly by import-schedule.php's 'check' action rather than expanded
+//    into autoImportTimes, so the two stay independently editable; both are
+//    active at once if both are set (the run list is their union). The
 //    start/end dates (YYYY-MM-DD, either may be blank for "no bound") let
 //    officers scope auto-imports to the show's active season. None of this is
 //    read or enforced by this file — it's just storage. import-schedule.php's
@@ -118,6 +124,7 @@ $defaults = [
     'eventUrl' => '',
     'autoImportEnabled' => false,
     'autoImportTimes' => [],
+    'autoImportIntervalHours' => 0,
     'autoImportStartDate' => '',
     'autoImportEndDate' => ''
 ];

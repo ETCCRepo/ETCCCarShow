@@ -78,6 +78,11 @@ if ($eventUrl === '') {
     $settingsRaw = is_file($settingsFile) ? json_decode(file_get_contents($settingsFile), true) : [];
     $eventUrl = is_array($settingsRaw) ? (string)($settingsRaw['eventUrl'] ?? '') : '';
 }
+// logFile: the caller may pass the exact filename it archived this run's log
+// under via logs.php (see ETCCCarShowImportData's SKILL.md) — the History
+// tab's 📄 icon links to that server-side copy. Absent for anything else
+// that calls this endpoint directly without going through that skill.
+$logFile = (string)($input['logFile'] ?? '');
 $historyFile = carshow_show_file($year, 'import-history.json');
 carshow_append_json_list($historyFile, [
     'timestamp' => gmdate('c'),
@@ -85,6 +90,8 @@ carshow_append_json_list($historyFile, [
     'actRows' => carshow_csv_data_row_count($actCsv),
     'source' => 'cli',
     'eventUrl' => $eventUrl,
+    'outcome' => 'success',
+    'logFile' => $logFile,
 ]);
 
 echo json_encode(['ok' => true]);

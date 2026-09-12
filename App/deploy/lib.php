@@ -368,7 +368,8 @@ function carshow_show_files() {
         'dash-numbers.json',
         'import-history.json',
         'import-request.json',
-        'import-schedule-state.json'
+        'import-schedule-state.json',
+        'import-run-status.json'
     ];
 }
 

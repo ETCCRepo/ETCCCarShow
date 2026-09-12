@@ -132,7 +132,9 @@ $perShowUrls = [
     'sponsorPaymentsApiUrl' => 'sponsor-payments.php',
     'tshirtPurchasesApiUrl' => 'tshirt-purchases.php',
     'dashNumbersApiUrl' => 'dash-numbers.php',
-    'importScheduleApiUrl' => 'import-schedule.php'
+    'importScheduleApiUrl' => 'import-schedule.php',
+    'logsApiUrl' => 'logs.php',
+    'importHistoryApiUrl' => 'import-history.php'
 ];
 $siteConfig = [];
 foreach ($perShowUrls as $key => $file) {
@@ -229,6 +231,7 @@ if ($year !== null) {
         'eventUrl' => '',
         'autoImportEnabled' => false,
         'autoImportTimes' => [],
+        'autoImportIntervalHours' => 0,
         'autoImportStartDate' => '',
         'autoImportEndDate' => ''
     ];
