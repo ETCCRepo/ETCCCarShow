@@ -142,6 +142,12 @@ foreach ($perShowUrls as $key => $file) {
     $siteConfig[$key] = $file . $yearQuery;
 }
 $siteConfig['showsApiUrl'] = 'shows.php';
+// Current deployed version — read from the small static JSON build.js writes
+// alongside itself (version-check.json), so app.js's checkForNewVersion()
+// has something fresh to compare its own re-fetch of that same file against.
+$versionCheckRaw = @file_get_contents(__DIR__ . '/version-check.json');
+$versionCheckData = $versionCheckRaw ? json_decode($versionCheckRaw, true) : null;
+$siteConfig['appVersion'] = is_array($versionCheckData) ? (string)($versionCheckData['version'] ?? '') : '';
 // No entry for the window card: it's a flat per-year file
 // (window-card-2026.pdf) that app.js fetches by the name it already gets in
 // app-settings.windowCardPdf, so there's nothing extra to hand it here.

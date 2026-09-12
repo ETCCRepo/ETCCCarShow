@@ -128,6 +128,13 @@
     // reset on reload), this survives reloads and reflects whichever run
     // happened most recently, manual or scheduled.
     runStatus: null,
+    // Set true when checkForNewVersion() detects the live site has been
+    // redeployed since this page was loaded — shows a "refresh to update"
+    // banner rather than forcing a reload, since an officer could be
+    // mid-edit somewhere. See that function's own comment for why this is
+    // needed at all (Hostinger's edge/CDN and mobile browsers can hold onto
+    // an old page for a surprisingly long time).
+    newVersionAvailable: false,
     apiPageOpen: false,       // Developer > API full-page screen
     apiKeyRevealed: false,
     apiTesting: false,
@@ -485,32 +492,28 @@
   }
 
   // ---------- views ----------
-  // .tablewrap's CSS max-height (styles.css) is a fixed calc(100vh - 250px)
-  // guess at how much chrome sits above/below the table — wrong on any
-  // device/tab combo where the real header stack is a different height (e.g.
-  // the Registration tab's extra CSVs-loaded/search/status/action rows), and
-  // especially unreliable on tablets/phones where browser chrome height
-  // varies. This replaces the guess with a real measurement: how much
-  // viewport is actually left below wherever the table happens to sit, on
-  // THIS device, right now. Runs after every render (via requestAnimationFrame
-  // in renderViews(), so it measures the DOM that render just produced) and
-  // again on resize/orientation change.
-  function updateTablewrapHeights() {
-    var wraps = document.querySelectorAll(".tablewrap");
-    for (var i = 0; i < wraps.length; i++) {
-      var w = wraps[i];
-      var top = w.getBoundingClientRect().top;
-      var available = window.innerHeight - top - 16; // small bottom margin
-      w.style.maxHeight = Math.max(200, available) + "px";
-    }
-  }
-  window.addEventListener("resize", updateTablewrapHeights);
-  window.addEventListener("orientationchange", updateTablewrapHeights);
-
+  // NOTE: do not reintroduce JS-measured table heights here. Two attempts
+  // (2026-09-12) both made this worse on real devices:
+  //   1. window.innerHeight - table.top: produced a uniformly tiny height.
+  //   2. footer.top - table.top: CIRCULAR — the footer sits below the table,
+  //      so its position depends on the table's current height. A small
+  //      table keeps the footer high, which computes an even smaller height
+  //      on the next render, collapsing progressively (iPad went 5 rows ->
+  //      2 rows). Desktop happened to stabilize; iPad did not.
+  // Sizing lives in styles.css (.tablewrap) as plain CSS, where it's
+  // deterministic and can't feed back on itself.
   function renderViews() {
-    requestAnimationFrame(updateTablewrapHeights);
     var app = $("#app");
     app.innerHTML = "";
+
+    if (state.newVersionAvailable) {
+      var refreshLink = el("a", { href: "#" }, ["Refresh now"]);
+      refreshLink.addEventListener("click", function (e) { e.preventDefault(); location.reload(); });
+      app.appendChild(el("div", {
+        class: "no-print",
+        style: "background:#fff8e6; border:1px solid #f0d58c; border-radius:8px; padding:8px 14px; margin-bottom:12px; font-size:13px"
+      }, ["🔄 A newer version of this app has been deployed. ", refreshLink, " to get the latest (your place won't be lost — reopen the same show after)."]));
+    }
 
     // The Car Shows picker is the landing screen: every session starts here
     // and stays here until a show is opened. Nothing below this point makes sense
@@ -1004,8 +1007,15 @@
       htr.appendChild(th);
     });
     thead.appendChild(htr);
-    var table = el("table", { class: "grid" }, [thead, el("tbody", { id: "regbody" })]);
-    var wrap = el("div", { class: "tablewrap", style: "zoom:" + state.zoom }, [table]);
+    // zoom goes on the TABLE, never on .tablewrap. `zoom` rescales the
+    // element's own lengths, so a zoomed .tablewrap renders its max-height at
+    // zoom x the authored value — at the ~60% fit-zoom this picks on a wide
+    // screen that silently cut the visible table (and the row count with it)
+    // to 60% of what the CSS asked for, differently on every screen width.
+    // See updatePinnedOffsets()'s note: this is the same "zoom rescales
+    // lengths" trap, and it's what broke the JS height attempts too.
+    var table = el("table", { class: "grid", style: "zoom:" + state.zoom }, [thead, el("tbody", { id: "regbody" })]);
+    var wrap = el("div", { class: "tablewrap fill" }, [table]);
     setTimeout(function () {
       renderRegBody();
       if (!state.zoomAutoFitDone) { state.zoomAutoFitDone = true; fitZoom(); }
@@ -1050,15 +1060,17 @@
   // Measure how wide the table naturally wants to be vs. how much room is
   // actually available, and pick a zoom level that makes every column fit —
   // instead of making the user guess a percentage via the +/- buttons.
+  // The zoom now lives on the table (see buildRegView), so measure and
+  // restore it there — .tablewrap itself is never zoomed.
   function fitZoom() {
     var wrap = $(".tablewrap");
     var table = wrap && wrap.querySelector("table.grid");
     if (!wrap || !table) return;
-    var availableWidth = wrap.parentElement.clientWidth; // not itself zoomed
-    var priorZoom = wrap.style.zoom;
-    wrap.style.zoom = "1"; // measure at true scale, independent of current zoom
+    var availableWidth = wrap.clientWidth; // the unzoomed scroll container
+    var priorZoom = table.style.zoom;
+    table.style.zoom = "1"; // measure at true scale, independent of current zoom
     var naturalWidth = table.scrollWidth;
-    wrap.style.zoom = priorZoom;
+    table.style.zoom = priorZoom;
     if (!naturalWidth) return;
     setZoom(availableWidth / naturalWidth);
   }
@@ -1066,11 +1078,11 @@
     var wrap = $(".tablewrap");
     var table = wrap && wrap.querySelector("table.grid");
     if (!wrap || !table) return;
-    var availableWidth = wrap.parentElement.clientWidth;
-    var priorZoom = wrap.style.zoom;
-    wrap.style.zoom = "1";
+    var availableWidth = wrap.clientWidth;
+    var priorZoom = table.style.zoom;
+    table.style.zoom = "1";
     var naturalWidth = table.scrollWidth;
-    wrap.style.zoom = priorZoom;
+    table.style.zoom = priorZoom;
     if (!naturalWidth) return;
     setSponsorZoom(availableWidth / naturalWidth);
   }
@@ -2615,8 +2627,9 @@
         return th;
       }))
       .concat([el("th", { class: "no-print", text: "" })]))]);
-    var table = el("table", { class: "grid" }, [thead, el("tbody", { id: "sponsorbody" })]);
-    container.appendChild(el("div", { class: "tablewrap", style: "zoom:" + state.sponsorZoom }, [table]));
+    // zoom on the table, not the wrap — see buildRegView()'s note.
+    var table = el("table", { class: "grid", style: "zoom:" + state.sponsorZoom }, [thead, el("tbody", { id: "sponsorbody" })]);
+    container.appendChild(el("div", { class: "tablewrap fill" }, [table]));
     setTimeout(function () {
       renderSponsorsBody();
       if (!state.sponsorZoomAutoFitDone) { state.sponsorZoomAutoFitDone = true; fitSponsorZoom(); }
@@ -5744,9 +5757,33 @@
       else if (e.key === "ArrowRight") stepDetail(1);
     });
     renderViews();
+    checkForNewVersion();
+    setInterval(checkForNewVersion, 5 * 60 * 1000);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
+
+  // Detects a redeploy that happened after this page was loaded. index.php's
+  // no-cache headers are correct, but a page can still end up stale for a
+  // surprisingly long time in practice — a mobile browser suspending/
+  // resuming a tab without a real network fetch, or simply someone leaving
+  // the app open for hours across a shift at the show. version-check.json is
+  // a plain static file (see build.js), fetched here with a cache-busting
+  // query string so no cache anywhere in the chain can return a stale copy
+  // of THIS specific request even if it would for a normal page load. Shows
+  // a dismissible-by-refreshing banner (renderViews()) rather than forcing a
+  // reload, since someone could be mid-edit.
+  function checkForNewVersion() {
+    if (!SITE_CONFIG.appVersion) return;
+    fetch("version-check.php?t=" + Date.now(), { cache: "no-store" })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data && data.version && data.version !== SITE_CONFIG.appVersion && !state.newVersionAvailable) {
+          state.newVersionAvailable = true;
+          renderViews();
+        }
+      }).catch(function () { /* transient network hiccup — just check again next interval */ });
+  }
 
   // Debug/test hook (harmless in production): drive the app without file I/O.
   var API = window.__carshow = {
