@@ -1,7 +1,31 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-11 (end of session, latest — supersedes the same-day entry below).
-**This session added a History tab logging every registration-data import (timestamp, row
+Last updated: 2026-09-12 (end of session, latest). **This session built out the Import
+Schedule / logging system on the Setup tab across three checkpoints, then fixed a
+long-running table-height bug and bumped the app to v5.0.** The headline fix: the
+Registration/Sponsors tables had been rendering far fewer rows than they should on
+desktop and iPad, and **three earlier attempts had failed because they were all treating
+a symptom**. Real cause: `.tablewrap` carried an inline `zoom:` (the auto-fit zoom), and
+CSS `zoom` rescales the element's *own* lengths — so `max-height: calc(100vh - 250px)`
+rendered at *zoom × that value*. At the ~60% fit-zoom a wide screen picks, the table got
+~60% of the height the CSS asked for, and since fit-zoom differs per screen width, every
+device was wrong by a different amount. This is the same trap `updatePinnedOffsets()`
+already documents ("zoom rescales inline-style lengths too, so divide back out"), and it
+also explains why the JS attempts — which set `maxHeight` in px on the *zoomed* wrap —
+came out "uniformly tiny". Fixed by moving the zoom onto the inner `<table>` so the scroll
+container's height means what it says, then replacing the magic number entirely with a
+`body:has(.tablewrap.fill)` flex shell. Also added a "newer version deployed" banner.
+**Version manually reset to 5.0** (user passed `5.0` to `/ETCCCarShowAll`). Four full
+checkpoints today: **`a5696c4`** (v4.35), **`b965590`** (v4.47), **`6687dab`** (v4.51),
+**`757ab56`** (v5.0) — all pushed; live site is **v5.0**. `/ETCCCarShowTest` was run once
+against the final state: **125 passed, 0 failed**.
+
+**Watch for this**: `zoom` is used in two places in this app and rescales *everything*
+inside the element it's on, including any length you set from JS. Never put it on a
+container whose own box size matters — keep it on the content being scaled.
+
+Previous update: 2026-09-11 (end of session).
+**That session added a History tab logging every registration-data import (timestamp, row
 counts, source), renamed the ClubExpress sync skill, and ran two full checkpoints.**
 
 **1. History tab.** New per-show `data/<year>/import-history.json` — a JSON array, one
@@ -63,6 +87,109 @@ project's own workflow, but worth noting since they were built in this session):
 Checkpoint then End skill in sequence, stopping early with a clear report if the
 checkpoint fails (SAM's version additionally respects its manual test-green gate rather
 than skipping past it). All three live under `C:\Users\Admin\.claude\skills\`.
+
+## This session's work (2026-09-12 — Import Schedule build-out, table-height fix, v5.0)
+
+Four checkpoints in one day. The first three built out the Import Schedule/logging system
+(documented here from their commit messages and diffs — that work happened earlier in the
+session); the fourth is the table-height fix described in detail below.
+
+**1. `a5696c4` (v4.35) — Setup tab Import Schedule.** New Event URL field and Import
+Schedule section: Import Now button, enable-auto-import checkbox, active date range,
+repeatable daily times. The app can't drive a browser through ClubExpress itself, so this
+only *leaves signals* for the `/ETCCCarShowImportData` scheduled task to act on — that
+task now polls every 5 minutes via a new `App/deploy/import-schedule.php`
+(`check`/`mark_run` actions) and reads `EVENT_URL` from this setting instead of a
+hardcoded value. Every History entry now records which event URL was used.
+
+**2. `b965590` (v4.47) — server-side logs, persistent status, interval scheduling.**
+- Import logs archived server-side (new `App/deploy/logs.php`: store/list/get, 7-day
+  purge) instead of only on the machine that ran the import; the History tab's log link
+  and Setup's new "View Logs" browser both read from there, so they work from any machine.
+  `/ETCCCarShowImportData` no longer writes to local disk at all.
+- History logs every import **attempt**, not just successes (failures get a ❌ entry via
+  `import-schedule.php`'s `mark_run`) and refreshes on tab selection (new
+  `import-history.php`).
+- New persisted "Last run" status line (`mark_start` on the way in, `mark_run` completing
+  it) survives reloads and covers manual + scheduled runs alike.
+- Auto-import gained an "every N hours" interval option — a **union** with explicit
+  times, not either/or.
+- "Import Registrations" moved out of the plain Setup launcher list into a Manual
+  subsection under Import Schedule. Footer credit now links to businesswebexpress.com.
+
+**3. `6687dab` (v4.51) — History delete, live tab refresh, log sort, first height attempt.**
+- History rows got checkboxes + Delete Selected/Delete All (new `import-history.php`
+  delete action).
+- **Every** tab now re-pulls the show's data on selection via a new
+  `App/deploy/refresh.php`, backed by a shared `carshow_boot_data()` in `lib.php` that
+  `index.php`'s boot script also calls — so an import landing while a page is open shows
+  up on Summary/Registration without a reload, and the two paths can't drift.
+- `logs.php` was sorting the log list by filename string instead of save time; now sorts
+  by real file mtime.
+- Also the **first** table-height attempt (JS measurement) — superseded, see below.
+
+**4. `757ab56` (v5.0) — the actual table-height fix.** Reported as "fixing number of
+registration rows rendered on desktop and iPad." **Three attempts had already failed**,
+and the app.js comment left behind by attempts 2 and 3 (still worth reading, at the top
+of `renderViews()`) records why: (1) `window.innerHeight - table.top` gave a uniformly
+tiny height; (2) `footer.top - table.top` was **circular** — the footer sits *below* the
+table, so its position depends on the height being computed, and iPad collapsed 5 rows →
+2 rows over successive renders. Both were reverted to the original static
+`calc(100vh - 250px)`.
+- **Root cause (none of the three attempts had found it):** `.tablewrap` carried an
+  inline `zoom:` from the auto-fit zoom feature. CSS `zoom` rescales the element's own
+  lengths, so the wrap's `max-height` rendered at *zoom × the authored value* — ~60% of
+  it at a typical desktop fit-zoom, a different fraction on iPad. It also explains
+  attempt 1's symptom exactly: a px `maxHeight` set from JS on a zoomed element gets
+  scaled the same way. `updatePinnedOffsets()` had documented this exact behavior all
+  along ("zoom rescales inline-style lengths too, so divide back out").
+- **Fix part 1 — zoom moved to the inner `<table>`** in `buildRegView()` and
+  `buildSponsorsView()`, so the scroll container is never zoomed and its height is real.
+  `fitZoom()`/`fitSponsorZoom()` now toggle/restore `table.style.zoom` and measure against
+  `wrap.clientWidth` (was `wrap.parentElement.clientWidth`, which only existed because the
+  wrap itself used to be zoomed). `updatePinnedOffsets()` is **unchanged and still
+  correct** — pinned cells live inside the zoomed table, so its `/ state.zoom` division
+  still applies.
+- **Fix part 2 — the magic number is gone** for those two tables. They're marked
+  `.tablewrap.fill`, and `body:has(.tablewrap.fill)` turns the app shell into a `100dvh`
+  flex column: header/tabs/toolbar/footer take natural heights, the table takes `flex: 1`
+  — whatever's left. No device guess, and structurally free of the circularity that broke
+  attempt 3 (flex solves in one pass; nothing measures anything). Scoped to
+  `@media screen` so printing is untouched. The History tab's short log table and any
+  browser without `:has()` keep the `calc()` fallback.
+- **Also in this commit — "newer version deployed" banner.** `build.js` writes
+  `App/deploy/version-check.json`; `version-check.php` republishes just that string
+  (the `.json` is unreachable directly — caught by `.htaccess`'s blanket JSON deny, so
+  the endpoint reads it server-side); `app.js`'s `checkForNewVersion()` polls every 5
+  minutes and shows a refresh link rather than forcing a reload mid-edit.
+
+**Version**: manually reset to **5.0** (user passed `5.0` to `/ETCCCarShowAll`) — a
+deliberate major bump, same pattern as the earlier 3.0/4.0 resets. `version.json` sits at
+minor `1` for next time (the usual one-ahead offset).
+
+**Tests**: `/ETCCCarShowTest` not invoked as a skill, but `node test/run-tests.js` was run
+directly against the final state — **125 passed, 0 failed**.
+
+## Known follow-ups / things a new session might need to know (2026-09-12 session)
+
+- **The table-height fix is not yet confirmed on real devices.** Per this project's
+  standing "no self-verification" rule it was shipped for the user to test. What to check
+  on desktop *and* iPad: rows now fill the window; "Fit" and ± zoom still size columns;
+  pinned left columns still line up when scrolling sideways; the Sponsors tab behaves the
+  same. If it's still wrong, the next thing to check is whether `:has()` is supported
+  (if not, the `calc()` fallback is in play) — **do not** reintroduce JS-measured heights,
+  for the reasons recorded in `renderViews()`'s comment.
+- **`zoom` remains a live hazard.** It's on the Registration and Sponsors tables. Anything
+  that sets or reads a length on or inside those tables has to account for it — see
+  `updatePinnedOffsets()` for the established pattern.
+- **The Import Schedule system has had no test coverage added** (PHP endpoints +
+  scheduling UI, all from this session's first three checkpoints), and the auto-import
+  path depends on the external scheduled task actually polling — worth an end-to-end
+  watch before the show.
+- All prior open items from earlier sessions (multi-year show isolation not yet
+  human-verified, the officer's flyer re-import, orphaned `sponsor-form.php` /
+  `deleted-sponsors.php` on the live server, stale `CHANGELOG_DEPLOYED_FILES`) remain
+  unchanged; none were touched this session.
 
 ## Known follow-ups / things a new session might need to know (2026-09-11 session, History tab)
 
