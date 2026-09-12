@@ -1,6 +1,84 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-11 (end of session, latest). **This session started as "sponsor form:
+Last updated: 2026-09-11 (end of session, latest — supersedes the same-day entry below).
+**This session added a History tab logging every registration-data import (timestamp, row
+counts, source), renamed the ClubExpress sync skill, and ran two full checkpoints.**
+
+**1. History tab.** New per-show `data/<year>/import-history.json` — a JSON array, one
+entry per successful import: `{timestamp, regRows, actRows, source}`. Both import paths
+now append to it: `App/deploy/registrations-upload.php` (the CLI/scheduled path, `source:
+"cli"`) and `App/deploy/registrations-import.php` (the browser upload, `source:
+"browser"`). Both now count rows via a new shared `carshow_csv_data_row_count($csv)` in
+`App/deploy/lib.php` (counts CSV data rows from a string, excluding header/blank lines) —
+`registrations-import.php`'s own local `csvDataRowCount()` (file-based) was deleted in
+favor of this shared one, so the two paths can never disagree on a count.
+`App/deploy/index.php` reads and injects the log fresh every page load via a new
+`ingestImportHistory()` boot call, right before the existing `registrations-data.json`
+read. `App/src/app.js` gained: `state.importHistory` (filled by the new
+`ingestImportHistory` API function), a **History** tab appended after Setup in
+`buildTabs()`, and `buildHistoryView()` — a `grid`-class table (Imported / Registrations /
+Activities / Source columns), newest-first, with an empty state before the first import.
+`App/src/styles.css`'s print hide-list gained `.view.history-view` alongside
+`.tshirt-view`/`.reports-view`/`.setup-view` (this tab isn't meant to print). `import-
+history.json` was also added to `lib.php`'s `carshow_show_files()` list (the legacy-
+migration copy list — harmless no-op for this brand-new file, but keeps the list
+authoritative for "what belongs to a show").
+
+**2. Renamed `/ETCCCarShowSyncRegistrations` → `/ETCCCarShowImportData`** (user request).
+Skill directory moved, `name`/`description`/internal self-references all updated. Every
+other reference repointed: the `carshow-sync-registrations` scheduled task's invocation
+line, `App/AUTOPULL-NOTES.md`'s history note and "current skill" pointer, and
+`App/deploy/README.md`'s registration-refresh step list. The scheduled task's own ID
+(`carshow-sync-registrations`) and its 9 AM/4 PM cron were **not** renamed — only what it
+invokes changed.
+
+**3. Bug fix: `upload-registrations.js`'s hardcoded `EXPORTS_DIR`** pointed at a folder
+that no longer exists (`Z:\Backup\ETCC\Car Show\Exports` vs. the real, longer path under
+`Z:\Backup\ETCC\Document Library\Restricted\Events\Car Show\Exports`) — fixed, and made
+overridable via a `CARSHOW_EXPORTS_DIR` env var for future moves.
+
+**4. Live-verified twice.** Ran `/ETCCCarShowImportData` end-to-end twice this session
+(once mid-session to prove the scheduled-task setup, once via the renamed skill after the
+rename) — both exported Registration Data (82 rows) + Activity Registrant Data (115 rows)
+from ClubExpress, uploaded successfully (`Status: 200`, `{"ok":true}`), and wrote a log to
+`Z:\Backup\Log\CarShow\sync-<timestamp>.log` per the skill's new logging step (added this
+session — see the skill's own SKILL.md for the log format). **Watch for this ClubExpress
+UI quirk again**: the Export Type radio dialog can silently close without exporting if a
+screenshot times out right after the click (the `CDP sendCommand "Page.captureScreenshot"
+timed out` error is otherwise harmless and usually **not** associated with a lost click —
+but twice this session the very next screenshot showed the dialog gone with no download
+having fired). The fix is just to reopen Exports and redo the selection — checking
+Downloads for a fresh file after every Export click is what catches this before it's
+mistaken for success.
+
+**5. Two full `/ETCCCarShowCheckpoint` runs.** First: **`097dcf8`** (the History tab +
+rename + bugfix work above) — live site **v4.32**. Second, via `/ETCCCarShowAll`
+(a brand-new sequencing-wrapper skill created this session, modeled on `/BWEAll`): a
+routine rebuild with zero source changes, **`0882290`** — live site **v4.33**. Both
+pushed to `origin/main`. `/ETCCCarShowTest` was **not** run this session (not requested).
+
+**6. Three new sequencing-wrapper skills created this session** (not specific to this
+project's own workflow, but worth noting since they were built in this session):
+`/ETCCCarShowAll`, `/ETCCVetteFestAll`, `/ETCCSAMAll` — each runs that project's own
+Checkpoint then End skill in sequence, stopping early with a clear report if the
+checkpoint fails (SAM's version additionally respects its manual test-green gate rather
+than skipping past it). All three live under `C:\Users\Admin\.claude\skills\`.
+
+## Known follow-ups / things a new session might need to know (2026-09-11 session, History tab)
+
+- **The History tab has never been exercised on the live site by a human** beyond the two
+  scripted imports this session ran. Worth an officer glance before the next show to
+  confirm the table reads sensibly (right timestamps, right counts, right source labels).
+- **VetteFest's ClubExpress event admin URL is still unknown** — a `/ETCCVetteFestImportData`
+  skill (parallel to this project's) was requested but not yet built; it needs that
+  event's `item_id` from ClubExpress before it can be written, since VetteFest's own repo
+  has no record of it anywhere (unlike this project's, which had it from an earlier
+  session). Ask the user for it next time VetteFest import automation comes up.
+- **No automated test coverage for any of this session's PHP/JS changes** (History tab,
+  the shared row-counting helper, the rename). All manually verified via two live import
+  runs and a code review, not via `/ETCCCarShowTest`.
+
+Previous update: 2026-09-11 (earlier session, same day). **This session started as "sponsor form:
 add option for a sponsor to order more than one t-shirt" and ended up scoped down to
 admin-only, plus added ClubExpress export instructions to the Setup tab.** First pass added
 multi-shirt ordering to BOTH the public sign-up forms (member-sponsor-form.php/
