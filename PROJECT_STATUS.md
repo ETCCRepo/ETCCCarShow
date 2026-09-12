@@ -1,6 +1,23 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-12 (end of session, latest). **UI-only session: pinned the
+Last updated: 2026-09-12 (end of session, latest). **Deleted the stale Claude Code
+scheduled task.** After the Claude-free Playwright migration (see the entry two below),
+the Claude Code scheduled task `carshow-sync-registrations` — the old 15-minute poller
+that drove ClubExpress imports via the `ETCCCarShowImportData` skill — kept existing
+alongside its replacement, the Windows Scheduled Task of the **same name** running
+`sync-registrations.js`. User asked "does the import process still depend on Claude
+running" — confirmed no (verified live: Windows Task Scheduler entry, `LastTaskResult 0`,
+running `node.exe sync-registrations.js` headless, no Claude/Anthropic references in that
+script) — then asked to delete the now-redundant Claude task. Done via
+`delete_scheduled_task`; its 63 archived run sessions are preserved, and its `SKILL.md`
+was left on disk at `C:\Users\Admin\.claude\scheduled-tasks\carshow-sync-registrations\`
+in case the prompt is ever needed again. **This session touched no app code** — the
+checkpoint's version bump (v5.14 → v5.15) is the only diff. **Still open**: Vette Fest has
+an identically-named Claude scheduled task (`vettefest-sync-registrations`) that is very
+likely equally stale if Vette Fest went through the same Playwright migration — flagged to
+the user, not yet confirmed or deleted.
+
+Previous update: 2026-09-12 (earlier the same day). **UI-only session: pinned the
 Save/Cancel/Delete button bar to the top of the app's four biggest modals** —
 Registration detail, Add/Edit Sponsor, Record Payment, and Add Registration. All four
 are long enough (especially Registration detail and Sponsor, with dozens of fields) that
