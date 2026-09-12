@@ -1,8 +1,23 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-12 (end of session, latest — a later session the same day,
-supersedes the reliability entry below). **The ClubExpress import no longer depends on
-Claude.** `App/deploy/sync-registrations.js` (Playwright), run every 15 minutes by the
+Last updated: 2026-09-12 (end of session, latest). **UI-only session: pinned the
+Save/Cancel/Delete button bar to the top of the app's four biggest modals** —
+Registration detail, Add/Edit Sponsor, Record Payment, and Add Registration. All four
+are long enough (especially Registration detail and Sponsor, with dozens of fields) that
+the action buttons used to be off-screen until scrolling all the way down. Fix: a new
+`.modal-sticky` wrapper holds each modal's header *and* a new `.modal-actions` bar
+(the Save/Cancel/Delete buttons plus that form's error message) together as one
+`position: sticky` block, so both stay visible while the fields scroll underneath —
+`renderDetailModal()`, `renderSponsorFormModal()`, `renderPaymentModal()`, and
+`renderAddRegistrationModal()` in `App/src/app.js`, plus the new CSS in
+`App/src/styles.css`. Each form's error message (e.g. "Sponsor Name is required.") moved
+from the bottom of the form up into this pinned bar too, so it now appears right beside
+the button that triggered it instead of off-screen. One checkpoint: **`6690983`** (v5.14),
+deployed and pushed. `/ETCCCarShowTest` not run (not requested; last known-good 125/125,
+unaffected — this touched only modal chrome, not `logic.js`/`excel.js`/`config.js`).
+
+Previous update: 2026-09-12 (earlier the same day). **The ClubExpress import no longer
+depends on Claude.** `App/deploy/sync-registrations.js` (Playwright), run every 15 minutes by the
 Windows Task Scheduler task `carshow-sync-registrations`, now does the whole unattended
 import — a port of what the Vette Fest app switched to earlier that afternoon. The Claude
 Code scheduled tasks are **gone** (they had silently dropped out of the scheduler; that's
