@@ -167,8 +167,11 @@ scale; if that ever stops being true, that's the thing to revisit.
 ClubExpress has no live API (see `AUTOPULL-NOTES.md`) — a person still has to trigger a
 refresh by exporting CSVs. What's different from the old flow is where that data lands:
 
-1. Export fresh CSVs (`/ETCCGetCarShowRegistrations` skill, or manually into the Exports folder).
-2. Either:
+1. Export fresh CSVs (`/ETCCCarShowImportData` skill, or manually into the Exports
+   folder — `Z:\Backup\ETCC\Document Library\Restricted\Events\Car Show\Exports\`, or
+   wherever `CARSHOW_EXPORTS_DIR` points).
+2. Either — the skill above already does the first of these, so this step is only for a
+   manual export:
    - `CARSHOW_SITE_PASSWORD=... node deploy/upload-registrations.js` — picks the newest
      CSVs automatically (or pass explicit paths), POSTs them to the live
      `registrations-upload.php`; or

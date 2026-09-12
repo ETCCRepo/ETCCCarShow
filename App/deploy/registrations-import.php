@@ -40,17 +40,6 @@ $REG_FILE = carshow_show_file($year, 'registrations-data.json');
 $errors = [];
 $imported = null; // ['regRows' => int, 'actRows' => int] on success
 
-function csvDataRowCount($tmpName) {
-    $lines = file($tmpName);
-    if (!$lines) return 0;
-    // Header line doesn't count as a data row; blank trailing lines don't either.
-    $count = 0;
-    foreach (array_slice($lines, 1) as $line) {
-        if (trim($line) !== '') $count++;
-    }
-    return $count;
-}
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['reg_csv'])) {
     $regFile = $_FILES['reg_csv'];
     $actFile = $_FILES['act_csv'] ?? null;
@@ -65,8 +54,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['reg_csv'])) {
         if (trim((string)$regCsv) === '') {
             $errors[] = 'That Registration Data file looks empty.';
         } else {
-            $regRows = csvDataRowCount($regFile['tmp_name']);
-            $actRows = $actCsv !== '' ? csvDataRowCount($actFile['tmp_name']) : 0;
+            $regRows = carshow_csv_data_row_count($regCsv);
+            $actRows = carshow_csv_data_row_count($actCsv);
             $data = [
                 'regCsv' => $regCsv,
                 'actCsv' => $actCsv,
@@ -75,6 +64,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['reg_csv'])) {
             ];
             if (carshow_write_json($REG_FILE, $data)) {
                 $imported = ['regRows' => $regRows, 'actRows' => $actRows];
+                carshow_append_json_list(carshow_show_file($year, 'import-history.json'), [
+                    'timestamp' => gmdate('c'),
+                    'regRows' => $regRows,
+                    'actRows' => $actRows,
+                    'source' => 'browser',
+                ]);
             } else {
                 $errors[] = 'Could not save the registration data — please try again.';
             }

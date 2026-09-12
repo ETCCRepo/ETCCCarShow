@@ -21,7 +21,11 @@ var fs = require("fs");
 var path = require("path");
 var https = require("https");
 
-var EXPORTS_DIR = "Z:\\Backup\\ETCC\\Car Show\\Exports";
+// Overridable with CARSHOW_EXPORTS_DIR. The default has moved once already
+// (it used to be Z:\Backup\ETCC\Car Show\Exports, which no longer exists), and
+// a wrong folder here fails the run before it ever reaches the server.
+var EXPORTS_DIR = process.env.CARSHOW_EXPORTS_DIR ||
+  "Z:\\Backup\\ETCC\\Document Library\\Restricted\\Events\\Car Show\\Exports";
 var DEFAULT_URL = "https://etccapps.com/apps/carshow/registrations-upload.php";
 
 function newestMatching(dir, prefix) {

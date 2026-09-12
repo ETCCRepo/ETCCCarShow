@@ -353,7 +353,7 @@ a.show-open:hover { text-decoration: underline; }
      both are single-class selectors with equal specificity, so source order
      decides the winner, and the tab-specific hide needs to beat the generic
      "always show the current tab" rule. */
-  .view.tshirt-view, .view.reports-view, .view.setup-view { display: none !important; }
+  .view.tshirt-view, .view.reports-view, .view.setup-view, .view.history-view { display: none !important; }
   body { background: #fff; }
   /* Registration tab: hide the on-screen (collapsed-columns) table and show the
      full-column print-only table built fresh by printRegistration() instead.

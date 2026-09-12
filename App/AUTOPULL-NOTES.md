@@ -17,9 +17,16 @@
 ## Outcome: built a browser-automation skill instead
 
 Rather than wait on ClubExpress or store credentials anywhere, we automated the *manual
-UI steps themselves*. See [`Z:\Backup\Websites\Claude\.claude\skills\ETCCGetCarShowRegistrations\SKILL.md`](file:///Z:/Backup/Websites/Claude/.claude/skills/ETCCGetCarShowRegistrations/SKILL.md)
-(moved out of this repo into the global skills folder) —
-run it with `/ETCCGetCarShowRegistrations` in a Claude Code session.
+UI steps themselves*. The current skill is
+`C:\Users\Admin\.claude\skills\ETCCCarShowImportData\SKILL.md` — run it with
+`/ETCCCarShowImportData` in a Claude Code session. It also runs the upload step
+(`deploy/upload-registrations.js`), so one command takes ClubExpress → live site.
+
+> **History:** this was originally `/export-carshow-data`, then
+> `/ETCCGetCarShowRegistrations` (deleted in a bulk skill cleanup — see `PROJECT_STATUS.md`;
+> its old content is recoverable from the `ClaudeConfig` repo at commit `ebffe87` if ever
+> needed), then `/ETCCCarShowSyncRegistrations` once the upload step was added, renamed
+> again to `/ETCCCarShowImportData` on 2026-09-11.
 
 How it works:
 - You stay logged into ClubExpress in Chrome as normal — the skill never sees or enters
@@ -31,12 +38,19 @@ How it works:
   `Z:\Backup\ETCC\Car Show\Exports\` using the same `registration_data<date>.csv` /
   `activity_registrant_data<date>.csv` naming already used there — so the app's drop
   zone (or a future "watch this folder" step) just works.
-- It requires the Claude in Chrome extension to be installed and connected, and a
-  Claude Code session to invoke it — it's not a background/unattended cron job. That
-  tradeoff was intentional: it keeps your ClubExpress login off disk entirely, at the
-  cost of needing you to run the command instead of it firing on a schedule.
+- It requires the Claude in Chrome extension to be installed and connected. Your
+  ClubExpress login still never touches disk — that constraint hasn't changed, and is
+  why the skill stops dead rather than ever typing credentials.
+- **It now also runs on a schedule** (added 2026-09-11): a `carshow-sync-registrations`
+  scheduled task fires at 9:00 AM and 4:00 PM daily and invokes the skill. This is not a
+  true unattended cron — scheduled tasks only fire while the Claude desktop app is open,
+  and a run still needs Chrome connected and a live ClubExpress session. Runs that land
+  when you're away simply stop and say why; that's expected, not a failure. The site
+  password for the upload step comes from the `CARSHOW_SITE_PASSWORD` Windows user
+  environment variable, which lives in the user profile — not in this repo or in git.
 
-**Status: live-tested and working (2026-07-07).** Ran `/ETCCGetCarShowRegistrations` (then
+**Status: live-tested and working (2026-07-07, re-tested 2026-09-11 under the current
+`/ETCCCarShowImportData` name).** Ran `/ETCCGetCarShowRegistrations` (then
 named `/export-carshow-data`) end to end:
 landed directly on the event's Admin Panel (already logged in — no separate "Admin
 Options" click needed, that button doubles as the panel itself), opened Exports, pulled

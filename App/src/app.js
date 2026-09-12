@@ -117,6 +117,7 @@
     tshirtOrderPageOpen: false, // T-Shirts tab > "T-Shirt Order Form" full-page screen
     tshirtPurchasePageOpen: false, // T-Shirts tab > "Buy T-Shirt" full-page screen
     tshirtPurchases: [],       // day-of-event walk-up sales — filled by ingestTshirtPurchases()
+    importHistory: [],        // one entry per successful CSV import — filled by ingestImportHistory()
     // rowKey(r) -> integer Dash # (the judging-day placard number, e.g. 100,
     // 101, 200...) — assigned once per car by ensureDashNumbers() and then
     // never changed, since it's the number physically printed on that car's
@@ -494,6 +495,15 @@
       return;
     }
 
+    // History tab — a log of every successful registration-data import for
+    // this show (timestamp, row counts, source). Independent of whether a
+    // CSV pair is currently loaded, same reasoning as Sponsors/T-Shirts/
+    // Reports/Setup above.
+    if (state.tab === "history") {
+      app.appendChild(buildHistoryView());
+      return;
+    }
+
     if (!state.result) {
       app.appendChild(el("div", { class: "empty-state" },
         ["No registration data loaded yet — use the Setup tab → Import Registrations to load the first CSV export."]));
@@ -524,7 +534,7 @@
       t.addEventListener("click", function () { state.tab = id; renderViews(); });
       return t;
     };
-    return el("div", { class: "tabs no-print" }, [mk("sum", "Summary"), mk("reg", "Registration"), mk("sponsors", "Sponsors"), mk("tsh", "T-Shirts"), mk("reports", "Reports"), mk("setup", "Setup")]);
+    return el("div", { class: "tabs no-print" }, [mk("sum", "Summary"), mk("reg", "Registration"), mk("sponsors", "Sponsors"), mk("tsh", "T-Shirts"), mk("reports", "Reports"), mk("setup", "Setup"), mk("history", "History")]);
   }
 
   // ---------- Car Shows picker (the landing screen, shown before the tabs) ----------
@@ -4661,6 +4671,44 @@
     ]);
   }
 
+  // History tab — read-only log of every successful registration-data
+  // import for this show (registrations-upload.php's CLI path and
+  // registrations-import.php's browser path both append one entry via
+  // carshow_append_json_list; see index.php's ingestImportHistory boot
+  // call). Newest first, since that's almost always the entry someone
+  // wants to check ("did today's import actually happen?").
+  function buildHistoryView() {
+    var rows = state.importHistory.slice().reverse();
+    var body;
+    if (!rows.length) {
+      body = el("div", { class: "empty-state" }, ["No imports recorded yet — this fills in the next time a CSV pair is imported via the Setup tab."]);
+    } else {
+      var table = el("table", { class: "grid" }, [
+        el("thead", {}, [el("tr", {}, [
+          el("th", { text: "Imported" }),
+          el("th", { text: "Registrations" }),
+          el("th", { text: "Activities" }),
+          el("th", { text: "Source" })
+        ])]),
+        el("tbody", {}, rows.map(function (r) {
+          return el("tr", {}, [
+            el("td", { text: r.timestamp ? fmtDate(new Date(r.timestamp)) : "" }),
+            el("td", { text: String(r.regRows != null ? r.regRows : "") }),
+            el("td", { text: String(r.actRows != null ? r.actRows : "") }),
+            el("td", { text: r.source === "cli" ? "Scheduled sync" : "Manual upload" })
+          ]);
+        }))
+      ]);
+      body = table;
+    }
+    return el("div", { class: "view history-view" }, [
+      el("div", { class: "panel" }, [
+        el("h3", { text: "Import History" }),
+        body
+      ])
+    ]);
+  }
+
   // "❓ Instructions" next to an import button on the Setup tab — a static,
   // no-data modal documenting the exact ClubExpress steps to produce the CSV
   // that button expects, since those export paths are buried a few screens
@@ -5151,6 +5199,13 @@
     ingestTshirtPurchases: function (list) {
       state.tshirtPurchases = Array.isArray(list) ? list : [];
       renderTshirtPurchasePage();
+    },
+    // Called by index.php's boot script with the History tab's import log
+    // read fresh from the server on this page load — see
+    // registrations-upload.php / registrations-import.php, which each append
+    // one entry per successful import.
+    ingestImportHistory: function (list) {
+      state.importHistory = Array.isArray(list) ? list : [];
     },
     // Called by index.php's boot script with the judging-day Dash # map read
     // fresh from the server on this page load — see the dashNumbers state

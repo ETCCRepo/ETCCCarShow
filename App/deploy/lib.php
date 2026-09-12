@@ -42,6 +42,21 @@ function carshow_write_json($file, $value) {
     return true;
 }
 
+// Counts data rows in a CSV string (excludes the header line and any blank
+// trailing lines). Shared by registrations-upload.php (CLI path, has the CSV
+// as an in-memory string) and registrations-import.php (browser path, reads
+// the uploaded file into a string first) so both log identical counts to
+// import-history.json regardless of which path did the import.
+function carshow_csv_data_row_count($csv) {
+    if (!is_string($csv) || trim($csv) === '') return 0;
+    $lines = preg_split('/\r\n|\r|\n/', $csv);
+    $count = 0;
+    foreach (array_slice($lines, 1) as $line) {
+        if (trim($line) !== '') $count++;
+    }
+    return $count;
+}
+
 // Appends one record to a JSON-array file under the same lock (read +
 // modify + write as one atomic step, so a concurrent append can't be lost).
 function carshow_append_json_list($file, $record) {
@@ -350,7 +365,8 @@ function carshow_show_files() {
         'registrations-data.json',
         'paid-registrations-cache.json',
         'app-settings.json',
-        'dash-numbers.json'
+        'dash-numbers.json',
+        'import-history.json'
     ];
 }
 

@@ -247,6 +247,12 @@ if ($year !== null) {
     $overrides = is_array($overridesRaw) ? $overridesRaw : [];
     $bootParts[] = "    window.__carshow.ingestRegistrationOverrides(" . carshow_safe_inline_json($overrides) . ");\n";
 
+    // History tab — one entry per successful import (CLI or browser), written
+    // by registrations-upload.php / registrations-import.php. Independent of
+    // everything else, just read fresh on every page load.
+    $importHistory = carshow_read_json_list(carshow_show_file($year, 'import-history.json'));
+    $bootParts[] = "    window.__carshow.ingestImportHistory(" . carshow_safe_inline_json($importHistory) . ");\n";
+
     $regFile = carshow_show_file($year, 'registrations-data.json');
     if (is_file($regFile)) {
         $reg = json_decode(file_get_contents($regFile), true);

@@ -66,4 +66,14 @@ if (!carshow_write_json($regFile, $data)) {
     exit;
 }
 
+// Log this import for the History tab — one entry per successful import,
+// CLI or browser (see registrations-import.php), oldest first.
+$historyFile = carshow_show_file($year, 'import-history.json');
+carshow_append_json_list($historyFile, [
+    'timestamp' => gmdate('c'),
+    'regRows' => carshow_csv_data_row_count($regCsv),
+    'actRows' => carshow_csv_data_row_count($actCsv),
+    'source' => 'cli',
+]);
+
 echo json_encode(['ok' => true]);
