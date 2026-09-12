@@ -1757,10 +1757,17 @@
       delBtn.addEventListener("click", deleteDetailRow);
       actions.push(delBtn);
     }
-    body.appendChild(el("div", { class: "settings-actions" }, actions));
-    if (state.detailEditError) body.appendChild(el("div", { class: "form-error" }, [state.detailEditError]));
+    // Actions are PINNED at the top of the form, together with the header,
+    // rather than sitting at the bottom — the form is long enough that the
+    // buttons used to be off-screen until you scrolled all the way down. Both
+    // live in one sticky block (.modal-sticky) so they stay visible while the
+    // fields scroll underneath. The save-error line is pinned with them, so a
+    // failed save is reported where the officer just clicked.
+    var actionsBar = el("div", { class: "modal-actions" }, [el("div", { class: "settings-actions" }, actions)]);
+    if (state.detailEditError) actionsBar.appendChild(el("div", { class: "form-error" }, [state.detailEditError]));
+    var pinned = el("div", { class: "modal-sticky" }, [head, actionsBar]);
 
-    var modal = el("div", { class: "modal" }, [head, body]);
+    var modal = el("div", { class: "modal" }, [pinned, body]);
     modal.addEventListener("click", function (e) { e.stopPropagation(); });
     var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
     backdrop.addEventListener("click", closeDetail);
@@ -2931,8 +2938,9 @@
       }
     });
 
+    // Appended to the pinned actions bar below (not the body), so "Sponsor
+    // Name is required." appears right beside the Save button that raised it.
     var errorMsg = el("div", { class: "form-error" });
-    body.appendChild(errorMsg);
 
     var autoSaveSponsor = debounce(function () {
       var record = buildSponsorRecord(editing, fieldEls, typeSel, getShirtSizeValues());
@@ -2991,9 +2999,13 @@
       });
       actions.push(delBtn);
     }
-    body.appendChild(el("div", { class: "settings-actions" }, actions));
+    // Pinned with the header, same as the registration detail modal (see
+    // renderDetailModal()) — the payment section makes this form long enough
+    // that Save/Cancel/Delete used to be off-screen until you scrolled down.
+    var actionsBar = el("div", { class: "modal-actions" }, [el("div", { class: "settings-actions" }, actions), errorMsg]);
+    var pinned = el("div", { class: "modal-sticky" }, [head, actionsBar]);
 
-    var modal = el("div", { class: "modal" }, [head, body]);
+    var modal = el("div", { class: "modal" }, [pinned, body]);
     modal.addEventListener("click", function (e) { e.stopPropagation(); });
     var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
     backdrop.addEventListener("click", closeSponsorForm);
@@ -3063,8 +3075,8 @@
     var amountInput = amountField.input;
     row("Payment Amount", amountField.wrap, true);
 
+    // Lives in the pinned actions bar below, beside Record Payment.
     var errorMsg = el("div", { class: "form-error" });
-    body.appendChild(errorMsg);
 
     var recordBtn = el("button", { class: "btn primary" }, ["Record Payment"]);
     recordBtn.addEventListener("click", function () {
@@ -3099,9 +3111,13 @@
     });
     var cancelBtn = el("button", { class: "btn" }, ["Cancel"]);
     cancelBtn.addEventListener("click", closePaymentModal);
-    body.appendChild(el("div", { class: "settings-actions" }, [recordBtn, cancelBtn]));
+    // Pinned with the header — same pattern as renderDetailModal() /
+    // renderSponsorFormModal(), so every form in the app keeps its buttons in
+    // the same place.
+    var actionsBar = el("div", { class: "modal-actions" }, [el("div", { class: "settings-actions" }, [recordBtn, cancelBtn]), errorMsg]);
+    var pinned = el("div", { class: "modal-sticky" }, [head, actionsBar]);
 
-    var modal = el("div", { class: "modal" }, [head, body]);
+    var modal = el("div", { class: "modal" }, [pinned, body]);
     modal.addEventListener("click", function (e) { e.stopPropagation(); });
     var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
     backdrop.addEventListener("click", closePaymentModal);
@@ -3390,8 +3406,9 @@
     if (state.walkinSyncError) {
       body.appendChild(el("div", { class: "messages", style: "margin-bottom:10px" }, [state.walkinSyncError]));
     }
+    // Lives in the pinned actions bar below, beside Save — the required-field
+    // messages ("Last Name is required." etc.) show where the officer clicked.
     var errorMsg = el("div", { class: "form-error" });
-    body.appendChild(errorMsg);
 
     // Switching Reg Type mid-fill-out usually means the officer picked the
     // wrong one and is starting over — clear every other field rather than
@@ -3468,9 +3485,12 @@
     });
     var cancelBtn = el("button", { class: "btn" }, ["Cancel"]);
     cancelBtn.addEventListener("click", closeAddRegistration);
-    body.appendChild(el("div", { class: "settings-actions" }, [saveBtn, cancelBtn]));
+    // Pinned with the header — same pattern as the app's other forms (see
+    // renderDetailModal()).
+    var actionsBar = el("div", { class: "modal-actions" }, [el("div", { class: "settings-actions" }, [saveBtn, cancelBtn]), errorMsg]);
+    var pinned = el("div", { class: "modal-sticky" }, [head, actionsBar]);
 
-    var modal = el("div", { class: "modal wide" }, [head, body]);
+    var modal = el("div", { class: "modal wide" }, [pinned, body]);
     modal.addEventListener("click", function (e) { e.stopPropagation(); });
     var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
     backdrop.addEventListener("click", closeAddRegistration);

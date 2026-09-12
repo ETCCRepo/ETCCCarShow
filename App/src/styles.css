@@ -217,6 +217,20 @@ th.pinned { z-index: 3; }
   display: flex; align-items: center; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--line);
   position: sticky; top: 0; background: #fff; border-radius: 12px 12px 0 0;
 }
+/* Registration detail, Add/Edit Sponsor, Record Payment (Mark Paid…) and Add
+   Registration modals: header + Save/Cancel row pinned together
+   (renderDetailModal() / renderSponsorFormModal() / renderPaymentModal() /
+   renderAddRegistrationModal() in app.js).
+   The wrapper is the sticky element, so the
+   header inside it drops its own sticky. z-index keeps positioned descendants
+   of the scrolling fields (e.g. the money inputs' "$" prefix) from painting
+   over the pinned block. */
+.modal-sticky { position: sticky; top: 0; z-index: 2; background: #fff; border-radius: 12px 12px 0 0; }
+.modal-sticky .modal-head { position: static; }
+.modal-actions { padding: 8px 18px; border-bottom: 1px solid var(--line); background: #fff; }
+.modal-actions .settings-actions { margin: 0; }
+.modal-actions .form-error { margin-top: 6px; }
+.modal-actions .form-error:empty { display: none; }
 .modal-head h3 { margin: 0; font-size: 17px; flex: 1; }
 .modal-head .btn { padding: 5px 10px; font-size: 12px; }
 .modal-body { padding: 4px 18px 20px; }

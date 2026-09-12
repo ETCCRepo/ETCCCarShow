@@ -226,6 +226,20 @@ th.pinned { z-index: 3; }
   display: flex; align-items: center; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--line);
   position: sticky; top: 0; background: #fff; border-radius: 12px 12px 0 0;
 }
+/* Registration detail, Add/Edit Sponsor, Record Payment (Mark Paid…) and Add
+   Registration modals: header + Save/Cancel row pinned together
+   (renderDetailModal() / renderSponsorFormModal() / renderPaymentModal() /
+   renderAddRegistrationModal() in app.js).
+   The wrapper is the sticky element, so the
+   header inside it drops its own sticky. z-index keeps positioned descendants
+   of the scrolling fields (e.g. the money inputs' "$" prefix) from painting
+   over the pinned block. */
+.modal-sticky { position: sticky; top: 0; z-index: 2; background: #fff; border-radius: 12px 12px 0 0; }
+.modal-sticky .modal-head { position: static; }
+.modal-actions { padding: 8px 18px; border-bottom: 1px solid var(--line); background: #fff; }
+.modal-actions .settings-actions { margin: 0; }
+.modal-actions .form-error { margin-top: 6px; }
+.modal-actions .form-error:empty { display: none; }
 .modal-head h3 { margin: 0; font-size: 17px; flex: 1; }
 .modal-head .btn { padding: 5px 10px; font-size: 12px; }
 .modal-body { padding: 4px 18px 20px; }
@@ -495,7 +509,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-credit">v5.9 &middot; Deployed 09/12/2026 04:29 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
+  <div class="footer-credit">v5.14 &middot; Deployed 09/12/2026 04:52 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
 <script>
 /* @license
@@ -3821,10 +3835,17 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       delBtn.addEventListener("click", deleteDetailRow);
       actions.push(delBtn);
     }
-    body.appendChild(el("div", { class: "settings-actions" }, actions));
-    if (state.detailEditError) body.appendChild(el("div", { class: "form-error" }, [state.detailEditError]));
+    // Actions are PINNED at the top of the form, together with the header,
+    // rather than sitting at the bottom — the form is long enough that the
+    // buttons used to be off-screen until you scrolled all the way down. Both
+    // live in one sticky block (.modal-sticky) so they stay visible while the
+    // fields scroll underneath. The save-error line is pinned with them, so a
+    // failed save is reported where the officer just clicked.
+    var actionsBar = el("div", { class: "modal-actions" }, [el("div", { class: "settings-actions" }, actions)]);
+    if (state.detailEditError) actionsBar.appendChild(el("div", { class: "form-error" }, [state.detailEditError]));
+    var pinned = el("div", { class: "modal-sticky" }, [head, actionsBar]);
 
-    var modal = el("div", { class: "modal" }, [head, body]);
+    var modal = el("div", { class: "modal" }, [pinned, body]);
     modal.addEventListener("click", function (e) { e.stopPropagation(); });
     var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
     backdrop.addEventListener("click", closeDetail);
@@ -4995,8 +5016,9 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       }
     });
 
+    // Appended to the pinned actions bar below (not the body), so "Sponsor
+    // Name is required." appears right beside the Save button that raised it.
     var errorMsg = el("div", { class: "form-error" });
-    body.appendChild(errorMsg);
 
     var autoSaveSponsor = debounce(function () {
       var record = buildSponsorRecord(editing, fieldEls, typeSel, getShirtSizeValues());
@@ -5055,9 +5077,13 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       });
       actions.push(delBtn);
     }
-    body.appendChild(el("div", { class: "settings-actions" }, actions));
+    // Pinned with the header, same as the registration detail modal (see
+    // renderDetailModal()) — the payment section makes this form long enough
+    // that Save/Cancel/Delete used to be off-screen until you scrolled down.
+    var actionsBar = el("div", { class: "modal-actions" }, [el("div", { class: "settings-actions" }, actions), errorMsg]);
+    var pinned = el("div", { class: "modal-sticky" }, [head, actionsBar]);
 
-    var modal = el("div", { class: "modal" }, [head, body]);
+    var modal = el("div", { class: "modal" }, [pinned, body]);
     modal.addEventListener("click", function (e) { e.stopPropagation(); });
     var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
     backdrop.addEventListener("click", closeSponsorForm);
@@ -5127,8 +5153,8 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     var amountInput = amountField.input;
     row("Payment Amount", amountField.wrap, true);
 
+    // Lives in the pinned actions bar below, beside Record Payment.
     var errorMsg = el("div", { class: "form-error" });
-    body.appendChild(errorMsg);
 
     var recordBtn = el("button", { class: "btn primary" }, ["Record Payment"]);
     recordBtn.addEventListener("click", function () {
@@ -5163,9 +5189,13 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     });
     var cancelBtn = el("button", { class: "btn" }, ["Cancel"]);
     cancelBtn.addEventListener("click", closePaymentModal);
-    body.appendChild(el("div", { class: "settings-actions" }, [recordBtn, cancelBtn]));
+    // Pinned with the header — same pattern as renderDetailModal() /
+    // renderSponsorFormModal(), so every form in the app keeps its buttons in
+    // the same place.
+    var actionsBar = el("div", { class: "modal-actions" }, [el("div", { class: "settings-actions" }, [recordBtn, cancelBtn]), errorMsg]);
+    var pinned = el("div", { class: "modal-sticky" }, [head, actionsBar]);
 
-    var modal = el("div", { class: "modal" }, [head, body]);
+    var modal = el("div", { class: "modal" }, [pinned, body]);
     modal.addEventListener("click", function (e) { e.stopPropagation(); });
     var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
     backdrop.addEventListener("click", closePaymentModal);
@@ -5454,8 +5484,9 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     if (state.walkinSyncError) {
       body.appendChild(el("div", { class: "messages", style: "margin-bottom:10px" }, [state.walkinSyncError]));
     }
+    // Lives in the pinned actions bar below, beside Save — the required-field
+    // messages ("Last Name is required." etc.) show where the officer clicked.
     var errorMsg = el("div", { class: "form-error" });
-    body.appendChild(errorMsg);
 
     // Switching Reg Type mid-fill-out usually means the officer picked the
     // wrong one and is starting over — clear every other field rather than
@@ -5532,9 +5563,12 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     });
     var cancelBtn = el("button", { class: "btn" }, ["Cancel"]);
     cancelBtn.addEventListener("click", closeAddRegistration);
-    body.appendChild(el("div", { class: "settings-actions" }, [saveBtn, cancelBtn]));
+    // Pinned with the header — same pattern as the app's other forms (see
+    // renderDetailModal()).
+    var actionsBar = el("div", { class: "modal-actions" }, [el("div", { class: "settings-actions" }, [saveBtn, cancelBtn]), errorMsg]);
+    var pinned = el("div", { class: "modal-sticky" }, [head, actionsBar]);
 
-    var modal = el("div", { class: "modal wide" }, [head, body]);
+    var modal = el("div", { class: "modal wide" }, [pinned, body]);
     modal.addEventListener("click", function (e) { e.stopPropagation(); });
     var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
     backdrop.addEventListener("click", closeAddRegistration);
