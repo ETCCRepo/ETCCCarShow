@@ -2,8 +2,19 @@
 
 Last updated: 2026-09-12 (end of session, latest — supersedes the v5.0 entry below, same
 day). **This session was all about import-automation reliability, triggered by "the data
-import did not run at 11am". Live site is now v5.4; two checkpoints: `aec82a9` (v5.3),
-`1b971b1` (v5.4).**
+import did not run at 11am". Live site is now v5.7; four checkpoints: `aec82a9` (v5.3),
+`1b971b1` (v5.4), `984339c` (v5.7), plus this write-up.**
+
+**Footer (v5.5–5.7, cosmetic).** The footer's three stacked lines (version/deploy, site
+credit, copyright) were collapsed into one line joined with `&middot;` separators, in
+`build.js`'s HTML skeleton. It carries ~120 characters, so instead of letting it wrap
+straight back into multiple rows on a narrow window, `.footer-credit` now scales with the
+viewport: `white-space: nowrap` plus `font-size: clamp(6px, 1.45vw, 10px)` — 10px on
+desktop, shrinking as the window narrows. **At phone widths it sits on the 6px floor and
+may overflow slightly**; that's the deliberate trade for keeping one line. If it ever
+matters, shorten the content (drop "Knoxville, TN" or the deploy timestamp) rather than
+shrinking the floor further. Also earlier in this stretch: the credit line switched from
+a `mailto:info@businesswebexpress.com` to a link to `businesswebexpress.com`.
 
 **THE BIG ONE — `page_id` 4055 vs 4091.** Imports had been failing with
 `ClubExpress session not logged in`, which was a **misdiagnosis by the automation**. The
