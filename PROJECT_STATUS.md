@@ -1,6 +1,79 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-12 (end of session, latest). **This session built out the Import
+Last updated: 2026-09-12 (end of session, latest — supersedes the v5.0 entry below, same
+day). **This session was all about import-automation reliability, triggered by "the data
+import did not run at 11am". Live site is now v5.4; two checkpoints: `aec82a9` (v5.3),
+`1b971b1` (v5.4).**
+
+**THE BIG ONE — `page_id` 4055 vs 4091.** Imports had been failing with
+`ClubExpress session not logged in`, which was a **misdiagnosis by the automation**. The
+session was fine; the *URL* was wrong. Verified live, same browser, same logged-in
+session, same minute:
+
+- `page_id=**4091**` → "Events Manager - **Event View**" — the public page. **No Exports
+  button.** On the car show event it even renders "Member Login" in the top nav *to a
+  logged-in admin*, which is exactly why the skill concluded "not logged in".
+- `page_id=**4055**` → "**(Admin Panels)**" — Control Panel visible, **Exports button
+  present**. This is the page the import needs.
+
+**This was self-inflicted.** Earlier that day the user pasted a `4091` URL into the Setup
+tab's Event URL field; Claude noticed it differed from the skill's hardcoded `4055`,
+asked "want me to update the skill's default to match?", and on "yes" changed the
+**working** value to the **broken** one without verifying which was correct. Fixed in
+three places: the live Setup-tab setting (via `app-settings.php` save), and the hardcoded
+defaults in **both** `ETCCCarShowImportData` and `ETCCVetteFestImportData` (Vette Fest had
+inherited the same bad value and would have failed identically on its first real run).
+Both skills now carry an explicit warning block about the trap. **Watch for this**: if
+anyone copies an event URL out of ClubExpress's address bar while viewing the public
+event page, it carries `4091` and silently breaks every import — keep the `item_id`, swap
+`page_id` to `4055`.
+
+**Why 11:00 was missed (a different, unrelated cause).** Claude **usage limits** failed
+every poll from 10:54 to 11:26 (`You've hit your session limit · resets 11:30am`), which
+swallowed the 11:00 slot's entire ±6-minute match window. By the time polling recovered
+at 11:31 the slot was 31 minutes stale, so `check` correctly returned `shouldRun: false`
+and skipped it. The scheduling logic was right; it was starved. **Note the automation
+shares a Claude usage budget with interactive dev sessions** — a heavy build day can
+starve the imports. Three fixes:
+
+1. **Catch-up window** (`import-schedule.php`): a slot is eligible from **3 minutes
+   before** its time until **45 minutes after**, replacing the tight ±6. A slot merely
+   *missed* during an outage now runs once capacity returns instead of being dropped
+   until tomorrow. When several are eligible at once it takes the **most recent** — an
+   import pulls whatever ClubExpress has *now*, so replaying an older slot would fetch
+   identical data and burn a second run.
+2. **Poll interval 5 → 15 minutes** (`*/15 * * * *`): 96 wake-ups/day instead of 288.
+   Every "5 minutes" reference across `import-schedule.php`, `app-settings.php`,
+   `app.js` (Import Now status text, Setup hint) and both task SKILL.mds was updated.
+3. **Automation heartbeat**: `check` now records `lastPollAt` into
+   `import-schedule-state.json`, returned by `run_status` and shown in Setup → Import
+   Schedule as **"Automation: ✅ running — last checked in N minutes ago"**, or a red
+   warning past 35 minutes (two intervals + slack). **This is the only symptom the app
+   can show for a task that can't start at all** (desktop app closed, machine asleep,
+   usage limits) — such a run never reaches `mark_start`/`mark_run`, so nothing else in
+   the app would show any trace. `mark_run` now **merges** into that state file instead
+   of overwriting it, which would have wiped the heartbeat.
+
+**Failure notifications (failures only).** Both poll tasks now send a single
+`PushNotification` when an import **fails** — e.g. `Car Show import FAILED — ClubExpress
+session not logged in.` Deliberately **silent on success** and on the ~72 idle polls/day.
+The built-in `notifyOnCompletion` flag was rejected for this: it fires on every run of the
+poll task (96/day, mostly no-ops) and subscribes only *the session that set it*, so it
+would go stale. **Known gap**: a task that can't start can't send a failure notification
+either — that class of silence is only visible via the heartbeat line in Setup.
+
+**Vette Fest** (same architecture, separate app/task): auto-import **enabled**, hourly,
+active window extended to **9/27** (was 9/20 — it ended *before* the Sept 25–26 event).
+Its stored Event URL was already correct (`4055`). **Still open**: two leftover test times
+(`12:10`, `12:20`) remain in its `autoImportTimes`, which union with the hourly interval,
+so it will also import at :10 and :20 past noon daily until someone clears them.
+
+**Watch for this**: the scheduled-task SKILL.mds and the `/ETCC*ImportData` skills live in
+`C:\Users\Admin\.claude\` — **outside this repo, unversioned**. The `page_id` fix, the
+notification wiring, and the 15-minute interval text all live there and are *not* covered
+by any commit here. The `ClaudeConfig` repo copy is already known stale.
+
+Previous update: 2026-09-12 (earlier, v5.0). **That session built out the Import
 Schedule / logging system on the Setup tab across three checkpoints, then fixed a
 long-running table-height bug and bumped the app to v5.0.** The headline fix: the
 Registration/Sponsors tables had been rendering far fewer rows than they should on
