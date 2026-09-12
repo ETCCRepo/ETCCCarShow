@@ -439,6 +439,87 @@ function carshow_migrate_to_multi_show() {
     return true;
 }
 
+// Assembles every per-show (and the two global) data blob the app needs to
+// render a show — sponsors, payments, walkins, roster, settings, overrides,
+// history, and the CSV pair itself. Single source of truth for this list so
+// index.php (page load) and refresh.php (an already-open tab asking "is
+// there anything new?") can never drift apart — each just serializes this
+// same array differently (index.php as ordered boot-script ingest() calls,
+// refresh.php as one flat JSON object for the client to re-ingest itself).
+//
+// Ordering callers must respect when re-ingesting (see index.php's own boot
+// script comments for the full reasoning): ingestSponsors/
+// ingestDeletedSponsors before ingestRows (CSV->Sponsor auto-sync reads the
+// current sponsor list); ingestDeletedRegistrations/
+// ingestRegistrationOverrides before ingestRows (regenerate() applies both
+// the moment it runs). This function doesn't enforce order itself — it's a
+// data assembler, not a sequencer — callers must ingest in the same order
+// index.php's $bootParts does.
+function carshow_boot_data($year) {
+    $appSettingsDefaults = [
+        'walkinFirstNonMember' => 2000,
+        'walkInCarShowFee' => 50,
+        'walkInNonCarShowFee' => 0,
+        'preregistrationFee' => 40,
+        'windowCardPdf' => '',
+        'tshirtVendorEmail' => '',
+        'tshirtEventPurchaseCost' => 0,
+        'sponsorEmailTo' => '',
+        'sponsorEmailCc' => '',
+        'sponsorEmailBcc' => '',
+        'sponsorEmailSubject' => 'New Sponsor Submission',
+        'eventUrl' => '',
+        'autoImportEnabled' => false,
+        'autoImportTimes' => [],
+        'autoImportIntervalHours' => 0,
+        'autoImportStartDate' => '',
+        'autoImportEndDate' => ''
+    ];
+    $appSettingsFile = carshow_show_file($year, 'app-settings.json');
+    $appSettingsRaw = is_file($appSettingsFile) ? json_decode(file_get_contents($appSettingsFile), true) : [];
+    $appSettings = array_merge($appSettingsDefaults, is_array($appSettingsRaw) ? $appSettingsRaw : []);
+    $appSettings['externalApiKey'] = carshow_api_key();
+
+    $dashNumbersFile = carshow_show_file($year, 'dash-numbers.json');
+    $dashNumbersRaw = ($dashNumbersFile !== null && is_file($dashNumbersFile)) ? json_decode(file_get_contents($dashNumbersFile), true) : [];
+    $dashNumbers = is_array($dashNumbersRaw) ? $dashNumbersRaw : [];
+
+    $data = [
+        'sponsors' => carshow_read_json_list(carshow_show_file($year, 'sponsor-submissions.json')),
+        'deletedSponsorIds' => carshow_read_json_list(carshow_show_file($year, 'deleted-sponsors.json')),
+        'payments' => carshow_read_json_list(carshow_show_file($year, 'sponsor-payments.json')),
+        'walkins' => carshow_read_json_list(carshow_show_file($year, 'walkin-registrations.json')),
+        'tshirtPurchases' => carshow_read_json_list(carshow_show_file($year, 'tshirt-purchases.json')),
+        'dashNumbers' => $dashNumbers,
+        'members' => carshow_read_json_list(__DIR__ . '/members-data.json'), // global, not per-show
+        'appSettings' => $appSettings,
+        'deletedRegistrations' => carshow_read_json_list(carshow_show_file($year, 'deleted-registrations.json')),
+        'registrationOverrides' => (function () use ($year) {
+            $f = carshow_show_file($year, 'registration-overrides.json');
+            $raw = is_file($f) ? json_decode(file_get_contents($f), true) : [];
+            return is_array($raw) ? $raw : [];
+        })(),
+        'importHistory' => carshow_read_json_list(carshow_show_file($year, 'import-history.json')),
+        'regCsv' => '',
+        'actCsv' => '',
+        'generatedAt' => 0,
+        'hasRegistrations' => false,
+    ];
+
+    $regFile = carshow_show_file($year, 'registrations-data.json');
+    if (is_file($regFile)) {
+        $reg = json_decode(file_get_contents($regFile), true);
+        if (is_array($reg) && !empty($reg['regCsv'])) {
+            $data['regCsv'] = (string)$reg['regCsv'];
+            $data['actCsv'] = (string)($reg['actCsv'] ?? '');
+            $data['generatedAt'] = (int)($reg['generatedAt'] ?? 0);
+            $data['hasRegistrations'] = true;
+        }
+    }
+
+    return $data;
+}
+
 // Replaces the global external API key. Separate action rather than a special
 // case of the settings save, so the client never round-trips the old value.
 function carshow_rotate_api_key() {

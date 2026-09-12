@@ -149,6 +149,8 @@
     tshirtPurchasePageOpen: false, // T-Shirts tab > "Buy T-Shirt" full-page screen
     tshirtPurchases: [],       // day-of-event walk-up sales — filled by ingestTshirtPurchases()
     importHistory: [],        // one entry per successful CSV import — filled by ingestImportHistory()
+    historySelected: {},       // History tab row checkboxes: entry.timestamp -> true
+    deleteHistoryConfirm: null, // "selected" | "all" | null — which confirm dialog is open
     // rowKey(r) -> integer Dash # (the judging-day placard number, e.g. 100,
     // 101, 200...) — assigned once per car by ensureDashNumbers() and then
     // never changed, since it's the number physically printed on that car's
@@ -483,7 +485,30 @@
   }
 
   // ---------- views ----------
+  // .tablewrap's CSS max-height (styles.css) is a fixed calc(100vh - 250px)
+  // guess at how much chrome sits above/below the table — wrong on any
+  // device/tab combo where the real header stack is a different height (e.g.
+  // the Registration tab's extra CSVs-loaded/search/status/action rows), and
+  // especially unreliable on tablets/phones where browser chrome height
+  // varies. This replaces the guess with a real measurement: how much
+  // viewport is actually left below wherever the table happens to sit, on
+  // THIS device, right now. Runs after every render (via requestAnimationFrame
+  // in renderViews(), so it measures the DOM that render just produced) and
+  // again on resize/orientation change.
+  function updateTablewrapHeights() {
+    var wraps = document.querySelectorAll(".tablewrap");
+    for (var i = 0; i < wraps.length; i++) {
+      var w = wraps[i];
+      var top = w.getBoundingClientRect().top;
+      var available = window.innerHeight - top - 16; // small bottom margin
+      w.style.maxHeight = Math.max(200, available) + "px";
+    }
+  }
+  window.addEventListener("resize", updateTablewrapHeights);
+  window.addEventListener("orientationchange", updateTablewrapHeights);
+
   function renderViews() {
+    requestAnimationFrame(updateTablewrapHeights);
     var app = $("#app");
     app.innerHTML = "";
 
@@ -569,13 +594,13 @@
       t.addEventListener("click", function () {
         state.tab = id;
         renderViews();
-        // History tab: refresh from the server every time it's selected, not
-        // just at page load — otherwise a scheduled or manual import that
-        // landed after this page opened wouldn't show up until a full reload.
-        if (id === "history") loadImportHistory();
-        // Setup tab: refresh the persisted "Last run" status every time it's
-        // selected — a scheduled run started/completed by another visitor (or
-        // by the automation itself) should show up without a full reload.
+        // Every tab re-pulls the show's data on selection — a scheduled or
+        // manual import (or another officer's edit) that landed after this
+        // page was opened should show up without a full reload, on whichever
+        // tab you're looking at, not just History/Setup.
+        refreshShowData();
+        // Setup tab additionally needs the persisted "Last run" status,
+        // which isn't part of the general show-data refresh above.
         if (id === "setup") loadRunStatus();
       });
       return t;
@@ -3939,26 +3964,113 @@
     }, 30000);
   }
 
-  // History tab — re-fetches import-history.json fresh from the server every
-  // time the tab is selected (see buildTabs()'s click handler). index.php's
-  // ingestImportHistory() only covers what existed at page load, so without
-  // this a scheduled/manual import that landed since then wouldn't appear
-  // until a full page reload. Silent on failure — the tab just keeps
-  // whatever it already had rather than showing an error for a background
-  // refresh nobody explicitly asked to retry.
-  function loadImportHistory() {
+  // Re-pulls every bit of this show's server data and re-ingests it, without
+  // a full page reload — called on every tab selection (see buildTabs()) so
+  // a scheduled/manual import, or another officer's edit, that landed after
+  // this page opened shows up right away on whichever tab you're looking at.
+  // refresh.php returns exactly what carshow_boot_data() (lib.php) assembles
+  // — the same thing index.php's own boot script ingests at page load — so
+  // this must re-ingest in that SAME order (see that function's own comment
+  // for why: sponsors/deletedSponsors and deletedRegistrations/overrides
+  // each have to land before ingestRows, which triggers the CSV-driven
+  // auto-sync/regenerate logic that reads them). Silent on failure — the
+  // page just keeps showing whatever it already had rather than surfacing an
+  // error for a background refresh nobody explicitly asked to retry.
+  function refreshShowData() {
+    if (!state.currentShow || !SITE_CONFIG.refreshApiUrl) return;
+    fetch(SITE_CONFIG.refreshApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (!r.ok || !r.data || !r.data.ok) return;
+        var d = r.data;
+        API.ingestSponsors(d.sponsors);
+        API.ingestDeletedSponsors(d.deletedSponsorIds);
+        API.ingestPayments(d.payments);
+        API.ingestWalkins(d.walkins);
+        API.ingestTshirtPurchases(d.tshirtPurchases);
+        API.ingestDashNumbers(d.dashNumbers);
+        API.ingestMembers(d.members);
+        API.ingestAppSettings(d.appSettings);
+        API.ingestDeletedRegistrations(d.deletedRegistrations);
+        API.ingestRegistrationOverrides(d.registrationOverrides);
+        API.ingestImportHistory(d.importHistory);
+        if (d.hasRegistrations) {
+          var regRows = Papa.parse(d.regCsv, { header: true, skipEmptyLines: true }).data;
+          var actRows = d.actCsv ? Papa.parse(d.actCsv, { header: true, skipEmptyLines: true }).data : [];
+          API.ingestRows(regRows, actRows, new Date(d.generatedAt));
+        }
+        renderViews();
+      }).catch(function () { /* keep showing whatever's already loaded */ });
+  }
+
+  // History tab — row checkboxes + Delete Selected/Delete All, same UX as
+  // the Registration/Sponsors tabs' bulk-delete. Entries have no id field
+  // (see import-history.php), so selection/deletion key off `timestamp` —
+  // second-precision, unique in practice since two imports never actually
+  // complete in the same second.
+  function selectedHistoryTimestamps() { return Object.keys(state.historySelected); }
+  function toggleHistorySelected(ts, checked) {
+    if (checked) state.historySelected[ts] = true; else delete state.historySelected[ts];
+  }
+  function openDeleteHistoryConfirm(mode) {
+    if (mode === "selected" && !selectedHistoryTimestamps().length) return;
+    state.deleteHistoryConfirm = mode;
+    renderDeleteHistoryConfirm();
+  }
+  function closeDeleteHistoryConfirm() { state.deleteHistoryConfirm = null; renderDeleteHistoryConfirm(); }
+  function performDeleteHistory() {
+    var mode = state.deleteHistoryConfirm;
+    closeDeleteHistoryConfirm();
     if (!SITE_CONFIG.importHistoryApiUrl) return;
+    var body = mode === "all" ? { action: "delete", all: true } : { action: "delete", timestamps: selectedHistoryTimestamps() };
     fetch(SITE_CONFIG.importHistoryApiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "list" })
+      body: JSON.stringify(body)
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
       .then(function (r) {
         if (r.ok && r.data && r.data.ok && Array.isArray(r.data.history)) {
           state.importHistory = r.data.history;
-          if (state.tab === "history") renderViews();
+          state.historySelected = {};
         }
-      }).catch(function () { /* keep showing whatever's already loaded */ });
+        renderViews();
+      }).catch(function () { renderViews(); });
+  }
+  function renderDeleteHistoryConfirm() {
+    var host = $("#confirmHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.deleteHistoryConfirm) return;
+
+    var all = state.deleteHistoryConfirm === "all";
+    var count = all ? state.importHistory.length : selectedHistoryTimestamps().length;
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", closeDeleteHistoryConfirm);
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: "Delete " + (all ? "all " + count : count) + " Import Histor" + (count === 1 ? "y" : "ies") + " entr" + (count === 1 ? "y" : "ies") + "?" }),
+      el("span", { class: "spacer" }), closeBtn
+    ]);
+
+    var yesBtn = el("button", { class: "btn primary", style: "background:var(--warn);border-color:var(--red-dark)" }, ["Yes, Delete"]);
+    yesBtn.addEventListener("click", performDeleteHistory);
+    var noBtn = el("button", { class: "btn" }, ["Cancel"]);
+    noBtn.addEventListener("click", closeDeleteHistoryConfirm);
+
+    var body = el("div", { class: "modal-body" }, [
+      el("p", {}, ["This permanently removes " + (all ? "the entire Import History log" : count + " selected entr" + (count === 1 ? "y" : "ies")) +
+        " from the server. It does not affect the actual registration data those imports loaded — only this log. This cannot be undone."]),
+      el("div", { class: "settings-actions" }, [yesBtn, noBtn])
+    ]);
+
+    var modal = el("div", { class: "modal" }, [head, body]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", closeDeleteHistoryConfirm);
+    host.appendChild(backdrop);
   }
 
   // Setup tab > Import Schedule > persisted "Last run" status — fetched on
@@ -5101,12 +5213,36 @@
   // wants to check ("did today's import actually happen?").
   function buildHistoryView() {
     var rows = state.importHistory.slice().reverse();
+    // Prune stale selections (e.g. after a delete, or a fresh reload changed
+    // which timestamps exist) so a leftover checked box can't silently
+    // target an entry that isn't shown anymore.
+    var liveTimestamps = {};
+    rows.forEach(function (r) { if (r.timestamp) liveTimestamps[r.timestamp] = true; });
+    Object.keys(state.historySelected).forEach(function (ts) { if (!liveTimestamps[ts]) delete state.historySelected[ts]; });
+
     var body;
+    var toolbar = null;
     if (!rows.length) {
       body = el("div", { class: "empty-state" }, ["No imports recorded yet — this fills in the next time a CSV pair is imported via the Setup tab."]);
     } else {
+      var selectedCount = selectedHistoryTimestamps().length;
+      var selectAllCb = el("input", { type: "checkbox" });
+      selectAllCb.checked = rows.length > 0 && selectedCount === rows.length;
+      selectAllCb.addEventListener("change", function () {
+        rows.forEach(function (r) { if (r.timestamp) toggleHistorySelected(r.timestamp, selectAllCb.checked); });
+        renderViews();
+      });
+
+      var deleteSelectedBtn = el("button", { class: "btn btn-warn" }, ["🗑 Delete Selected" + (selectedCount ? " (" + selectedCount + ")" : "")]);
+      if (!selectedCount) deleteSelectedBtn.setAttribute("disabled", "disabled");
+      deleteSelectedBtn.addEventListener("click", function () { openDeleteHistoryConfirm("selected"); });
+      var deleteAllBtn = el("button", { class: "btn btn-warn" }, ["🗑 Delete All"]);
+      deleteAllBtn.addEventListener("click", function () { openDeleteHistoryConfirm("all"); });
+      toolbar = el("div", { class: "settings-actions", style: "margin-bottom:10px" }, [deleteSelectedBtn, deleteAllBtn]);
+
       var table = el("table", { class: "grid" }, [
         el("thead", {}, [el("tr", {}, [
+          el("th", {}, [selectAllCb]),
           el("th", { text: "" }),
           el("th", { text: "Log" }),
           el("th", { text: "Imported" }),
@@ -5121,6 +5257,11 @@
             title: failed ? ("Failed" + (r.error ? ": " + r.error : "")) : "Succeeded",
             style: "text-align:center"
           }, [failed ? "❌" : "✅"]);
+
+          var cb = el("input", { type: "checkbox" });
+          cb.checked = !!(r.timestamp && state.historySelected[r.timestamp]);
+          cb.addEventListener("change", function () { toggleHistorySelected(r.timestamp, cb.checked); renderViews(); });
+          var selectCell = el("td", { style: "text-align:center" }, [cb]);
 
           // Right next to the outcome icon (not squeezed past a long Event
           // URL column at the far right) so it's actually noticeable —
@@ -5142,6 +5283,7 @@
           }
 
           return el("tr", {}, [
+            selectCell,
             outcomeCell,
             logCell,
             el("td", { text: r.timestamp ? fmtDate(new Date(r.timestamp)) : "" }),
@@ -5157,8 +5299,9 @@
     return el("div", { class: "view history-view" }, [
       el("div", { class: "panel" }, [
         el("h3", { text: "Import History" }),
+        toolbar,
         body
-      ])
+      ].filter(Boolean))
     ]);
   }
 

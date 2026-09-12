@@ -134,7 +134,8 @@ $perShowUrls = [
     'dashNumbersApiUrl' => 'dash-numbers.php',
     'importScheduleApiUrl' => 'import-schedule.php',
     'logsApiUrl' => 'logs.php',
-    'importHistoryApiUrl' => 'import-history.php'
+    'importHistoryApiUrl' => 'import-history.php',
+    'refreshApiUrl' => 'refresh.php'
 ];
 $siteConfig = [];
 foreach ($perShowUrls as $key => $file) {
@@ -160,7 +161,12 @@ $bootParts[] = "    window.__carshow.ingestShows(" .
 
 // With no show open the app renders the Car Shows picker and nothing else, so
 // there is no point reading — or shipping to the browser — any show's data.
+// carshow_boot_data() (lib.php) is the single source of truth for what gets
+// assembled here — refresh.php serializes the exact same call for the
+// "re-check this tab's data without a full reload" flow, so the two can
+// never quietly drift apart.
 if ($year !== null) {
+    $boot = carshow_boot_data($year);
 
     // Sponsors MUST be ingested before registrations: ingesting registrations
     // triggers app.js's CSV -> Sponsors-tab auto-sync (any registrant with an
@@ -168,114 +174,68 @@ if ($year !== null) {
     // present), and that check needs the real current sponsor list already in
     // state.sponsors — otherwise it would run against an empty list and
     // re-upsert (overwriting) entries that already exist on the server.
-    $sponsors = carshow_read_json_list(carshow_show_file($year, 'sponsor-submissions.json'));
-    $bootParts[] = "    window.__carshow.ingestSponsors(" . carshow_safe_inline_json($sponsors) . ");\n";
+    $bootParts[] = "    window.__carshow.ingestSponsors(" . carshow_safe_inline_json($boot['sponsors']) . ");\n";
 
     // MUST run before the ingestRows() call below, same reason as
     // deleted-registrations further down: syncSponsorsFromRegistrations()
     // excludes tombstoned CSV-synced sponsor ids the moment the CSV is
     // parsed, not just after the fact.
-    $deletedSponsorIds = carshow_read_json_list(carshow_show_file($year, 'deleted-sponsors.json'));
-    $bootParts[] = "    window.__carshow.ingestDeletedSponsors(" . carshow_safe_inline_json($deletedSponsorIds) . ");\n";
+    $bootParts[] = "    window.__carshow.ingestDeletedSponsors(" . carshow_safe_inline_json($boot['deletedSponsorIds']) . ");\n";
 
     // Payments (Cash/Check/Credit Card records against a sponsor) — ingested
     // right after sponsors so backfillPaymentDefaults() (triggered inside
     // ingestPayments) sees the real current sponsor list, not an empty one.
-    $payments = carshow_read_json_list(carshow_show_file($year, 'sponsor-payments.json'));
-    $bootParts[] = "    window.__carshow.ingestPayments(" . carshow_safe_inline_json($payments) . ");\n";
+    $bootParts[] = "    window.__carshow.ingestPayments(" . carshow_safe_inline_json($boot['payments']) . ");\n";
 
     // Walk-In registrations are independent of the CSV-derived data below —
     // they survive a fresh CSV import, unlike registrations-data.json — so
     // ingestion order relative to it doesn't matter, unlike sponsors above.
-    $walkins = carshow_read_json_list(carshow_show_file($year, 'walkin-registrations.json'));
-    $bootParts[] = "    window.__carshow.ingestWalkins(" . carshow_safe_inline_json($walkins) . ");\n";
+    $bootParts[] = "    window.__carshow.ingestWalkins(" . carshow_safe_inline_json($boot['walkins']) . ");\n";
 
     // Day-of-event t-shirt purchases (T-Shirts tab's Buy T-Shirt) —
     // independent of everything else, just read fresh on every page load.
-    $tshirtPurchases = carshow_read_json_list(carshow_show_file($year, 'tshirt-purchases.json'));
-    $bootParts[] = "    window.__carshow.ingestTshirtPurchases(" . carshow_safe_inline_json($tshirtPurchases) . ");\n";
+    $bootParts[] = "    window.__carshow.ingestTshirtPurchases(" . carshow_safe_inline_json($boot['tshirtPurchases']) . ");\n";
 
     // Judging-day placard numbers (Dash #), assigned once per car the first
     // time its window card is printed / the Tally Sheet is generated — see
     // deploy/dash-numbers.php and app.js's ensureDashNumbers(). Independent of
     // everything else, just read fresh on every page load.
-    $dashNumbersRaw = carshow_show_file($year, 'dash-numbers.json');
-    $dashNumbersJson = ($dashNumbersRaw !== null && is_file($dashNumbersRaw)) ? json_decode(file_get_contents($dashNumbersRaw), true) : [];
-    $dashNumbers = is_array($dashNumbersJson) ? $dashNumbersJson : [];
-    $bootParts[] = "    window.__carshow.ingestDashNumbers(" . carshow_safe_inline_json($dashNumbers) . ");\n";
+    $bootParts[] = "    window.__carshow.ingestDashNumbers(" . carshow_safe_inline_json($boot['dashNumbers']) . ");\n";
 
     // Member roster (name + member number, if the last CSV import had that
     // column — see members-import.php) — used by the Add Registration form to
     // look up a Walk-In Member's number by name. GLOBAL, not per-show: the
     // club roster isn't an artifact of any one year's event.
-    $members = carshow_read_json_list(__DIR__ . '/members-data.json');
-    $bootParts[] = "    window.__carshow.ingestMembers(" . carshow_safe_inline_json($members) . ");\n";
+    $bootParts[] = "    window.__carshow.ingestMembers(" . carshow_safe_inline_json($boot['members']) . ");\n";
 
-    // App-wide settings — defaults here MUST match app-settings.php's
-    // $defaults. Per-show: entry fees, the window card and the sponsor
-    // confirmation email all legitimately differ year to year.
-    $appSettingsFile = carshow_show_file($year, 'app-settings.json');
-    $appSettingsRaw = is_file($appSettingsFile) ? json_decode(file_get_contents($appSettingsFile), true) : [];
-    $appSettingsDefaults = [
-        'walkinFirstNonMember' => 2000,
-        'walkInCarShowFee' => 50,
-        'walkInNonCarShowFee' => 0,
-        'preregistrationFee' => 40,
-        'windowCardPdf' => '',
-        'tshirtVendorEmail' => '',
-        'tshirtEventPurchaseCost' => 0,
-        'sponsorEmailTo' => '',
-        'sponsorEmailCc' => '',
-        'sponsorEmailBcc' => '',
-        'sponsorEmailSubject' => 'New Sponsor Submission',
-        'eventUrl' => '',
-        'autoImportEnabled' => false,
-        'autoImportTimes' => [],
-        'autoImportIntervalHours' => 0,
-        'autoImportStartDate' => '',
-        'autoImportEndDate' => ''
-    ];
-    $appSettings = array_merge($appSettingsDefaults, is_array($appSettingsRaw) ? $appSettingsRaw : []);
-    // externalApiKey is GLOBAL, not per-show (data/api-key.json, generated on
-    // first use) — paid-registrations-api.php is an external integration
-    // whose credential has to survive a rollover to a new show year.
-    $appSettings['externalApiKey'] = carshow_api_key();
-    $bootParts[] = "    window.__carshow.ingestAppSettings(" . carshow_safe_inline_json($appSettings) . ");\n";
+    // App-wide settings — per-show: entry fees, the window card and the
+    // sponsor confirmation email all legitimately differ year to year.
+    $bootParts[] = "    window.__carshow.ingestAppSettings(" . carshow_safe_inline_json($boot['appSettings']) . ");\n";
 
     // MUST run before the ingestRows() call below — regenerate() (triggered
     // by ingestRows) excludes deleted keys from the freshly-parsed CSV the
     // moment it runs, not just after the fact.
-    $deletedKeys = carshow_read_json_list(carshow_show_file($year, 'deleted-registrations.json'));
-    $bootParts[] = "    window.__carshow.ingestDeletedRegistrations(" . carshow_safe_inline_json($deletedKeys) . ");\n";
+    $bootParts[] = "    window.__carshow.ingestDeletedRegistrations(" . carshow_safe_inline_json($boot['deletedRegistrations']) . ");\n";
 
     // Same ordering requirement as deleted-registrations above — regenerate()
     // applies these field-edit patches to the freshly-parsed CSV rows
     // immediately.
-    $overridesFile = carshow_show_file($year, 'registration-overrides.json');
-    $overridesRaw = is_file($overridesFile) ? json_decode(file_get_contents($overridesFile), true) : [];
-    $overrides = is_array($overridesRaw) ? $overridesRaw : [];
-    $bootParts[] = "    window.__carshow.ingestRegistrationOverrides(" . carshow_safe_inline_json($overrides) . ");\n";
+    $bootParts[] = "    window.__carshow.ingestRegistrationOverrides(" . carshow_safe_inline_json($boot['registrationOverrides']) . ");\n";
 
     // History tab — one entry per successful import (CLI or browser), written
     // by registrations-upload.php / registrations-import.php. Independent of
     // everything else, just read fresh on every page load.
-    $importHistory = carshow_read_json_list(carshow_show_file($year, 'import-history.json'));
-    $bootParts[] = "    window.__carshow.ingestImportHistory(" . carshow_safe_inline_json($importHistory) . ");\n";
+    $bootParts[] = "    window.__carshow.ingestImportHistory(" . carshow_safe_inline_json($boot['importHistory']) . ");\n";
 
-    $regFile = carshow_show_file($year, 'registrations-data.json');
-    if (is_file($regFile)) {
-        $reg = json_decode(file_get_contents($regFile), true);
-        if (is_array($reg) && !empty($reg['regCsv'])) {
-            $bootParts[] =
-                "    var REG_CSV = " . carshow_safe_inline_json($reg['regCsv']) . ";\n" .
-                "    var ACT_CSV = " . carshow_safe_inline_json($reg['actCsv'] ?? '') . ";\n" .
-                "    var GENERATED_AT = new Date(" . (int)($reg['generatedAt'] ?? 0) . ");\n" .
-                "    var regRows = Papa.parse(REG_CSV, { header: true, skipEmptyLines: true }).data;\n" .
-                "    var actRows = ACT_CSV ? Papa.parse(ACT_CSV, { header: true, skipEmptyLines: true }).data : [];\n" .
-                "    window.__carshow.ingestRows(regRows, actRows, GENERATED_AT);\n";
-        }
+    if ($boot['hasRegistrations']) {
+        $bootParts[] =
+            "    var REG_CSV = " . carshow_safe_inline_json($boot['regCsv']) . ";\n" .
+            "    var ACT_CSV = " . carshow_safe_inline_json($boot['actCsv']) . ";\n" .
+            "    var GENERATED_AT = new Date(" . (int)$boot['generatedAt'] . ");\n" .
+            "    var regRows = Papa.parse(REG_CSV, { header: true, skipEmptyLines: true }).data;\n" .
+            "    var actRows = ACT_CSV ? Papa.parse(ACT_CSV, { header: true, skipEmptyLines: true }).data : [];\n" .
+            "    window.__carshow.ingestRows(regRows, actRows, GENERATED_AT);\n";
     }
-
 }
 
 $bootScript = "\n<script>\n(function(){\n  function boot(){\n" . implode('', $bootParts) .

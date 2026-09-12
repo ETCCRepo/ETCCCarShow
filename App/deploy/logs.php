@@ -110,9 +110,15 @@ if ($action === 'list') {
     carshow_logs_purge($logsDir);
     $files = [];
     foreach ((glob($logsDir . '/*.log') ?: []) as $f) {
-        $files[] = ['name' => basename($f), 'size' => filesize($f), 'mtime' => gmdate('c', filemtime($f))];
+        $files[] = ['name' => basename($f), 'size' => filesize($f), 'mtimeRaw' => filemtime($f), 'mtime' => gmdate('c', filemtime($f))];
     }
-    usort($files, function ($a, $b) { return strcmp($b['name'], $a['name']); });
+    // Sort by the file's actual save time (this server's own clock), not the
+    // filename string — the filename's timestamp is decided client-side by
+    // whatever machine ran the import, and isn't guaranteed to sort correctly
+    // as plain text (e.g. across a machine-clock/timezone quirk).
+    usort($files, function ($a, $b) { return $b['mtimeRaw'] - $a['mtimeRaw']; });
+    foreach ($files as &$f) unset($f['mtimeRaw']);
+    unset($f);
     header('Content-Type: application/json');
     echo json_encode(['ok' => true, 'files' => $files, 'purgeDays' => CARSHOW_LOG_PURGE_DAYS]);
     exit;
