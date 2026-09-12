@@ -495,7 +495,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-credit">v5.7 &middot; Deployed 09/12/2026 01:33 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
+  <div class="footer-credit">v5.9 &middot; Deployed 09/12/2026 04:29 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
 <script>
 /* @license
@@ -2200,7 +2200,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     // an old page for a surprisingly long time).
     newVersionAvailable: false,
     // Setup tab > Import Schedule > "Automation" line — ISO timestamp of the
-    // last time the Claude Code scheduled task polled import-schedule.php's
+    // last time the Windows scheduled task (deploy/sync-registrations.js) polled import-schedule.php's
     // check action (its heartbeat). Null until loadRunStatus() fetches it.
     // A stale value is the only way this app can tell the task isn't running
     // at all, since that failure never reaches mark_start/mark_run.
@@ -5985,8 +5985,9 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   }
 
   // Setup tab > Import Schedule > "Import Now" — leaves a request flag
-  // (import-schedule.php action=request) for the scheduled Claude Code task
-  // on an officer's machine to pick up on its next poll (every ~15 minutes).
+  // (import-schedule.php action=request) for the Windows scheduled task
+  // (deploy/sync-registrations.js) on an officer's machine to pick up on its
+  // next poll (every ~15 minutes).
   // This endpoint cannot itself drive a browser through ClubExpress, so
   // there's an inherent delay — the status text says so rather than implying
   // anything happens instantly.
@@ -6038,7 +6039,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
           if (data && data.ok && data.handledAt && (!requestedAt || new Date(data.handledAt) >= new Date(requestedAt))) {
             var when = fmtDate(new Date(data.handledAt));
             state.importRequestStatus = data.lastStatus === "failed"
-              ? "Failed at " + when + (data.lastError ? ": " + data.lastError : "") + " — see the History tab or ask Claude to check the sync log."
+              ? "Failed at " + when + (data.lastError ? ": " + data.lastError : "") + " — see the History tab's log for details."
               : "Succeeded at " + when + ".";
             stopImportRequestPolling();
             renderViews();
@@ -7091,9 +7092,9 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
 
   // Setup tab > Import Schedule > "Log Directory" — server-archived run logs
   // (logs.php), browsable from any machine logged into the site. Purged
-  // after 7 days — see logs.php's CARSHOW_LOG_PURGE_DAYS. No local copy
-  // exists anywhere anymore (see ETCCCarShowImportData's SKILL.md) — this is
-  // the one and only place a run's log lives.
+  // after 7 days — see logs.php's CARSHOW_LOG_PURGE_DAYS. This is the
+  // authoritative copy of each run's log (deploy/sync-registrations.js keeps
+  // only a one-line-per-failure local file for debugging Task Scheduler).
   function buildLogDirectoryField() {
     var toggleBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" },
       [state.logsPanelOpen ? "▲ Hide Logs" : "📂 View Logs"]);
@@ -7139,12 +7140,13 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // select handler). Distinct from the Import Now button's own ephemeral
   // status text: this reflects whichever run happened most recently
   // (manual or scheduled), and survives page reloads.
-  // Setup tab > Import Schedule > "Automation" line — is the Claude Code
-  // scheduled task on the officer's machine actually alive? It checks in with
-  // import-schedule.php every ~15 minutes; a heartbeat older than that means
-  // it isn't running (desktop app closed, machine asleep, Claude usage limits
-  // exhausted). This is the only symptom the app can show for that class of
-  // failure, since a task that can't start never reports anything else.
+  // Setup tab > Import Schedule > "Automation" line — is the Windows scheduled
+  // task (deploy/sync-registrations.js) on the officer's machine actually
+  // alive? It checks in with import-schedule.php every ~15 minutes; a
+  // heartbeat older than that means it isn't running (machine off or asleep,
+  // the task's account signed out — it's registered Interactive — or the task
+  // disabled/removed). This is the only symptom the app can show for that
+  // class of failure, since a task that can't start never reports anything else.
   function buildAutomationStatusLine() {
     if (!state.lastPollAt) {
       return el("div", { class: "hint", style: "margin-bottom:4px" },
@@ -7159,8 +7161,8 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     var msg = healthy
       ? "Automation: ✅ running — last checked in " + agoText + " (" + fmtDate(last) + ")."
       : "Automation: ⚠️ last checked in " + agoText + " (" + fmtDate(last) + "). Expected every ~15 minutes — " +
-        "the scheduled task isn't running. Check that the Claude desktop app is open on the import machine, " +
-        "and that its Claude usage limit hasn't been reached.";
+        "the scheduled task isn't running. Check that the import machine is on and its Windows account is signed in, " +
+        "then open Task Scheduler there and look at \"carshow-sync-registrations\" (Last Run Result 0 = fine).";
     return el("div", {
       class: healthy ? "hint" : "",
       style: "margin-bottom:4px" + (healthy ? "" : "; color:var(--warn); font-size:13px")
@@ -7188,9 +7190,9 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     return el("div", { style: style }, [parts.join("")]);
   }
 
-  // Setup tab > Import Schedule — the ClubExpress event URL (used by the
-  // /ETCCCarShowImportData Claude skill instead of a hardcoded URL that goes
-  // stale every year), an "Import Now" button, and an auto-import schedule
+  // Setup tab > Import Schedule — the ClubExpress event URL (read by
+  // deploy/sync-registrations.js via import-schedule.php's 'check', instead of
+  // a hardcoded URL that goes stale every year), an "Import Now" button, and an auto-import schedule
   // (enable checkbox, one or more daily times, and an optional active-date
   // range). None of this runs anything itself — see import-schedule.php's
   // header comment and app.js's requestImportNow()/saveImportScheduleSettings()
@@ -7281,9 +7283,11 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     return el("div", { class: "panel", style: "margin-top:16px" }, [
       el("h3", { text: "Import Schedule" }),
       el("div", { class: "hint", style: "margin-bottom:10px" }, [
-        "Controls the /ETCCCarShowImportData automation that pulls fresh ClubExpress data — that " +
-        "still only runs on the machine where Claude Code and Chrome are set up for it, and it checks " +
-        "in here roughly every 15 minutes, so Import Now and scheduled times take effect within a few minutes, not instantly."
+        "Controls the automation that pulls fresh ClubExpress data. A web page can't drive ClubExpress " +
+        "itself, so the work is done by a Windows scheduled task on an officer's machine that checks in " +
+        "here every ~15 minutes — Import Now and scheduled times take effect within a few minutes, not instantly. " +
+        "If an import reports \"ClubExpress session not logged in\", run deploy/clubexpress-login.js on that " +
+        "machine and sign in with Remember Me ticked."
       ]),
       buildAutomationStatusLine(),
       buildLastRunLine(),

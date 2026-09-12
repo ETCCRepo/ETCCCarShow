@@ -33,7 +33,7 @@
 //    Leave sponsorEmailTo blank to disable sending entirely. To/CC/BCC each
 //    accept comma/semicolon-separated multiple addresses.
 //  - eventUrl: the ClubExpress event Admin Panels URL for this show's year
-//    (Setup tab > Import Schedule). Read by the scheduled Claude Code task
+//    (Setup tab > Import Schedule). Read by the Windows scheduled task
 //    that drives the actual ClubExpress export (see import-schedule.php's
 //    'check' action) instead of that task having a hardcoded URL that goes
 //    stale every year.
@@ -50,8 +50,9 @@
 //    start/end dates (YYYY-MM-DD, either may be blank for "no bound") let
 //    officers scope auto-imports to the show's active season. None of this is
 //    read or enforced by this file — it's just storage. import-schedule.php's
-//    'check' action (polled every 15 minutes by a Claude Code scheduled task
-//    on an officer's machine) is what actually decides whether to run.
+//    'check' action (polled every 15 minutes by deploy/sync-registrations.js
+//    via Windows Task Scheduler on an officer's machine) is what actually
+//    decides whether to run.
 //  - externalApiKey: credential for the EXTERNAL Paid Registrations API
 //    (paid-registrations-api.php) — a separate, narrower credential than
 //    this app's own site password, meant to be handed to another website's

@@ -1,10 +1,12 @@
 <?php
 // Bridges the Setup tab's Import Schedule UI (Event URL, the auto-import
 // enable/times/date-range settings, and the "Import Now" button) to the
-// actual automation — which is a Claude Code scheduled task running on an
-// officer's own machine, driving their real Chrome through ClubExpress. This
-// endpoint cannot run a browser itself; it only leaves/reads a signal that
-// task polls every 15 minutes.
+// actual automation — deploy/sync-registrations.js, run every 15 minutes by a
+// Windows scheduled task on an officer's own machine, driving a dedicated
+// Chrome profile through ClubExpress with Playwright. (It replaced an
+// equivalent Claude Code scheduled task on 2026-09-12; this endpoint didn't
+// change.) This endpoint cannot run a browser itself; it only leaves/reads a
+// signal that task polls.
 //
 // eventUrl / autoImportEnabled / autoImportTimes / autoImportIntervalHours /
 // autoImportStartDate / autoImportEndDate themselves live in app-settings.json (see
@@ -142,7 +144,7 @@ if ($action === 'run_status') {
 }
 
 if ($action === 'mark_start') {
-    // Called right before the scheduled task invokes ETCCCarShowImportData —
+    // Called right before the scheduled task starts the ClubExpress export —
     // lets the Setup tab show "Import started at <time>" immediately, rather
     // than only ever finding out a run happened after it's already done.
     $reason = (string)($input['reason'] ?? '');

@@ -79,9 +79,9 @@ if ($eventUrl === '') {
     $eventUrl = is_array($settingsRaw) ? (string)($settingsRaw['eventUrl'] ?? '') : '';
 }
 // logFile: the caller may pass the exact filename it archived this run's log
-// under via logs.php (see ETCCCarShowImportData's SKILL.md) — the History
-// tab's 📄 icon links to that server-side copy. Absent for anything else
-// that calls this endpoint directly without going through that skill.
+// under via logs.php (sync-registrations.js passes it through
+// upload-registrations.js's CARSHOW_LOG_FILE) — the History tab's 📄 icon
+// links to that server-side copy. Absent for a bare manual upload.
 $logFile = (string)($input['logFile'] ?? '');
 $historyFile = carshow_show_file($year, 'import-history.json');
 carshow_append_json_list($historyFile, [

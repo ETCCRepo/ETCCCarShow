@@ -1,5 +1,6 @@
 <?php
-// Server-side archive of ETCCCarShowImportData's per-run log files. Logs used
+// Server-side archive of each import run's log (written by
+// deploy/sync-registrations.js, or the manual /ETCCCarShowImportData skill). Logs used
 // to live only on the machine that ran the import (Z:\Backup\Log\CarShow),
 // which meant the History tab's log link only worked for someone browsing
 // from that exact machine. This endpoint gives every run's log a second,
@@ -16,8 +17,8 @@ require __DIR__ . '/secrets.php';
 require __DIR__ . '/lib.php';
 
 define('CARSHOW_LOG_PURGE_DAYS', 7);
-// Strict allowlist for log filenames — the only shape ETCCCarShowImportData
-// ever names them (see that skill's SKILL.md), and the only shape 'get'/
+// Strict allowlist for log filenames — the only shape the import names them
+// (sync-registrations.js's logFileName()), and the only shape 'get'/
 // 'store' will ever act on. Anything else is rejected outright rather than
 // risk a path-traversal via ?name=.
 define('CARSHOW_LOG_NAME_PATTERN', '/^sync-\d{8}-\d{6}\.log$/');
@@ -68,7 +69,7 @@ function carshow_logs_purge($logsDir) {
 }
 
 if ($action === 'store') {
-    // Called by the scheduled task / ETCCCarShowImportData, not the browser
+    // Called by sync-registrations.js (or the manual skill), not the browser
     // — same site-password auth as upload-registrations.js.
     if (!carshow_authed($PASSWORD_HASH, $input['password'] ?? '')) {
         http_response_code(401);

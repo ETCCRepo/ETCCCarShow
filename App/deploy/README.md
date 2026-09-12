@@ -167,11 +167,12 @@ scale; if that ever stops being true, that's the thing to revisit.
 ClubExpress has no live API (see `AUTOPULL-NOTES.md`) — a person still has to trigger a
 refresh by exporting CSVs. What's different from the old flow is where that data lands:
 
-1. Export fresh CSVs (`/ETCCCarShowImportData` skill, or manually into the Exports
-   folder — `Z:\Backup\ETCC\Document Library\Restricted\Events\Car Show\Exports\`, or
-   wherever `CARSHOW_EXPORTS_DIR` points).
-2. Either — the skill above already does the first of these, so this step is only for a
-   manual export:
+1. Export fresh CSVs — normally done automatically (see "Automated imports" below); by
+   hand, via the `/ETCCCarShowImportData` skill or manually into the Exports folder —
+   `Z:\Backup\ETCC\Document Library\Restricted\Events\Car Show\Exports\`, or wherever
+   `CARSHOW_EXPORTS_DIR` points.
+2. Either — the automation and the skill already do the first of these, so this step is
+   only for a manual export:
    - `CARSHOW_SITE_PASSWORD=... node deploy/upload-registrations.js` — picks the newest
      CSVs automatically (or pass explicit paths), POSTs them to the live
      `registrations-upload.php`; or
@@ -182,6 +183,85 @@ refresh by exporting CSVs. What's different from the old flow is where that data
 
 `ftp-deploy.sh` / `app-bundle.html` are for **code** changes only (`App/src/*`); running
 them has no effect on which registration data is being served.
+
+## Automated imports (no Claude subscription required)
+
+The Setup tab's Import Schedule panel (Event URL, auto-import times, "Import Now") only
+*leaves a signal* — a web page can't drive a browser through ClubExpress. The other half
+is `deploy/sync-registrations.js`, run by **Windows Task Scheduler** every 15 minutes on
+an officer's machine. It replaced an equivalent Claude Code scheduled task on 2026-09-12
+(ported from the Vette Fest app, which made the switch first); the server side is
+unchanged, and `import-schedule.php` / `logs.php` / `registrations-upload.php` never knew
+the difference. None of these scripts are uploaded by `ftp-deploy.sh` — they run locally.
+
+```
+sync-registrations.js  --check-------> import-schedule.php   "anything due?" (+ heartbeat)
+                       --mark_start--> import-schedule.php   Setup tab: "Import started"
+                       --Playwright--> ClubExpress Exports   the two CSVs
+                       --spawn-------> upload-registrations.js -> registrations-upload.php
+                       --store-------> logs.php              History tab's log icon
+                       --mark_run----> import-schedule.php   Setup tab: "Last run"
+```
+
+Most polls find nothing due and exit silently in about half a second — no browser, no
+files, no log. Only a due slot or a clicked **Import Now** opens Chrome. Every poll still
+updates the Setup tab's **Automation** heartbeat, so a task that has stopped firing shows
+up there as a red warning after ~35 minutes.
+
+### One-time setup on the machine that runs it
+
+1. `CARSHOW_SITE_PASSWORD` set as a persistent Windows **user** environment variable.
+2. `npm install` in `App/` (pulls `playwright-core`; it drives the system's real Chrome,
+   so there is no browser download).
+3. `node deploy/clubexpress-login.js` — opens a visible Chrome window on a **dedicated**
+   profile at `%LOCALAPPDATA%\ETCC\clubexpress-profile`. Sign into ClubExpress by hand,
+   tick **Remember Me**, wait for `CONFIRMED` / `DURABLE`, close the window.
+   **This profile is shared with the Vette Fest app's sync** — both events are on the
+   same ClubExpress site under the same officer login, so one sign-in serves both, and
+   if Vette Fest's is already working, this step is already done.
+4. Register the task:
+   `powershell -ExecutionPolicy Bypass -File deploy\install-scheduled-task.ps1 -Interactive`
+   (on NBKFF3A-BEELINK, S4U registration is refused, so **imports only run while the
+   `Admin` account is signed in**).
+
+### Authentication, deliberately
+
+Nothing in this pipeline ever types a ClubExpress username or password. The sync reuses
+the session left behind in step 3 and, when that lapses, fails with
+`ClubExpress session not logged in` — which shows up in the Setup tab's "Last run" line
+and as a FAILED row in the History tab. The fix is to re-run step 3. ClubExpress admin
+credentials are therefore never stored on this machine or reachable by an automation bug.
+
+### Running it by hand
+
+```bash
+node deploy/sync-registrations.js --force --headed
+```
+
+`--force` skips the schedule decision and imports immediately (reporting itself to the
+server as a `manual` run, exactly like an Import Now click). `--headed` shows the Chrome
+window, which is how to see what ClubExpress is actually doing when something breaks.
+
+### ClubExpress traps this handles (all verified live)
+
+- **`www.` is required.** The auth cookie is host-only on `www.etccwebsite.com`; an Event
+  URL without `www.` looks exactly like an expired session. The sync adds it.
+- **`page_id=4091` is the public event view** — no Exports button, and it even shows
+  "Member Login" to a signed-in admin. The export needs **`page_id=4055`** (Admin Panels,
+  same `item_id`). The sync rewrites 4091 → 4055, because that URL is what you get by
+  copying from the address bar on the public page.
+- **The Export button can't be clicked by automation** (Telerik scripts 403 headless;
+  MS-AJAX throws when scripted), so the WebForms postback is replayed as a plain form POST.
+
+### When it breaks
+
+Unlike the Claude task it replaced, this can't improvise around a ClubExpress redesign.
+It anchors on visible text and roles rather than coordinates or generated ASP.NET ids, so
+ordinary layout shifts are survivable — but a renamed button will stop it. It fails loudly
+rather than silently: non-zero exit (Task Scheduler's "Last Run Result"), a FAILED row in
+the History tab, the archived log, and a line in `deploy/sync-registrations.local.log`.
+
+`/ETCCCarShowImportData` is still available as a manual fallback for that day.
 
 ## Walk-In registrations: a second, independent always-current list
 
