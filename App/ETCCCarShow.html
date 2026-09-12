@@ -87,7 +87,17 @@ header.app h1 { font-size: 19px; margin: 0; font-weight: 700; letter-spacing: .2
 footer.app-footer {
   text-align: center; color: var(--muted); font-size: 12px; padding: 14px 20px 20px; border-top: 1px solid var(--line);
 }
-footer.app-footer .footer-credit { font-size: 10px; margin-top: 4px; }
+/* One long single line (version + credit + copyright). Scale the text with the
+   viewport instead of letting it wrap: nowrap keeps it on one line, and the
+   vw-based clamp shrinks it to fit narrow screens. 1.45vw is tuned so the line
+   just fits edge to edge — it tops out at 10px on wide screens and bottoms out
+   at 6px, below which it would stop being readable at all (a phone hits that
+   floor and may overflow a little; that's the deliberate trade for one line). */
+footer.app-footer .footer-credit {
+  font-size: clamp(6px, 1.45vw, 10px);
+  margin-top: 4px;
+  white-space: nowrap;
+}
 
 .btn {
   display: inline-block; border: 1px solid var(--line); background: #fff; color: var(--ink);
@@ -485,9 +495,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div>v5.4 &middot; Deployed 09/12/2026 01:03 PM</div>
-  <div class="footer-credit">Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a></div>
-  <div class="footer-credit">&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
+  <div class="footer-credit">v5.7 &middot; Deployed 09/12/2026 01:33 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
 <script>
 /* @license
