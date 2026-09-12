@@ -111,7 +111,7 @@
     importScheduleError: null,
     importScheduleSaved: false,
     // Setup tab > Import Schedule > "Import Now" button — brief inline status
-    // text ("Requested — the next check will run within ~5 minutes." /
+    // text ("Requested — the next check will run within ~15 minutes." /
     // an error), cleared on next render pass through a fresh click.
     importRequestStatus: null,
     // Setup tab > Import Schedule > "View Logs" — server-archived log files
@@ -135,6 +135,12 @@
     // needed at all (Hostinger's edge/CDN and mobile browsers can hold onto
     // an old page for a surprisingly long time).
     newVersionAvailable: false,
+    // Setup tab > Import Schedule > "Automation" line — ISO timestamp of the
+    // last time the Claude Code scheduled task polled import-schedule.php's
+    // check action (its heartbeat). Null until loadRunStatus() fetches it.
+    // A stale value is the only way this app can tell the task isn't running
+    // at all, since that failure never reaches mark_start/mark_run.
+    lastPollAt: null,
     apiPageOpen: false,       // Developer > API full-page screen
     apiKeyRevealed: false,
     apiTesting: false,
@@ -3916,7 +3922,7 @@
 
   // Setup tab > Import Schedule > "Import Now" — leaves a request flag
   // (import-schedule.php action=request) for the scheduled Claude Code task
-  // on an officer's machine to pick up on its next poll (every ~5 minutes).
+  // on an officer's machine to pick up on its next poll (every ~15 minutes).
   // This endpoint cannot itself drive a browser through ClubExpress, so
   // there's an inherent delay — the status text says so rather than implying
   // anything happens instantly.
@@ -3932,7 +3938,7 @@
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
       .then(function (r) {
         if (r.ok && r.data && r.data.ok) {
-          state.importRequestStatus = "Requested — the next scheduled check (within ~5 minutes) will run the import.";
+          state.importRequestStatus = "Requested — the next scheduled check (within ~15 minutes) will run the import.";
           startImportRequestPolling(r.data.requestedAt);
         } else {
           state.importRequestStatus = "Could not request an import — please try again.";
@@ -4100,6 +4106,7 @@
       .then(function (r) {
         if (r.ok && r.data && r.data.ok) {
           state.runStatus = r.data.runStatus || null;
+          state.lastPollAt = r.data.lastPollAt || null;
           if (state.tab === "setup") renderViews();
         }
       }).catch(function () { /* keep showing whatever's already loaded */ });
@@ -5068,6 +5075,34 @@
   // select handler). Distinct from the Import Now button's own ephemeral
   // status text: this reflects whichever run happened most recently
   // (manual or scheduled), and survives page reloads.
+  // Setup tab > Import Schedule > "Automation" line — is the Claude Code
+  // scheduled task on the officer's machine actually alive? It checks in with
+  // import-schedule.php every ~15 minutes; a heartbeat older than that means
+  // it isn't running (desktop app closed, machine asleep, Claude usage limits
+  // exhausted). This is the only symptom the app can show for that class of
+  // failure, since a task that can't start never reports anything else.
+  function buildAutomationStatusLine() {
+    if (!state.lastPollAt) {
+      return el("div", { class: "hint", style: "margin-bottom:4px" },
+        ["Automation: no check-in recorded yet — the scheduled task may not have run since this was set up."]);
+    }
+    var last = new Date(state.lastPollAt);
+    var minsAgo = Math.max(0, Math.round((Date.now() - last.getTime()) / 60000));
+    // Two poll intervals of slack (plus the task's own start jitter) before
+    // calling it stale — a single skipped poll isn't worth alarming about.
+    var healthy = minsAgo <= 35;
+    var agoText = minsAgo < 1 ? "just now" : (minsAgo === 1 ? "1 minute ago" : minsAgo + " minutes ago");
+    var msg = healthy
+      ? "Automation: ✅ running — last checked in " + agoText + " (" + fmtDate(last) + ")."
+      : "Automation: ⚠️ last checked in " + agoText + " (" + fmtDate(last) + "). Expected every ~15 minutes — " +
+        "the scheduled task isn't running. Check that the Claude desktop app is open on the import machine, " +
+        "and that its Claude usage limit hasn't been reached.";
+    return el("div", {
+      class: healthy ? "hint" : "",
+      style: "margin-bottom:4px" + (healthy ? "" : "; color:var(--warn); font-size:13px")
+    }, [msg]);
+  }
+
   function buildLastRunLine() {
     var rs = state.runStatus;
     if (!rs || !rs.startedAt) {
@@ -5184,8 +5219,9 @@
       el("div", { class: "hint", style: "margin-bottom:10px" }, [
         "Controls the /ETCCCarShowImportData automation that pulls fresh ClubExpress data — that " +
         "still only runs on the machine where Claude Code and Chrome are set up for it, and it checks " +
-        "in here roughly every 5 minutes, so Import Now and scheduled times take effect within a few minutes, not instantly."
+        "in here roughly every 15 minutes, so Import Now and scheduled times take effect within a few minutes, not instantly."
       ]),
+      buildAutomationStatusLine(),
       buildLastRunLine(),
       el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "Event URL" }), eventUrlInput]),
       el("div", { class: "form-row" }, [

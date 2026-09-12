@@ -50,7 +50,7 @@
 //    start/end dates (YYYY-MM-DD, either may be blank for "no bound") let
 //    officers scope auto-imports to the show's active season. None of this is
 //    read or enforced by this file — it's just storage. import-schedule.php's
-//    'check' action (polled every 5 minutes by a Claude Code scheduled task
+//    'check' action (polled every 15 minutes by a Claude Code scheduled task
 //    on an officer's machine) is what actually decides whether to run.
 //  - externalApiKey: credential for the EXTERNAL Paid Registrations API
 //    (paid-registrations-api.php) — a separate, narrower credential than

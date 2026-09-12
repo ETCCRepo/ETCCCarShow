@@ -4,7 +4,7 @@
 // actual automation — which is a Claude Code scheduled task running on an
 // officer's own machine, driving their real Chrome through ClubExpress. This
 // endpoint cannot run a browser itself; it only leaves/reads a signal that
-// task polls every 5 minutes.
+// task polls every 15 minutes.
 //
 // eventUrl / autoImportEnabled / autoImportTimes / autoImportIntervalHours /
 // autoImportStartDate / autoImportEndDate themselves live in app-settings.json (see
@@ -127,7 +127,17 @@ if ($action === 'run_status') {
     // page reloads (unlike the 'status' action above, which only tracks one
     // specific pending Import Now request).
     $runStatus = is_file($runStatusFile) ? json_decode(file_get_contents($runStatusFile), true) : null;
-    echo json_encode(['ok' => true, 'runStatus' => is_array($runStatus) ? $runStatus : null]);
+    // lastPollAt is the scheduled task's heartbeat (written by 'check' — see
+    // its comment). Returned alongside the run status so the Setup tab can
+    // show whether the automation is alive at all, separately from how its
+    // last actual import went.
+    $stateRaw = is_file($stateFile) ? json_decode(file_get_contents($stateFile), true) : null;
+    $state = is_array($stateRaw) ? $stateRaw : [];
+    echo json_encode([
+        'ok' => true,
+        'runStatus' => is_array($runStatus) ? $runStatus : null,
+        'lastPollAt' => $state['lastPollAt'] ?? null,
+    ]);
     exit;
 }
 
@@ -153,6 +163,18 @@ if ($action === 'check') {
     $reason = 'none';
     $today = date('Y-m-d');
 
+    // Heartbeat. Every poll records that it checked in, which is the ONLY
+    // way the app can tell whether the scheduled task on the officer's
+    // machine is actually alive. When that task can't run at all — desktop
+    // app closed, machine asleep, Claude usage limits exhausted (which
+    // happened 2026-09-12, silently swallowing the 11:00 import) — it never
+    // reaches mark_start/mark_run, so nothing else in this app would show
+    // any trace of it. A stale lastPollAt is that missing signal.
+    $stateRaw = is_file($stateFile) ? json_decode(file_get_contents($stateFile), true) : [];
+    $state = is_array($stateRaw) ? $stateRaw : [];
+    $state['lastPollAt'] = gmdate('c');
+    carshow_write_json($stateFile, $state);
+
     if ($pending) {
         $shouldRun = true;
         $reason = 'manual';
@@ -161,8 +183,6 @@ if ($action === 'check') {
         && ($endDate === '' || $today <= $endDate)) {
         $nowMinutes = ((int)date('H')) * 60 + (int)date('i');
 
-        $stateRaw = is_file($stateFile) ? json_decode(file_get_contents($stateFile), true) : [];
-        $state = is_array($stateRaw) ? $stateRaw : [];
         $ranSlots = ($state['date'] ?? '') === $today && is_array($state['ranSlots'] ?? null) ? $state['ranSlots'] : [];
 
         // Explicit times and the "every N hours, on the hour" interval are
@@ -178,16 +198,37 @@ if ($action === 'check') {
         }
         $slots = array_values(array_unique($slots));
 
+        // A slot is due from a couple of minutes BEFORE its time (absorbing
+        // the scheduled task's own start jitter) until CATCH_UP_MINUTES
+        // after it. That trailing window is the important part: the polling
+        // task can be down for a stretch — on 2026-09-12 Claude usage limits
+        // failed every poll from 10:54 to 11:26, swallowing the 11:00 slot's
+        // entire window — and a slot that was merely missed, rather than
+        // deliberately skipped, should still run once capacity comes back
+        // instead of being silently dropped until tomorrow.
+        $leadMinutes = 3;
+        $catchUpMinutes = 45;
+
+        // When several slots are eligible at once (e.g. after a long
+        // outage), take the MOST RECENT one, not the oldest: an import pulls
+        // whatever ClubExpress has right now, so replaying an older slot
+        // would fetch identical data and just burn a second run.
+        $bestSlot = null;
+        $bestSlotMinutes = -1;
         foreach ($slots as $t) {
             if (!preg_match('/^([0-2][0-9]):([0-5][0-9])$/', (string)$t, $m)) continue;
+            if (in_array($t, $ranSlots, true)) continue;
             $slotMinutes = ((int)$m[1]) * 60 + (int)$m[2];
-            // Tolerance wider than the 5-minute poll interval itself, to
-            // absorb the scheduled task's own start-time jitter.
-            if (abs($nowMinutes - $slotMinutes) <= 6 && !in_array($t, $ranSlots, true)) {
-                $shouldRun = true;
-                $reason = 'scheduled:' . $t;
-                break;
+            $sinceSlot = $nowMinutes - $slotMinutes;
+            if ($sinceSlot < -$leadMinutes || $sinceSlot > $catchUpMinutes) continue;
+            if ($slotMinutes > $bestSlotMinutes) {
+                $bestSlotMinutes = $slotMinutes;
+                $bestSlot = $t;
             }
+        }
+        if ($bestSlot !== null) {
+            $shouldRun = true;
+            $reason = 'scheduled:' . $bestSlot;
         }
     }
 
@@ -219,7 +260,11 @@ if ($reason === 'manual') {
     $state = is_array($stateRaw) ? $stateRaw : [];
     $ranSlots = ($state['date'] ?? '') === $today && is_array($state['ranSlots'] ?? null) ? $state['ranSlots'] : [];
     if (!in_array($slot, $ranSlots, true)) $ranSlots[] = $slot;
-    carshow_write_json($stateFile, ['date' => $today, 'ranSlots' => $ranSlots]);
+    // Merge rather than replace — this file also carries the check action's
+    // lastPollAt heartbeat, which a blind overwrite would wipe.
+    $state['date'] = $today;
+    $state['ranSlots'] = $ranSlots;
+    carshow_write_json($stateFile, $state);
 } else {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Unknown reason.']);
