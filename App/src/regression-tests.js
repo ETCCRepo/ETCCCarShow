@@ -19,6 +19,12 @@
  * - Payment recording in Edit Sponsor modal
  * - Member Report (Reports tab): rows sorted by Last Name, Reg # column shows
  *   each member's Member Number, independent of any loaded registration CSV
+ * - Setup > Backups (backup.php/lib.php + app.js's buildBackupsSection()):
+ *   Backup Now, the color-coded (green/red) log table, the auto-backup
+ *   enable/active-date-range schedule, and per-entry delete — all
+ *   DOM/fetch/server wiring with no pure logic-layer function to assert
+ *   against, same reasoning as the Import Schedule section right above it
+ *   in the Setup tab (also untested here for the same reason).
  * - ensureDashNumbers()/printSelectedWindowCards()/printTallySheetForShow()/
  *   printTallySheet() (app.js): the DOM/fetch/print-dependent wiring around
  *   Dash # assignment and the "📋 Print Tally Sheet" button — the pure

@@ -5362,15 +5362,21 @@
     var startDateInput = el("input", { type: "date", value: s.startDate || "" });
     var endDateInput = el("input", { type: "date", value: s.endDate || "" });
 
-    var saveBtn = el("button", { type: "button", class: "btn primary" }, ["Save"]);
-    if (state.backupScheduleSaving) saveBtn.setAttribute("disabled", "disabled");
-    saveBtn.addEventListener("click", function () {
+    // Auto-save: no Save button, same convention as the Import Schedule
+    // section above and the Settings modal's autoSaveSettings() — "change"
+    // for these checkbox/date fields, which have no meaningful "still
+    // typing" state a "blur"-triggered save would need to wait out.
+    function autoSaveBackupSchedule() {
       saveBackupSchedule({
         enabled: enableCb.checked,
         startDate: startDateInput.value,
         endDate: endDateInput.value
       });
-    });
+    }
+    enableCb.addEventListener("change", autoSaveBackupSchedule);
+    startDateInput.addEventListener("change", autoSaveBackupSchedule);
+    endDateInput.addEventListener("change", autoSaveBackupSchedule);
+
     var saveStatus = [];
     if (state.backupScheduleSaving) saveStatus.push(el("span", { class: "count" }, ["Saving…"]));
     else if (state.backupScheduleSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
@@ -5395,7 +5401,7 @@
           startDateInput, document.createTextNode("to"), endDateInput
         ])
       ]),
-      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus))
+      el("div", { class: "settings-actions" }, saveStatus)
     ];
     if (lastRunLine) fields.push(lastRunLine);
 
@@ -5535,11 +5541,37 @@
     // rows — plain DOM add/remove rather than tracking a parallel array in
     // state, since Save reads every row's current value straight off the DOM.
     var timesWrap = el("div", {});
+    // Shared by the Save button and removeBtn's instant-delete-save below —
+    // reads every field's current DOM value into the same patch shape
+    // saveImportScheduleSettings() expects.
+    function collectScheduleSettings() {
+      var times = Array.prototype.map.call(timesWrap.querySelectorAll("input[type=time]"), function (i) { return i.value; })
+        .filter(function (v) { return v; });
+      return {
+        eventUrl: eventUrlInput.value.trim(),
+        autoImportEnabled: enableCb.checked,
+        autoImportTimes: times,
+        autoImportIntervalHours: Number(intervalSel.value),
+        autoImportStartDate: startDateInput.value,
+        autoImportEndDate: endDateInput.value
+      };
+    }
     function addTimeRow(value) {
       var input = el("input", { type: "time", value: value || "" });
       var removeBtn = el("button", { type: "button", class: "btn", style: "padding:4px 10px" }, ["✕"]);
       var row = el("div", { style: "display:flex; gap:6px; margin-bottom:6px; align-items:center" }, [input, removeBtn]);
-      removeBtn.addEventListener("click", function () { timesWrap.removeChild(row); });
+      // Editing a time's value, and removing the row entirely, both save
+      // immediately — there's no separate Save button on this section (see
+      // this function's own autoSaveSchedule() further down). A deleted or
+      // half-edited time otherwise kept firing on the server until someone
+      // remembered to click a manual Save (exactly how Vette Fest ended up
+      // with two leftover test times still running daily well after they
+      // were meant to be gone).
+      input.addEventListener("change", function () { saveImportScheduleSettings(collectScheduleSettings()); });
+      removeBtn.addEventListener("click", function () {
+        timesWrap.removeChild(row);
+        saveImportScheduleSettings(collectScheduleSettings());
+      });
       timesWrap.appendChild(row);
     }
     (s.autoImportTimes || []).forEach(function (t) { addTimeRow(t); });
@@ -5560,20 +5592,23 @@
       intervalSel.appendChild(o);
     });
 
-    var saveBtn = el("button", { type: "button", class: "btn primary" }, ["Save"]);
-    if (state.importScheduleSaving) saveBtn.setAttribute("disabled", "disabled");
-    saveBtn.addEventListener("click", function () {
-      var times = Array.prototype.map.call(timesWrap.querySelectorAll("input[type=time]"), function (i) { return i.value; })
-        .filter(function (v) { return v; });
-      saveImportScheduleSettings({
-        eventUrl: eventUrlInput.value.trim(),
-        autoImportEnabled: enableCb.checked,
-        autoImportTimes: times,
-        autoImportIntervalHours: Number(intervalSel.value),
-        autoImportStartDate: startDateInput.value,
-        autoImportEndDate: endDateInput.value
-      });
-    });
+    // Auto-save: every field in this section saves itself (no Save button)
+    // as soon as it's committed — "blur" for the free-text Event URL,
+    // "change" for the checkbox/date/select fields (which have no
+    // meaningful "still typing" state the way a text field does). Same
+    // pattern as the Settings modal's autoSaveSettings() above. Times are
+    // wired individually in addTimeRow() below — both editing an existing
+    // time and removing one save immediately, since a stale time otherwise
+    // keeps firing on the server until someone remembers to click a
+    // separate Save (see addTimeRow's own comment for the incident that
+    // motivated this).
+    function autoSaveSchedule() { saveImportScheduleSettings(collectScheduleSettings()); }
+    eventUrlInput.addEventListener("blur", autoSaveSchedule);
+    enableCb.addEventListener("change", autoSaveSchedule);
+    startDateInput.addEventListener("change", autoSaveSchedule);
+    endDateInput.addEventListener("change", autoSaveSchedule);
+    intervalSel.addEventListener("change", autoSaveSchedule);
+
     var saveStatus = [];
     if (state.importScheduleSaving) saveStatus.push(el("span", { class: "count" }, ["Saving…"]));
     else if (state.importScheduleSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
@@ -5629,7 +5664,7 @@
           el("div", { class: "setup-hint" }, ["Runs alongside any Times above, not instead of them."])
         ])
       ]),
-      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus)),
+      el("div", { class: "settings-actions" }, saveStatus),
       manualSection
     ]);
   }

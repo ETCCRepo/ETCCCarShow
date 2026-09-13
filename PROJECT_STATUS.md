@@ -111,10 +111,16 @@ script) — then asked to delete the now-redundant Claude task. Done via
 `delete_scheduled_task`; its 63 archived run sessions are preserved, and its `SKILL.md`
 was left on disk at `C:\Users\Admin\.claude\scheduled-tasks\carshow-sync-registrations\`
 in case the prompt is ever needed again. **This session touched no app code** — the
-checkpoint's version bump (v5.14 → v5.15) is the only diff. **Still open**: Vette Fest has
-an identically-named Claude scheduled task (`vettefest-sync-registrations`) that is very
-likely equally stale if Vette Fest went through the same Playwright migration — flagged to
-the user, not yet confirmed or deleted.
+checkpoint's version bump (v5.14 → v5.15) is the only diff.
+
+*(Update, 2026-09-13: this "still open" item is now resolved — confirmed via
+`list_scheduled_tasks` (Claude Code's own scheduler, returned zero tasks — the old
+Vette Fest one is already gone, same as this one) and `Get-ScheduledTask
+vettefest-sync-registrations` (Windows Task Scheduler, State `Ready`, running
+`node.exe sync-registrations.js` headless out of
+`Z:\Backup\Websites\VetteFest\App\deploy\`, no duplicate). Vette Fest's Playwright
+migration is confirmed complete and its Claude-side scheduled task confirmed already
+gone — nothing further to delete. No app-code or repo changes; documentation-only.)*
 
 Previous update: 2026-09-12 (earlier the same day). **UI-only session: pinned the
 Save/Cancel/Delete button bar to the top of the app's four biggest modals** —
