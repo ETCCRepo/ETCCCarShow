@@ -373,6 +373,167 @@ function carshow_show_files() {
     ];
 }
 
+// ---------------------------------------------------------------------------
+// Backups (Setup tab > Backups; see backup.php)
+// ---------------------------------------------------------------------------
+// Shared here (rather than living only in backup.php) so import-schedule.php
+// can call carshow_backup_auto_check() from its own 'check' action without
+// requiring the whole of backup.php (which would also execute that file's
+// top-level action dispatch).
+
+// Keep at most this many zip files on disk — see carshow_backup_purge().
+define('CARSHOW_BACKUP_KEEP', 30);
+
+// backups/ itself. Created on demand, deny-all like every other data
+// directory in this app — defense in depth even though every caller already
+// gates on carshow_authed() before reaching any of this.
+function carshow_backups_dir() {
+    $dir = __DIR__ . '/backups';
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) return null;
+    $deny = $dir . '/.htaccess';
+    if (!is_file($deny)) {
+        @file_put_contents($deny,
+            "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n" .
+            "<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n");
+    }
+    return $dir;
+}
+
+function carshow_backup_history_file() {
+    $dir = carshow_backups_dir();
+    return $dir === null ? null : $dir . '/backup-history.json';
+}
+
+// Global (not per-year) auto-backup settings: { enabled, startDate, endDate,
+// lastAutoRunDate }. Lives under data/ alongside shows.json/api-key.json —
+// see carshow_data_root() — since backups span every show year, not one.
+function carshow_backup_schedule_path() {
+    $root = carshow_data_root();
+    return $root === null ? null : $root . '/backup-schedule.json';
+}
+function carshow_read_backup_schedule() {
+    $path = carshow_backup_schedule_path();
+    $raw = ($path !== null && is_file($path)) ? json_decode(file_get_contents($path), true) : null;
+    $s = is_array($raw) ? $raw : [];
+    return [
+        'enabled' => !empty($s['enabled']),
+        'startDate' => (string)($s['startDate'] ?? ''),
+        'endDate' => (string)($s['endDate'] ?? ''),
+        // Server-owned bookkeeping (see carshow_backup_auto_check()) — a
+        // save from the Setup tab must preserve this, never set it directly.
+        'lastAutoRunDate' => (string)($s['lastAutoRunDate'] ?? ''),
+    ];
+}
+function carshow_write_backup_schedule($schedule) {
+    $path = carshow_backup_schedule_path();
+    return $path === null ? false : carshow_write_json($path, $schedule);
+}
+
+// Adds every file under $dir to $zip, recursively, nested under $zipPrefix
+// inside the archive (so the whole data/ tree lands at "data/..." in the
+// zip, exactly matching its layout on the server).
+function carshow_zip_add_dir($zip, $dir, $zipPrefix) {
+    if (!is_dir($dir)) return;
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::LEAVES_ONLY
+    );
+    foreach ($items as $item) {
+        $relative = substr($item->getPathname(), strlen($dir) + 1);
+        $zipPath = str_replace('\\', '/', $zipPrefix . '/' . $relative);
+        $zip->addFile($item->getPathname(), $zipPath);
+    }
+}
+
+// Keeps only the newest $keep zip files on disk (oldest deleted first).
+function carshow_backup_purge($dir, $keep) {
+    $files = glob($dir . '/*.zip') ?: [];
+    if (count($files) <= $keep) return;
+    usort($files, function ($a, $b) { return filemtime($a) - filemtime($b); });
+    foreach (array_slice($files, 0, count($files) - $keep) as $f) @unlink($f);
+}
+
+// Does the actual backup: zips the whole data/ tree (every show year, plus
+// data/shows.json and data/api-key.json) and the global root-level files
+// that live outside data/ — members-data.json, password-reset.json,
+// dev-password-reset.json (see this file's own comment on why those are
+// global), and every per-year window-card-<year>.pdf template. Deliberately
+// EXCLUDES secrets.php and every other code file — same scope
+// ftp-deploy.sh's own upload list excludes for the opposite reason (never
+// overwrite live data with a stale local copy); this is a data backup, not
+// a code backup.
+function carshow_run_backup() {
+    $dir = carshow_backups_dir();
+    if ($dir === null) return ['ok' => false, 'error' => 'Could not create the backups directory.'];
+
+    $fileName = gmdate('YmdHis') . '-CarShowData.zip';
+    $zipPath = $dir . '/' . $fileName;
+
+    $zip = new ZipArchive();
+    if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        return ['ok' => false, 'error' => 'Could not create the backup zip file.'];
+    }
+
+    $dataRoot = carshow_data_root();
+    if ($dataRoot !== null) carshow_zip_add_dir($zip, $dataRoot, 'data');
+
+    $rootFiles = ['members-data.json', 'password-reset.json', 'dev-password-reset.json'];
+    foreach ((glob(__DIR__ . '/window-card-*.pdf') ?: []) as $f) $rootFiles[] = basename($f);
+    foreach ($rootFiles as $name) {
+        $path = __DIR__ . '/' . $name;
+        if (is_file($path)) $zip->addFile($path, $name);
+    }
+
+    $numFiles = $zip->numFiles;
+    $zip->close();
+
+    if ($numFiles === 0) {
+        @unlink($zipPath);
+        return ['ok' => false, 'error' => 'Nothing to back up — no data files were found on the server.'];
+    }
+
+    carshow_backup_purge($dir, CARSHOW_BACKUP_KEEP);
+    clearstatcache(true, $zipPath);
+    return ['ok' => true, 'fileName' => $fileName, 'sizeBytes' => filesize($zipPath), 'fileCount' => $numFiles];
+}
+
+// Called from import-schedule.php's 'check' action, which is already polled
+// every ~15 minutes by the Windows scheduled task regardless of whether
+// anyone has the app open in a browser — piggybacking on that existing
+// heartbeat means a daily backup needs no scheduled task of its own. Runs at
+// most once per calendar date (server's current default timezone — see
+// import-schedule.php's date_default_timezone_set('America/New_York'),
+// which is already in effect by the time this is called from there): the
+// first poll on/after midnight that finds today's date not yet recorded, so
+// "at midnight" in practice means within ~15 minutes after it, the same
+// approximation the Import Schedule's own explicit times already make.
+// Attempts exactly once per day regardless of outcome (lastAutoRunDate is
+// set whether the run succeeded or failed) — a persistently failing backup
+// (e.g. disk full) should surface once a day in the log, not spam a retry
+// every 15 minutes until fixed.
+function carshow_backup_auto_check() {
+    $schedule = carshow_read_backup_schedule();
+    if (!$schedule['enabled']) return;
+    $today = date('Y-m-d');
+    if ($schedule['startDate'] !== '' && $today < $schedule['startDate']) return;
+    if ($schedule['endDate'] !== '' && $today > $schedule['endDate']) return;
+    if ($schedule['lastAutoRunDate'] === $today) return;
+
+    $result = carshow_run_backup();
+    $entry = ['timestamp' => gmdate('c'), 'status' => $result['ok'] ? 'success' : 'failed', 'reason' => 'auto'];
+    if ($result['ok']) {
+        $entry['fileName'] = $result['fileName'];
+        $entry['sizeBytes'] = $result['sizeBytes'];
+        $entry['fileCount'] = $result['fileCount'];
+    } else {
+        $entry['error'] = $result['error'];
+    }
+    carshow_append_json_list(carshow_backup_history_file(), $entry);
+
+    $schedule['lastAutoRunDate'] = $today;
+    carshow_write_backup_schedule($schedule);
+}
+
 function carshow_migrate_to_multi_show() {
     $path = carshow_shows_path();
     if ($path === null) return false;          // data/ not creatable — caller reports it

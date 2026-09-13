@@ -120,6 +120,17 @@
     // importRequestStatus above.
     backupRunning: false,
     backupRunStatus: null,
+    // Setup tab > Backups > auto-backup schedule (backup.php
+    // get_schedule/save_schedule; actual daily trigger is server-side, see
+    // lib.php's carshow_backup_auto_check()) — same enable-checkbox +
+    // active-date-range UX as the Import Schedule's own auto-import
+    // settings. Null until loaded (on Setup tab select, alongside
+    // loadRunStatus()); lastAutoRunDate is server-owned bookkeeping, shown
+    // read-only, never sent back on save.
+    backupSchedule: null,
+    backupScheduleSaving: false,
+    backupScheduleError: null,
+    backupScheduleSaved: false,
     // Setup tab > Backups > "View Logs" — server-side backup-history.json
     // (see backup.php); null until first opened/loaded, then an array of
     // {timestamp, status, fileName, sizeBytes, fileCount, error}. Never
@@ -625,7 +636,7 @@
         refreshShowData();
         // Setup tab additionally needs the persisted "Last run" status,
         // which isn't part of the general show-data refresh above.
-        if (id === "setup") loadRunStatus();
+        if (id === "setup") { loadRunStatus(); loadBackupSchedule(); }
       });
       return t;
     };
@@ -4181,6 +4192,51 @@
       });
   }
 
+  // Setup tab > Backups > auto-backup schedule — loads/saves backup.php's
+  // get_schedule/save_schedule actions. Same shape as
+  // saveImportScheduleSettings() below but its own small JSON (not part of
+  // per-show app-settings.json), since backups aren't scoped to one show.
+  function loadBackupSchedule() {
+    if (!SITE_CONFIG.backupApiUrl) return;
+    fetch(SITE_CONFIG.backupApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "get_schedule" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok && r.data.schedule) {
+          state.backupSchedule = r.data.schedule;
+          if (state.tab === "setup") renderViews();
+        }
+      }).catch(function () { /* keep showing whatever's already loaded */ });
+  }
+  function saveBackupSchedule(settings) {
+    if (!SITE_CONFIG.backupApiUrl) return;
+    state.backupScheduleSaving = true;
+    state.backupScheduleError = null;
+    state.backupScheduleSaved = false;
+    renderViews();
+    fetch(SITE_CONFIG.backupApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ action: "save_schedule" }, settings))
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.backupScheduleSaving = false;
+        if (r.ok && r.data && r.data.ok && r.data.schedule) {
+          state.backupSchedule = r.data.schedule;
+          state.backupScheduleSaved = true;
+        } else {
+          state.backupScheduleError = "Could not save.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.backupScheduleSaving = false;
+        state.backupScheduleError = "Could not save — check your connection.";
+        renderViews();
+      });
+  }
+
   // Setup tab > Backups > "View Logs" (backup.php action=list) — same
   // toggle/load pattern as toggleLogsPanel()/loadLogsList() below, against
   // the permanent backup-history.json log instead of the purged sync logs.
@@ -5171,7 +5227,7 @@
         var rows = state.backupsList.slice().reverse();
         kids.push(el("table", { class: "grid", style: "margin-top:8px" }, [
           el("thead", {}, [el("tr", {}, [
-            el("th", { text: "Run" }), el("th", { text: "Status" }), el("th", { text: "Details" })
+            el("th", { text: "Run" }), el("th", { text: "Trigger" }), el("th", { text: "Status" }), el("th", { text: "Details" })
           ])]),
           el("tbody", {}, rows.map(function (r) {
             var ok = r.status === "success";
@@ -5189,6 +5245,7 @@
             }
             return el("tr", { class: rowClass }, [
               el("td", { text: r.timestamp ? fmtDate(new Date(r.timestamp)) : "" }),
+              el("td", { text: r.reason === "auto" ? "Auto" : "Manual" }),
               el("td", { text: ok ? "✅ Success" : "❌ Failed" }),
               el("td", {}, [details])
             ]);
@@ -5206,8 +5263,62 @@
         "kept on the server, for point-in-time recovery independent of the live JSON files. Only the newest " +
         "30 backup files are kept on disk; this log is kept permanently, even for a purged or failed run."
       ]),
-      el("div", {}, kids)
+      el("div", {}, kids),
+      buildAutoBackupFields()
     ]);
+  }
+
+  // Setup tab > Backups > auto-backup schedule — enable checkbox + active
+  // date range, same UX as the Import Schedule's own auto-import settings
+  // (see buildImportScheduleSection() below). The actual daily trigger is
+  // server-side (lib.php's carshow_backup_auto_check(), piggybacked on the
+  // Import Schedule's existing ~15-minute poll) — this only edits the
+  // settings it reads.
+  function buildAutoBackupFields() {
+    var s = state.backupSchedule || { enabled: false, startDate: "", endDate: "", lastAutoRunDate: "" };
+
+    var enableCb = el("input", { type: "checkbox" }); enableCb.checked = !!s.enabled;
+    var startDateInput = el("input", { type: "date", value: s.startDate || "" });
+    var endDateInput = el("input", { type: "date", value: s.endDate || "" });
+
+    var saveBtn = el("button", { type: "button", class: "btn primary" }, ["Save"]);
+    if (state.backupScheduleSaving) saveBtn.setAttribute("disabled", "disabled");
+    saveBtn.addEventListener("click", function () {
+      saveBackupSchedule({
+        enabled: enableCb.checked,
+        startDate: startDateInput.value,
+        endDate: endDateInput.value
+      });
+    });
+    var saveStatus = [];
+    if (state.backupScheduleSaving) saveStatus.push(el("span", { class: "count" }, ["Saving…"]));
+    else if (state.backupScheduleSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
+    if (state.backupScheduleError) saveStatus.push(el("div", { class: "form-error" }, [state.backupScheduleError]));
+
+    var lastRunLine = s.lastAutoRunDate
+      ? el("div", { class: "hint", style: "margin-top:4px" }, ["Last automatic backup: " + s.lastAutoRunDate + "."])
+      : null;
+
+    var fields = [
+      el("div", { class: "hint", style: "margin:10px 0" }, [
+        "Runs once a day at midnight (America/New_York), only while enabled and within the active dates below " +
+        "— piggybacked on the same ~15-minute heartbeat the Import Schedule uses, so it takes effect within a " +
+        "few minutes of midnight, not instantly."
+      ]),
+      el("div", { class: "form-row" }, [
+        el("label", {}, [enableCb, document.createTextNode(" Enable automatic backups")])
+      ]),
+      el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "Active dates" }),
+        el("div", { style: "display:flex; gap:8px; align-items:center" }, [
+          startDateInput, document.createTextNode("to"), endDateInput
+        ])
+      ]),
+      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus))
+    ];
+    if (lastRunLine) fields.push(lastRunLine);
+
+    return el("div", { style: "margin-top:14px; padding-top:14px; border-top:1px solid var(--line)" }, fields);
   }
 
   // Setup tab > Import Schedule > "Log Directory" — server-archived run logs
