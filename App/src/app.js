@@ -114,6 +114,21 @@
     // text ("Requested — the next check will run within ~15 minutes." /
     // an error), cleared on next render pass through a fresh click.
     importRequestStatus: null,
+    // Setup tab > Backups > "Backup Now" — brief inline status text
+    // ("Running…" / "Succeeded — N files, X KB." / "Failed: ..."), cleared on
+    // next render pass through a fresh click. Same pattern as
+    // importRequestStatus above.
+    backupRunning: false,
+    backupRunStatus: null,
+    // Setup tab > Backups > "View Logs" — server-side backup-history.json
+    // (see backup.php); null until first opened/loaded, then an array of
+    // {timestamp, status, fileName, sizeBytes, fileCount, error}. Never
+    // purged server-side (unlike the sync-run logs above) — see backup.php's
+    // own comment on why the log entries outlive the zip files they describe.
+    backupsPanelOpen: false,
+    backupsList: null,
+    backupsLoading: false,
+    backupsError: null,
     // Setup tab > Import Schedule > "View Logs" — server-archived log files
     // (see logs.php); null until first opened/loaded, then an array of
     // {name, size, mtime}. Purged server-side after 7 days.
@@ -4133,6 +4148,75 @@
       }).catch(function () { /* keep showing whatever's already loaded */ });
   }
 
+  // Setup tab > Backups > "Backup Now" (backup.php action=run) — zips the
+  // live data server-side and appends one entry to backup-history.json.
+  // Unlike requestImportNow() above, this isn't a request for something
+  // else to pick up later — the server does the whole thing synchronously
+  // and this resolves with the real outcome, so there's no polling.
+  function requestBackupNow() {
+    if (!SITE_CONFIG.backupApiUrl || state.backupRunning) return;
+    state.backupRunning = true;
+    state.backupRunStatus = "Running…";
+    renderViews();
+    fetch(SITE_CONFIG.backupApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "run" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.backupRunning = false;
+        if (r.ok && r.data && r.data.ok && r.data.entry) {
+          var e = r.data.entry;
+          var kb = Math.max(1, Math.round((e.sizeBytes || 0) / 1024));
+          state.backupRunStatus = "Succeeded — " + (e.fileCount || 0) + " files, " + kb + " KB.";
+          if (state.backupsList !== null) state.backupsList.push(e);
+        } else {
+          state.backupRunStatus = "Failed" + (r.data && r.data.error ? ": " + r.data.error : " — please try again.");
+        }
+        renderViews();
+      }).catch(function () {
+        state.backupRunning = false;
+        state.backupRunStatus = "Failed — check your connection and try again.";
+        renderViews();
+      });
+  }
+
+  // Setup tab > Backups > "View Logs" (backup.php action=list) — same
+  // toggle/load pattern as toggleLogsPanel()/loadLogsList() below, against
+  // the permanent backup-history.json log instead of the purged sync logs.
+  function toggleBackupsPanel() {
+    state.backupsPanelOpen = !state.backupsPanelOpen;
+    if (state.backupsPanelOpen && state.backupsList === null) {
+      loadBackupsList();
+      return; // loadBackupsList() already re-renders
+    }
+    renderViews();
+  }
+  function loadBackupsList() {
+    if (!SITE_CONFIG.backupApiUrl) return;
+    state.backupsLoading = true;
+    state.backupsError = null;
+    renderViews();
+    fetch(SITE_CONFIG.backupApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.backupsLoading = false;
+        if (r.ok && r.data && r.data.ok) {
+          state.backupsList = r.data.history || [];
+        } else {
+          state.backupsError = "Could not load the backup log.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.backupsLoading = false;
+        state.backupsError = "Could not load the backup log — check your connection.";
+        renderViews();
+      });
+  }
+
   // Setup tab > Import Schedule > "View Logs" — server-archived log files
   // (logs.php action=list/get), so the directory is browsable from any
   // machine logged into the site, not just the one that ran the import.
@@ -5042,7 +5126,87 @@
         el("h3", { text: "Setup" }),
         col
       ]),
-      buildImportScheduleSection()
+      buildImportScheduleSection(),
+      buildBackupsSection()
+    ]);
+  }
+
+  // Setup tab > Backups — "Backup Now" (backup.php action=run, synchronous —
+  // see requestBackupNow() above) plus a permanent, color-coded log of every
+  // run (green = success, red = failure), same row-coloring idea as
+  // .test-list li.pass/.fail in styles.css. Distinct from the Import
+  // Schedule's own log-of-sync-runs above: this is the app's *data*
+  // (registrations, sponsors, payments, etc. — see backup.php's own header
+  // comment) being snapshotted, not ClubExpress imports.
+  function buildBackupsSection() {
+    var runBtn = el("button", { type: "button", class: "btn primary" }, ["💾 Backup Now"]);
+    if (state.backupRunning) runBtn.setAttribute("disabled", "disabled");
+    runBtn.addEventListener("click", requestBackupNow);
+    var runRow = el("div", { style: "display:flex; align-items:center; gap:10px" }, [runBtn]);
+    if (state.backupRunStatus) {
+      var isFailed = state.backupRunStatus.indexOf("Failed") === 0;
+      var isSucceeded = state.backupRunStatus.indexOf("Succeeded") === 0;
+      var statusStyle = isFailed ? "color:var(--warn)" : (isSucceeded ? "color:var(--good)" : "");
+      runRow.appendChild(el("span", { class: "count", style: statusStyle }, [state.backupRunStatus]));
+    }
+
+    var toggleBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" },
+      [state.backupsPanelOpen ? "▲ Hide Logs" : "📂 View Logs"]);
+    toggleBtn.addEventListener("click", toggleBackupsPanel);
+
+    var kids = [
+      el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "" }), runRow]),
+      el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "Backup Log" }),
+        el("div", {}, [toggleBtn])
+      ])
+    ];
+
+    if (state.backupsPanelOpen) {
+      if (state.backupsLoading) {
+        kids.push(el("div", { class: "hint" }, ["Loading…"]));
+      } else if (state.backupsError) {
+        kids.push(el("div", { class: "form-error" }, [state.backupsError]));
+      } else if (state.backupsList && state.backupsList.length) {
+        var rows = state.backupsList.slice().reverse();
+        kids.push(el("table", { class: "grid", style: "margin-top:8px" }, [
+          el("thead", {}, [el("tr", {}, [
+            el("th", { text: "Run" }), el("th", { text: "Status" }), el("th", { text: "Details" })
+          ])]),
+          el("tbody", {}, rows.map(function (r) {
+            var ok = r.status === "success";
+            var rowClass = ok ? "backup-row-ok" : "backup-row-fail";
+            var details;
+            if (ok) {
+              var kb = Math.max(1, Math.round((r.sizeBytes || 0) / 1024));
+              var link = el("a", {
+                href: SITE_CONFIG.backupApiUrl + "?action=download&name=" + encodeURIComponent(r.fileName),
+                target: "_blank", rel: "noopener", text: r.fileName
+              });
+              details = el("span", {}, [link, document.createTextNode(" — " + (r.fileCount || 0) + " files, " + kb + " KB")]);
+            } else {
+              details = el("span", { text: r.error || "Unknown error" });
+            }
+            return el("tr", { class: rowClass }, [
+              el("td", { text: r.timestamp ? fmtDate(new Date(r.timestamp)) : "" }),
+              el("td", { text: ok ? "✅ Success" : "❌ Failed" }),
+              el("td", {}, [details])
+            ]);
+          }))
+        ]));
+      } else if (state.backupsList) {
+        kids.push(el("div", { class: "hint" }, ["No backups recorded yet."]));
+      }
+    }
+
+    return el("div", { class: "panel", style: "margin-top:16px" }, [
+      el("h3", { text: "Backups" }),
+      el("div", { class: "hint", style: "margin-bottom:10px" }, [
+        "Zips the app's live data (registrations, sponsors, payments, t-shirts, etc.) into a dated file " +
+        "kept on the server, for point-in-time recovery independent of the live JSON files. Only the newest " +
+        "30 backup files are kept on disk; this log is kept permanently, even for a purged or failed run."
+      ]),
+      el("div", {}, kids)
     ]);
   }
 

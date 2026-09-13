@@ -25,3 +25,7 @@ App/deploy/password-reset.json
 # stray local copy here would only invite someone to "fix" the flyer by
 # editing a file that does nothing.
 App/assets/CarShowFlyer.pdf
+
+# Server-generated backup zips + their log (Setup tab > Backups, backup.php)
+# — live only on the server, same reasoning as data/ above.
+App/deploy/backups/

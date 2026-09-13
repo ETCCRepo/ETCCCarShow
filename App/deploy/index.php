@@ -142,6 +142,9 @@ foreach ($perShowUrls as $key => $file) {
     $siteConfig[$key] = $file . $yearQuery;
 }
 $siteConfig['showsApiUrl'] = 'shows.php';
+// Global, not year-scoped — see backup.php's header comment (it backs up
+// every show year's data/ subtree in one zip, not just the currently open one).
+$siteConfig['backupApiUrl'] = 'backup.php';
 // Current deployed version — read from the small static JSON build.js writes
 // alongside itself (version-check.json), so app.js's checkForNewVersion()
 // has something fresh to compare its own re-fetch of that same file against.
