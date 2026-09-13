@@ -1,6 +1,46 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-13 (end of session, latest). **Setup tab fields now auto-save —
+Last updated: 2026-09-13 (end of session, latest). **Member-roster imports are now
+logged, with a viewer on the Setup tab.** User asked to "keep a log each time members
+are imported... timestamp and number of members," then separately asked for "a way to
+view the import members history from the setup tab." Two checkpoints: **`ad5beb1`**
+(v5.26, the log itself) and **`318c12d`** (v5.28, the Setup tab viewer), plus a
+no-op version-bump checkpoint **`8aaf38e`** (v5.29, no code changes) from this
+`/ETCCCarShowAll` run — all deployed and pushed; live site is **v5.29**.
+
+**1. The log (v5.26).** `members-import.php` (a standalone PHP page, not part of the
+app.js SPA) now appends `{timestamp, count}` to a new **global** (not per-show, same as
+`members-data.json` itself) `data/member-import-history.json` on every successful
+import, via a new `carshow_member_import_log_file()` in `lib.php` and the existing
+`carshow_append_json_list()` helper. `members-data.json` only ever holds the *current*
+roster with no history, so this is the only record of when it was last refreshed and by
+how much. The page itself also gained an inline **Import Log** table (newest first)
+below the roster count. Also set `date_default_timezone_set('America/New_York')` in
+this file for the first time (it previously had none), so displayed times read the same
+as the rest of the app instead of showing raw UTC.
+
+**2. The Setup tab viewer (v5.28).** New `deploy/member-import-history.php` — a
+read-only JSON `list` action over that same log — wired into `index.php`'s **global**
+`$siteConfig` as `memberImportHistoryApiUrl` (not year-scoped, same reasoning as
+`backupApiUrl`). Setup tab's "Import Members" row gained a **📂 View Log** button next
+to the existing Instructions button; clicking it shows the same timestamp/count table
+right there, no need to open the standalone page. `buildSetupLauncher()` (`app.js`) was
+generalized to accept multiple extra buttons and optional extra content below the hint
+line — reusable for other Setup-tab launchers later, not just this one.
+
+## Known follow-ups / things a new session might need to know (2026-09-13 session, member-import log)
+
+- **`/ETCCCarShowTest` was not run** for this stretch of work (not requested) — the
+  member-import log and its Setup tab viewer are standalone PHP + `app.js` DOM/fetch
+  wiring, same category as the Backups feature and Import Schedule, with zero automated
+  assertions. Worth adding a `regression-tests.js` exclusion-note entry (like the ones
+  already there for Backups/Import Schedule) next time that file gets touched.
+- **The log only records successes.** An import that fails validation (bad CSV, missing
+  columns) leaves no trace in `member-import-history.json` — same tradeoff
+  `registrations-upload.php`'s own history logging makes, just not documented as a
+  deliberate choice anywhere before now.
+
+Previous update: 2026-09-13 (earlier the same day). **Setup tab fields now auto-save —
 no more Save buttons on Import Schedule or the Backups auto-schedule.** Every field
 saves itself on `blur` (Event URL) or `change` (checkboxes/dates/interval/times), same
 convention the Settings modal's `autoSaveSettings()` already used. This closes the exact
