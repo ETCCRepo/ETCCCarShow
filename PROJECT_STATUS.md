@@ -1,6 +1,105 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-12 (end of session, latest). **Deleted the stale Claude Code
+Last updated: 2026-09-13 (end of session, latest). **Setup tab gained a full Backups
+system** — a "Backup Now" button, a color-coded (green/red) permanent log, an
+auto-backup schedule (daily at midnight, enable + active date range, same UX as Import
+Schedule), and per-entry delete, all built server-side in `deploy/backup.php` +
+`deploy/lib.php`. Three checkpoints today: **`53eaeac`** (v5.18, base feature),
+**`78e7f4f`** (v5.20, auto-schedule), **`c13f517`** (v5.22, delete + purge floor) — all
+deployed and pushed; live site is **v5.22**. Also created the (outside-repo)
+`ETCCCarShowBackup` Claude Code skill this session, unrelated to the in-app feature
+below — see "Watch for this" at the end of this entry.
+
+**1. Core Backups feature (v5.18).** New `deploy/backup.php`: `action=run` zips the
+live `data/` tree (every show year, `shows.json`, `api-key.json`) plus root-level
+globals (`members-data.json`, `password-reset.json`, `dev-password-reset.json`, every
+`window-card-<year>.pdf`) into `deploy/backups/<timestamp>-CarShowData.zip` using PHP's
+`ZipArchive` directly against the server's own local files — no FTP needed, unlike the
+Claude Code skill below, since this code already runs on the server. Every run appends
+one entry to `backup-history.json` via the existing `carshow_append_json_list()`
+helper (never pruned); the zip files themselves are capped at the newest 30
+(`carshow_backup_purge()`). Deliberately excludes `secrets.php` and all other code
+files — this is a data backup, same scope `ftp-deploy.sh`'s own upload list excludes
+for the opposite reason. Setup tab gained a **Backups** panel (`buildBackupsSection()`
+in `App/src/app.js`) below Import Schedule: a synchronous "Backup Now" button and a
+"View Logs" toggle showing a table color-coded green (success) / red (failure) —
+`.backup-row-ok`/`.backup-row-fail` in `App/src/styles.css`, same convention as
+`.test-list li.pass/.fail`. `backupApiUrl` added to `index.php`'s global `$siteConfig`
+(not year-scoped, since backups span every show), and `backup.php` added to
+`ftp-deploy.sh`'s upload list. `deploy/backups/` gitignored, same as `data/`.
+
+**2. Auto-backup schedule (v5.20).** User asked for an enable-checkbox + active-date-
+range option "similar to" the Import Schedule's own auto-import UI, running once daily
+at midnight. New global (not per-show) `data/backup-schedule.json`
+(`{enabled, startDate, endDate, lastAutoRunDate}`), read/written via `backup.php`'s new
+`get_schedule`/`save_schedule` actions. **The daily trigger needed no new scheduled
+task**: `import-schedule.php`'s `check` action is already polled every ~15 minutes by
+the Windows scheduled task (`deploy/sync-registrations.js`) regardless of whether
+anyone has the app open in a browser, so a new `carshow_backup_auto_check()` (added to
+`lib.php`) is called from right there. It fires at most once per calendar date
+(`America/New_York`, matching `import-schedule.php`'s own timezone) when enabled and
+today falls in the active range — so "at midnight" in practice means within ~15 minutes
+after it, the same approximation the Import Schedule's own explicit times already make.
+Attempts exactly once per day **regardless of outcome** (a persistently failing backup
+logs once daily, not every 15 minutes). Moved `carshow_run_backup()` and its helpers
+from `backup.php` into `lib.php` so `import-schedule.php` could call the auto-check
+without executing `backup.php`'s own top-level action dispatch. Log table gained a
+**Trigger** column (Manual/Auto).
+
+**3. Manual delete + "never zero backups" guarantee (v5.22).** User asked, unprompted,
+that the auto-purge never delete the *last* backup — `carshow_backup_purge()` now
+floors `$keep` at `max(1, ...)` regardless of `CARSHOW_BACKUP_KEEP`'s actual value, so a
+misconfigured constant could never zero out the server's backups. Then, from a
+screenshot of the live Backups panel, asked for a way to delete an individual backup —
+`backup.php` gained an `action=delete` (identity = the entry's timestamp, same
+convention `import-history.json`'s delete already uses) that removes one
+`backup-history.json` entry and its zip file, **enforcing the same "never delete the
+last one" rule** via a new `carshow_backup_zip_count()` helper — refuses with "it's the
+only backup left on the server" rather than silently leaving zero. Each log row gained
+a 🗑 delete button opening the same confirm-modal pattern as the History tab's row
+delete (`openDeleteBackupConfirm()`/`renderDeleteBackupConfirm()` in `app.js`).
+
+**Watch for this — two different "CarShow backup" things now exist, don't confuse
+them.** (a) **This in-app feature** (`deploy/backup.php`) runs entirely server-side,
+zips the live `data/` tree via PHP `ZipArchive`, and is triggered from the Setup tab or
+automatically once a day. (b) **`ETCCCarShowBackup`**, a separate Claude Code skill
+created this session at `C:\Users\Admin\.claude\skills\ETCCCarShowBackup\` (outside
+this repo, unversioned), does the opposite direction: it FTPS-**downloads** that same
+live `data/` tree from the server to a Windows machine
+(`Z:\Backup\websites\CS\Backup\<timestamp>-CarShowData.zip`, note the `CS` folder name
+— confirmed correct, not a typo, when asked) for off-server, off-site redundancy. They
+serve different failure modes (this server dying vs. an officer wanting a local point-
+in-time copy) and were built independently — a PowerShell script in the skill, PHP
+`ZipArchive` in the app. Tested once manually (`202609130953-CarShowData.zip`,
+confirmed via zip listing) before either existed as an app feature.
+
+## Known follow-ups / things a new session might need to know (2026-09-13 session, Backups feature)
+
+- **No staging environment for CarShow.** Confirmed this session when asked to "deploy to
+  staging" — `ftp-deploy.sh` only has one target, the live production site
+  (`etccapps.com/apps/carshow`). Any deploy from this project is production. There's no
+  fix needed here, just don't assume a staging slot exists like the BWE projects have.
+- **`/ETCCCarShowTest` was not run** across any of this session's three checkpoints
+  (v5.18/v5.20/v5.22) — none of it was requested, and the Backups feature is entirely
+  new code with **zero regression coverage**. Worth an explicit `/ETCCCarShowTest` pass
+  before trusting it unattended, especially the auto-schedule's date-range logic and the
+  "never delete the last backup" guards (both the purge floor and the manual-delete
+  refusal) — none of that has been exercised by anything other than one manual
+  `action=run` click and reading the code.
+- **The auto-backup schedule has never actually fired.** It was verified by reading
+  through the logic (piggybacked on `import-schedule.php`'s existing poll — see the
+  entry above), not by watching a real midnight rollover happen. First real signal it's
+  working will be a `reason: "auto"` entry in the Backup Log after the Windows scheduled
+  task polls past midnight with it enabled.
+- **Auto-backup schedule is OFF by default** (`enabled: false` until an officer visits
+  Setup → Backups and turns it on) — nobody has enabled it yet as of this session.
+- **Retention is 30 zip files, uncapped by time** — unlike the sync-run logs (7-day
+  purge) or the `ETCCCarShowBackup` skill's Windows-side copies (kept forever, user's
+  own disk). At one backup/day this covers a month; faster manual use burns through the
+  30 slots quicker. Not raised as a concern by the user, just worth knowing the shape of
+  it.
+
+Previous update: 2026-09-12 (end of session). **Deleted the stale Claude Code
 scheduled task.** After the Claude-free Playwright migration (see the entry two below),
 the Claude Code scheduled task `carshow-sync-registrations` — the old 15-minute poller
 that drove ClubExpress imports via the `ETCCCarShowImportData` skill — kept existing
