@@ -310,6 +310,15 @@ function carshow_show_exists($year, $registry = null) {
     return false;
 }
 
+// Log of every member-roster import (members-import.php), one entry per
+// successful upload: { timestamp, count }. Global, not per-show, same
+// reasoning as members-data.json itself (lib.php's own comment on
+// carshow_show_files() — the roster is global, so its import log is too).
+function carshow_member_import_log_file() {
+    $root = carshow_data_root();
+    return $root === null ? null : $root . '/member-import-history.json';
+}
+
 // The externalApiKey is deliberately NOT per-year: paid-registrations-api.php
 // is an external integration whose credential must stay stable when the club
 // rolls over to a new show. Lives in data/api-key.json, generated on first use.

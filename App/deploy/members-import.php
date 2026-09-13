@@ -27,6 +27,11 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 require __DIR__ . '/secrets.php';
 require __DIR__ . '/lib.php';
 
+// Matches import-schedule.php/backup.php's own timezone, so the Import Log's
+// displayed times read the same as everything else in the app rather than
+// showing raw UTC.
+date_default_timezone_set('America/New_York');
+
 if (empty($_SESSION['carshow_authenticated'])) {
     header('Content-Type: text/html; charset=utf-8');
     echo '<!doctype html><meta charset="utf-8"><body style="font:15px sans-serif;padding:40px;text-align:center">' .
@@ -107,6 +112,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['members_csv'])) {
                 if (carshow_write_json($MEMBERS_FILE, $members)) {
                     $imported = count($members);
                     $importedFoundFields = array_keys(array_filter($optionalIdx, function ($v) { return $v !== null; }));
+                    // Log every import — timestamp + count — so there's a
+                    // record of when the roster was last refreshed and by
+                    // how much it changed, independent of members-data.json
+                    // itself (which only ever holds the CURRENT roster, with
+                    // no history of past imports).
+                    carshow_append_json_list(carshow_member_import_log_file(), [
+                        'timestamp' => gmdate('c'),
+                        'count' => $imported,
+                    ]);
                 } else {
                     $errors[] = 'Could not save the member list — please try again.';
                 }
@@ -116,6 +130,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['members_csv'])) {
 }
 
 $current = carshow_read_json_list($MEMBERS_FILE);
+// Newest first — "when did this last run" is almost always the question
+// worth answering at a glance, same reasoning as the History tab's own
+// import log in the main app.
+$importLog = array_reverse(carshow_read_json_list(carshow_member_import_log_file()));
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -141,6 +159,11 @@ $current = carshow_read_json_list($MEMBERS_FILE);
   .success { background:#f2fbf5; border:1px solid #bfe2c9; border-radius:8px; padding:12px 14px; margin-bottom:14px; color: var(--good); font-weight:600; font-size:14px; }
   .count { color: var(--muted); font-size:13px; margin-bottom: 14px; }
   .back { display:block; text-align:center; margin-top:18px; color: var(--muted); font-size:13px; }
+  .import-log { margin-top:18px; padding-top:14px; border-top:1px solid var(--line); }
+  .import-log h2 { font-size:14px; margin:0 0 8px; }
+  .import-log table { width:100%; border-collapse:collapse; font-size:13px; }
+  .import-log th, .import-log td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); }
+  .import-log th { color:var(--muted); font-weight:600; }
 </style>
 </head>
 <body>
@@ -172,6 +195,22 @@ $current = carshow_read_json_list($MEMBERS_FILE);
       <button type="submit" class="btn">Import</button>
     </form>
   </div>
+  <?php if ($importLog): ?>
+    <div class="import-log">
+      <h2>Import Log</h2>
+      <table>
+        <thead><tr><th>Imported</th><th>Members</th></tr></thead>
+        <tbody>
+          <?php foreach ($importLog as $entry): ?>
+            <tr>
+              <td><?php echo htmlspecialchars(date('n/j/Y g:i A', strtotime((string)($entry['timestamp'] ?? '')))); ?></td>
+              <td><?php echo (int)($entry['count'] ?? 0); ?></td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+  <?php endif; ?>
   <a class="back" href="index.php">&larr; Back to the app</a>
 </div>
 </body>
