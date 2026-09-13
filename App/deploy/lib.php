@@ -446,11 +446,25 @@ function carshow_zip_add_dir($zip, $dir, $zipPrefix) {
 }
 
 // Keeps only the newest $keep zip files on disk (oldest deleted first).
+// max(1, ...) is a hard floor, independent of whatever CARSHOW_BACKUP_KEEP
+// happens to be set to: the most recent backup is NEVER deleted, so the
+// server is never left with zero backups even if that constant were ever
+// misconfigured to 0.
 function carshow_backup_purge($dir, $keep) {
+    $keep = max(1, (int)$keep);
     $files = glob($dir . '/*.zip') ?: [];
     if (count($files) <= $keep) return;
     usort($files, function ($a, $b) { return filemtime($a) - filemtime($b); });
     foreach (array_slice($files, 0, count($files) - $keep) as $f) @unlink($f);
+}
+
+// How many backup zip files currently exist on disk — shared by
+// carshow_backup_purge() (via its own glob) and backup.php's 'delete'
+// action, which uses this to refuse deleting the very last one (same "never
+// leave zero backups" guarantee carshow_backup_purge()'s max(1, ...) floor
+// gives the automatic purge).
+function carshow_backup_zip_count($dir) {
+    return count(glob($dir . '/*.zip') ?: []);
 }
 
 // Does the actual backup: zips the whole data/ tree (every show year, plus

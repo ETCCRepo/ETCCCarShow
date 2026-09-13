@@ -140,6 +140,8 @@
     backupsList: null,
     backupsLoading: false,
     backupsError: null,
+    deleteBackupConfirm: null, // timestamp of the backup log entry pending delete confirm, or null
+    deleteBackupError: null,   // e.g. "it's the only backup left" — shown in the confirm modal
     // Setup tab > Import Schedule > "View Logs" — server-archived log files
     // (see logs.php); null until first opened/loaded, then an array of
     // {name, size, mtime}. Purged server-side after 7 days.
@@ -4273,6 +4275,82 @@
       });
   }
 
+  // Setup tab > Backups > per-row "🗑" delete — removes one backup-history.json
+  // entry and its zip file (if any). Same confirm-modal shape as
+  // openDeleteHistoryConfirm()/closeDeleteHistoryConfirm()/performDeleteHistory()
+  // above, but keyed to a single timestamp rather than a selected/all mode —
+  // there's no bulk-select UI for this log. backup.php's 'delete' action
+  // refuses to remove the very last backup file on the server (see its own
+  // comment); that error surfaces here rather than silently no-op'ing.
+  function openDeleteBackupConfirm(timestamp) {
+    state.deleteBackupConfirm = timestamp;
+    state.deleteBackupError = null;
+    renderDeleteBackupConfirm();
+  }
+  function closeDeleteBackupConfirm() {
+    state.deleteBackupConfirm = null;
+    state.deleteBackupError = null;
+    renderDeleteBackupConfirm();
+  }
+  function performDeleteBackup() {
+    var timestamp = state.deleteBackupConfirm;
+    if (!timestamp || !SITE_CONFIG.backupApiUrl) return;
+    fetch(SITE_CONFIG.backupApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "delete", timestamp: timestamp })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok && Array.isArray(r.data.history)) {
+          state.backupsList = r.data.history;
+          state.deleteBackupConfirm = null;
+          state.deleteBackupError = null;
+          renderDeleteBackupConfirm();
+          renderViews();
+        } else {
+          state.deleteBackupError = (r.data && r.data.error) || "Could not delete — please try again.";
+          renderDeleteBackupConfirm();
+        }
+      }).catch(function () {
+        state.deleteBackupError = "Could not delete — check your connection.";
+        renderDeleteBackupConfirm();
+      });
+  }
+  function renderDeleteBackupConfirm() {
+    var host = $("#confirmHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.deleteBackupConfirm) return;
+
+    var entry = (state.backupsList || []).filter(function (r) { return r.timestamp === state.deleteBackupConfirm; })[0];
+    var label = entry && entry.fileName ? entry.fileName : (entry && entry.timestamp ? fmtDate(new Date(entry.timestamp)) : "this backup");
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", closeDeleteBackupConfirm);
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: "Delete this backup?" }),
+      el("span", { class: "spacer" }), closeBtn
+    ]);
+
+    var yesBtn = el("button", { class: "btn primary", style: "background:var(--warn);border-color:var(--red-dark)" }, ["Yes, Delete"]);
+    yesBtn.addEventListener("click", performDeleteBackup);
+    var noBtn = el("button", { class: "btn" }, ["Cancel"]);
+    noBtn.addEventListener("click", closeDeleteBackupConfirm);
+
+    var bodyKids = [
+      el("p", {}, ["This permanently deletes " + label + " and its log entry from the server. This cannot be undone."]),
+      el("div", { class: "settings-actions" }, [yesBtn, noBtn])
+    ];
+    if (state.deleteBackupError) bodyKids.push(el("div", { class: "form-error" }, [state.deleteBackupError]));
+    var body = el("div", { class: "modal-body" }, bodyKids);
+
+    var modal = el("div", { class: "modal" }, [head, body]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", closeDeleteBackupConfirm);
+    host.appendChild(backdrop);
+  }
+
   // Setup tab > Import Schedule > "View Logs" — server-archived log files
   // (logs.php action=list/get), so the directory is browsable from any
   // machine logged into the site, not just the one that ran the import.
@@ -5227,7 +5305,7 @@
         var rows = state.backupsList.slice().reverse();
         kids.push(el("table", { class: "grid", style: "margin-top:8px" }, [
           el("thead", {}, [el("tr", {}, [
-            el("th", { text: "Run" }), el("th", { text: "Trigger" }), el("th", { text: "Status" }), el("th", { text: "Details" })
+            el("th", { text: "Run" }), el("th", { text: "Trigger" }), el("th", { text: "Status" }), el("th", { text: "Details" }), el("th", { text: "" })
           ])]),
           el("tbody", {}, rows.map(function (r) {
             var ok = r.status === "success";
@@ -5243,11 +5321,14 @@
             } else {
               details = el("span", { text: r.error || "Unknown error" });
             }
+            var deleteBtn = el("button", { type: "button", class: "btn btn-warn", style: "font-size:12px; padding:2px 8px", title: "Delete this backup" }, ["🗑"]);
+            deleteBtn.addEventListener("click", function () { openDeleteBackupConfirm(r.timestamp); });
             return el("tr", { class: rowClass }, [
               el("td", { text: r.timestamp ? fmtDate(new Date(r.timestamp)) : "" }),
               el("td", { text: r.reason === "auto" ? "Auto" : "Manual" }),
               el("td", { text: ok ? "✅ Success" : "❌ Failed" }),
-              el("td", {}, [details])
+              el("td", {}, [details]),
+              el("td", {}, [deleteBtn])
             ]);
           }))
         ]));

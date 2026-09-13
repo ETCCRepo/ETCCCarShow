@@ -18,8 +18,8 @@
 //
 // Actions: run (POST, session-or-password), list (GET/POST,
 // session-or-password), download (GET, session-or-password),
-// get_schedule (GET/POST, session-or-password), save_schedule (POST,
-// session-or-password).
+// delete (POST, session-or-password), get_schedule (GET/POST,
+// session-or-password), save_schedule (POST, session-or-password).
 session_start();
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
@@ -65,6 +65,55 @@ if ($action === 'run') {
 if ($action === 'list') {
     header('Content-Type: application/json');
     echo json_encode(['ok' => true, 'history' => carshow_read_json_list($historyFile)]);
+    exit;
+}
+
+if ($action === 'delete') {
+    // Identity is the timestamp (second-precision ISO 8601), same convention
+    // import-history.json's own delete already uses — two backups never
+    // actually complete in the same second.
+    $timestamp = (string)($input['timestamp'] ?? '');
+    $history = carshow_read_json_list($historyFile);
+    $target = null;
+    foreach ($history as $e) {
+        if (is_array($e) && ($e['timestamp'] ?? null) === $timestamp) { $target = $e; break; }
+    }
+    if ($target === null) {
+        http_response_code(404);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'Backup log entry not found.']);
+        exit;
+    }
+
+    $dir = carshow_backups_dir();
+    $fileName = (string)($target['fileName'] ?? '');
+    if ($fileName !== '' && preg_match(CARSHOW_BACKUP_NAME_PATTERN, $fileName) && $dir !== null) {
+        $path = $dir . '/' . $fileName;
+        if (is_file($path)) {
+            // Never delete the last remaining backup zip on the server —
+            // same guarantee carshow_backup_purge()'s floor gives the
+            // automatic purge, enforced here too for a manual delete.
+            if (carshow_backup_zip_count($dir) <= 1) {
+                http_response_code(400);
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => false, 'error' => 'Can\'t delete this — it\'s the only backup left on the server. Run a new backup first.']);
+                exit;
+            }
+            @unlink($path);
+        }
+    }
+
+    $kept = array_values(array_filter($history, function ($e) use ($timestamp) {
+        return !(is_array($e) && ($e['timestamp'] ?? null) === $timestamp);
+    }));
+    if (!carshow_write_json($historyFile, $kept)) {
+        http_response_code(500);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'Could not save.']);
+        exit;
+    }
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => true, 'history' => $kept]);
     exit;
 }
 
