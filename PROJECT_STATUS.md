@@ -1,6 +1,31 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-13 (end of session, latest). **Setup tab gained a full Backups
+Last updated: 2026-09-13 (end of session, latest). **Setup tab fields now auto-save —
+no more Save buttons on Import Schedule or the Backups auto-schedule.** Every field
+saves itself on `blur` (Event URL) or `change` (checkboxes/dates/interval/times), same
+convention the Settings modal's `autoSaveSettings()` already used. This closes the exact
+gap that caused the Vette Fest leftover-times bug from earlier today: editing or
+removing an auto-import time row now saves immediately either way, instead of only
+updating the DOM until someone remembered to click a separate Save button. One
+checkpoint: **`3ead18c`** (v5.25), deployed and pushed; live site is **v5.25**.
+`/ETCCCarShowTest` re-run clean: **125 passed, 0 failed**, unchanged (see below for what
+changed there). Also confirmed, this same session: (1) Vette Fest's stale Claude
+scheduled task and its leftover `12:10`/`12:20` auto-import times are BOTH already
+resolved — no code change needed, see the addendum on the 2026-09-12 entry further down.
+(2) Both auto and manual "Import Now" imports depend on a real, dedicated Google Chrome
+profile via Playwright (`clubexpress.js`'s `openContext()`) that must already hold a
+valid ClubExpress login cookie from `clubexpress-login.js` — **only** the Setup tab's
+"Manual" CSV-upload path (`registrations-import.php`) has no such dependency, since it's
+a plain browser file upload with no automation involved. Nothing changed here, purely
+informational — no code touched for this.
+
+**Test suite update.** `App/src/regression-tests.js`'s manual-testing exclusion-note
+list (things covered by hand in the app rather than by an assertion here) gained an
+entry for the whole Backups feature — Backup Now, the color-coded log, the auto-schedule,
+per-entry delete — same reasoning as the Import Schedule section already listed right
+above it: pure DOM/fetch/server wiring with no logic-layer function to assert against.
+
+Previous update: 2026-09-13 (earlier the same day). **Setup tab gained a full Backups
 system** — a "Backup Now" button, a color-coded (green/red) permanent log, an
 auto-backup schedule (daily at midnight, enable + active date range, same UX as Import
 Schedule), and per-entry delete, all built server-side in `deploy/backup.php` +
@@ -79,13 +104,12 @@ confirmed via zip listing) before either existed as an app feature.
   staging" — `ftp-deploy.sh` only has one target, the live production site
   (`etccapps.com/apps/carshow`). Any deploy from this project is production. There's no
   fix needed here, just don't assume a staging slot exists like the BWE projects have.
-- **`/ETCCCarShowTest` was not run** across any of this session's three checkpoints
-  (v5.18/v5.20/v5.22) — none of it was requested, and the Backups feature is entirely
-  new code with **zero regression coverage**. Worth an explicit `/ETCCCarShowTest` pass
-  before trusting it unattended, especially the auto-schedule's date-range logic and the
-  "never delete the last backup" guards (both the purge floor and the manual-delete
-  refusal) — none of that has been exercised by anything other than one manual
-  `action=run` click and reading the code.
+- **`/ETCCCarShowTest` has since been run** (2026-09-13, same day) — 125 passed, 0
+  failed, unchanged from before. That run only added a documentation note (see the
+  latest top entry); the Backups feature still has **zero automated assertions** — the
+  auto-schedule's date-range logic and the "never delete the last backup" guards (both
+  the purge floor and the manual-delete refusal) have only been exercised by reading the
+  code and one manual `action=run` click, not by any test.
 - **The auto-backup schedule has never actually fired.** It was verified by reading
   through the logic (piggybacked on `import-schedule.php`'s existing poll — see the
   entry above), not by watching a real midnight rollover happen. First real signal it's
