@@ -114,6 +114,14 @@
     // text ("Requested — the next check will run within ~15 minutes." /
     // an error), cleared on next render pass through a fresh click.
     importRequestStatus: null,
+    // Setup tab > Setup > "Import Members" > "View Log" — server-side log of
+    // every member-roster import (member-import-history.php; written by
+    // members-import.php). Null until first opened/loaded, then an array of
+    // {timestamp, count}. Never purged — see lib.php's own comment on why.
+    memberImportLogPanelOpen: false,
+    memberImportLogList: null,
+    memberImportLogLoading: false,
+    memberImportLogError: null,
     // Setup tab > Backups > "Backup Now" — brief inline status text
     // ("Running…" / "Succeeded — N files, X KB." / "Failed: ..."), cleared on
     // next render pass through a fresh click. Same pattern as
@@ -4351,6 +4359,44 @@
     host.appendChild(backdrop);
   }
 
+  // Setup tab > Setup > "Import Members" > "View Log" — same toggle/load
+  // pattern as toggleLogsPanel()/loadLogsList() below, against
+  // member-import-history.php instead of the sync-run logs. Lets the Setup
+  // tab show this log without navigating to members-import.php's own
+  // standalone page (which shows the same log inline as a fallback).
+  function toggleMemberImportLogPanel() {
+    state.memberImportLogPanelOpen = !state.memberImportLogPanelOpen;
+    if (state.memberImportLogPanelOpen && state.memberImportLogList === null) {
+      loadMemberImportLog();
+      return; // loadMemberImportLog() already re-renders
+    }
+    renderViews();
+  }
+  function loadMemberImportLog() {
+    if (!SITE_CONFIG.memberImportHistoryApiUrl) return;
+    state.memberImportLogLoading = true;
+    state.memberImportLogError = null;
+    renderViews();
+    fetch(SITE_CONFIG.memberImportHistoryApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.memberImportLogLoading = false;
+        if (r.ok && r.data && r.data.ok) {
+          state.memberImportLogList = r.data.history || [];
+        } else {
+          state.memberImportLogError = "Could not load the import log.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.memberImportLogLoading = false;
+        state.memberImportLogError = "Could not load the import log — check your connection.";
+        renderViews();
+      });
+  }
+
   // Setup tab > Import Schedule > "View Logs" — server-archived log files
   // (logs.php action=list/get), so the directory is browsable from any
   // machine logged into the site, not just the one that ran the import.
@@ -5235,11 +5281,16 @@
   // Reports tab's "Print Flyer" button opens.
   // Shared by buildSetupView() and buildImportScheduleSection()'s Manual
   // subsection — a launcher link (opens its standalone PHP page in a new
-  // tab) with a hint line, optionally paired with a "❓ Instructions" button.
-  function buildSetupLauncher(href, label, hint, extraBtn) {
+  // tab) with a hint line, optionally paired with one or more extra buttons
+  // (e.g. "❓ Instructions", "📂 View Log") and/or extra content rendered
+  // below the hint (e.g. a log panel toggled open by one of those buttons).
+  function buildSetupLauncher(href, label, hint, extraBtn, extraContent) {
     var link = el("a", { class: "btn", href: href, target: "_blank", rel: "noopener" }, [label]);
-    var linkRow = extraBtn ? el("div", { style: "display:flex; align-items:center; gap:8px" }, [link, extraBtn]) : link;
-    return el("div", { class: "setup-item" }, [linkRow, el("div", { class: "setup-hint", text: hint })]);
+    var extras = extraBtn ? (Array.isArray(extraBtn) ? extraBtn : [extraBtn]) : [];
+    var linkRow = extras.length ? el("div", { style: "display:flex; align-items:center; gap:8px; flex-wrap:wrap" }, [link].concat(extras)) : link;
+    var kids = [linkRow, el("div", { class: "setup-hint", text: hint })];
+    if (extraContent) kids.push(extraContent);
+    return el("div", { class: "setup-item" }, kids);
   }
   function buildImportHelpBtn(title, steps) {
     var btn = el("button", { class: "btn", type: "button", title: "How to export this CSV from ClubExpress" }, ["❓ Instructions"]);
@@ -5247,12 +5298,41 @@
     return btn;
   }
 
+  // Setup tab > Setup > "Import Members" > "View Log" panel content — see
+  // toggleMemberImportLogPanel()/loadMemberImportLog() above. Returns null
+  // when the panel is closed (buildSetupLauncher skips rendering it at all).
+  function buildMemberImportLogPanel() {
+    if (!state.memberImportLogPanelOpen) return null;
+    if (state.memberImportLogLoading) return el("div", { class: "hint", style: "margin-top:6px" }, ["Loading…"]);
+    if (state.memberImportLogError) return el("div", { class: "form-error", style: "margin-top:6px" }, [state.memberImportLogError]);
+    if (state.memberImportLogList && state.memberImportLogList.length) {
+      var rows = state.memberImportLogList.slice().reverse();
+      return el("table", { class: "grid", style: "margin-top:8px; max-width:360px" }, [
+        el("thead", {}, [el("tr", {}, [el("th", { text: "Imported" }), el("th", { text: "Members" })])]),
+        el("tbody", {}, rows.map(function (r) {
+          return el("tr", {}, [
+            el("td", { text: r.timestamp ? fmtDate(new Date(r.timestamp)) : "" }),
+            el("td", { text: r.count != null ? String(r.count) : "" })
+          ]);
+        }))
+      ]);
+    }
+    if (state.memberImportLogList) return el("div", { class: "hint", style: "margin-top:6px" }, ["No imports recorded yet."]);
+    return null;
+  }
+
   function buildSetupView() {
     var mk = buildSetupLauncher;
     var helpBtn = buildImportHelpBtn;
+
+    var memberLogToggleBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" },
+      [state.memberImportLogPanelOpen ? "▲ Hide Log" : "📂 View Log"]);
+    memberLogToggleBtn.addEventListener("click", toggleMemberImportLogPanel);
+    var memberLogPanel = buildMemberImportLogPanel();
+
     var col = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start; gap: 14px" }, [
       mk("members-import.php", "👥 Import Members", "Upload the ETCC membership roster CSV (used for name lookup / sponsor-form validation).",
-        helpBtn("Exporting the Member CSV from ClubExpress", MEMBER_IMPORT_STEPS)),
+        [helpBtn("Exporting the Member CSV from ClubExpress", MEMBER_IMPORT_STEPS), memberLogToggleBtn], memberLogPanel),
       mk("flyer-import.php", "🖼️ Import Flyer", "Upload a replacement car show flyer PDF (opened by the Reports tab's Print Flyer button).")
     ]);
     return el("div", { class: "view setup-view" }, [
