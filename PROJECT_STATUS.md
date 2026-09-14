@@ -1,11 +1,87 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-14 (end of session, latest). **A new Car Show Report was added to
-the Reports tab**, using the same generic preview + column/sort builder the previous
-session generalized for Registration/Member/T-Shirt Report. One checkpoint:
-**`5512e2a`** (v5.55), deployed and pushed; live site is **v5.55**.
+Last updated: 2026-09-14 (end of session, latest). **T-Shirt Report rows are now
+normalized to one row per shirt size, and every report builder (Sponsor/Registration/
+Member/T-Shirt/Car Show) gained multi-column sort.** One checkpoint: **`637c50a`**
+(v5.57), deployed and pushed; live site is **v5.57**.
 
-## This session's work (2026-09-14, Car Show Report)
+## This session's work (2026-09-14, T-Shirt Report normalization + multi-column sort)
+
+Two related requests in one session, both touching the `genReport*` system and Sponsor
+Report's own (still separate) builder from the prior same-day session.
+
+**1. T-Shirt Report normalized to one row per shirt size.** User: "in the tshirt report,
+for members that purchased more than one tshirt, normalize into individual rows so they
+can be sorted by size." Previously a registrant who ordered e.g. one Men's Large and one
+Women's Medium showed as a single row with a combined "Shirts" text cell
+(`shirtSummaryText()`, e.g. "M Free LG, W Free MED") — sorting by that column just
+sorted the combined strings alphabetically, which wasn't useful for anyone packing
+shirts by size.
+
+- `TSHIRT_REPORT_SPEC`'s `getRows` is now `tshirtReportRows()` (`App/src/app.js`,
+  search `tshirtReportRows`): iterates `CONFIG.SHIRT_BUCKETS` per paid registrant and
+  emits one pseudo-row **per non-zero shirt bucket** — `{ row, size, qty, rank }` — not
+  one row per registrant. A registrant with 3 different sizes now produces 3 report
+  rows; a registrant with qty=2 of the *same* size is still 1 row with `qty: 2` (not
+  exploded into 2 physical-shirt rows — quantity is shown, not further split).
+- `size` is a new spelled-out label (e.g. "Men's Free Large"), built from
+  `CONFIG.GROUPS` + a new `sizeLabel()` helper (`SM`→"Small", etc.) — deliberately not
+  reusing `shirtSummaryText()`'s compact "M Free LG" form, which is tuned for a narrow
+  on-screen table cell, not a standalone report column.
+- `rank` is that bucket's index in `CONFIG.SHIRT_BUCKETS` (Men's Free S..3XL, Men's
+  Xtra S..3XL, Women's Free..., Women's Xtra...) — sorting by "Size" uses this integer,
+  not the label string, so sizes sort in real garment order (Small, Medium, Large...)
+  instead of alphabetically (which would put "2XL" before "Large").
+- Columns changed from `Last Name/First Name/shirts/Reg #/Status` to `Last Name/First
+  Name/size/qty/Reg #/Status` — default report now shows Last Name, First Name, Size,
+  Qty. Default sort key changed from "Last Name" to "size", matching the stated purpose.
+- New `tshirtReportCellText()`/`tshirtReportSortValue()` replace the shared
+  `regRowFieldText`/`regRowSortValue` for this one report (those two are still used
+  as-is by Registration/Car Show Report, and internally by these two new functions for
+  the non-size/qty columns via `pr.row`).
+
+**2. Multi-column sort for every report builder.** User (mid-turn, while the above was
+still in progress): "for each report that has a report builder, add ability to sort
+report on more than 1 column." Previously every builder (Sponsor Report's own separate
+implementation, plus the four `genReport*`-based ones) had exactly one sort column + one
+direction. Now every one supports a "Sort by ... then by ..." chain, each level
+independently ascending/descending, with ties on an earlier level falling through to the
+next.
+
+- New shared `buildSortLevelsEditor(levels, cols, onChange)` (`App/src/app.js`, placed
+  in the generic-report-builder section but used by Sponsor Report's builder too) — the
+  one UI implementation both systems call. `levels` is `[{key, dir: "asc"|"desc"}, ...]`
+  (this array shape, with `dir` as a string, is now the canonical "storage format"
+  everywhere — see below); `cols` is the report's currently-selected columns (only those
+  are valid sort targets — a column not in the report can't be a sort level either);
+  `onChange(nextLevels)` fires on any edit (column change, direction change, remove, or
+  "+ Add sort level") and the caller persists it. A level can't be removed below one; add
+  is disabled once every selected column already has a level.
+- **Persisted shape changed**: `sponsorReportSortCol`/`sponsorReportSortDir` (two scalar
+  keys) → `sponsorReportSortCols` (one array); same pattern for the generic system,
+  `<id>ReportSortCol`/`<id>ReportSortDir` → `<id>ReportSortCols`, e.g.
+  `regReportSortCols`. **The old scalar keys are now dead/ignored** — nothing reads them
+  any more, they'll just sit unused in any show's already-saved `app-settings.json`
+  until that show is re-saved (harmless, not cleaned up this session).
+  `sponsorReportSortSpec()`/`genReportSortSpec()` (singular, returned one `{key,dir}`)
+  were renamed to `sponsorReportSortLevels()`/`genReportSortLevels(spec)` (plural,
+  return the validated array) — anything searching for the old singular names won't
+  find them.
+- `sponsorReportSorted()`/`genReportSorted(spec)` now loop the levels array, comparing
+  level-by-level and falling through to the next on a tie, instead of comparing a single
+  key.
+- New CSS: `.report-sort-editor` / `.report-sort-row` in `App/src/styles.css`, replacing
+  the old inline-styled `sortSel`/`dirSel` row markup that used to live directly in each
+  builder function.
+- Every "Reset to Default" button across all five reports now resets to a single-level
+  `[{key: <default>, dir: "asc"}]` instead of the old two scalar fields.
+
+**Not touched this session**: Sponsor Report's column list / Add-All / Remove-All /
+drag-reorder machinery (untouched, only its sort section changed); the Car Show Report
+added in the previous session (works as-is with the new multi-sort, no spec changes
+needed since it just plugs into the generic system).
+
+## Previous session's work (2026-09-14, earlier the same day — Car Show Report)
 
 User: "add a car show report to the report tab. it should be modelled after the sponsor
 report with a preview and report builder. It should contain for every registration row
