@@ -1,6 +1,69 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-14 (end of session, latest). **Two small, unrelated pieces of
+Last updated: 2026-09-14 (end of session, latest). **Setup tab > Backups gained a
+database RESTORE, modeled directly on the sibling Vette Fest app's own restore
+feature** (user: "implement a database restore by modelling the one in
+Z:\Backup\websites\VetteFest"). Two checkpoints: **`a950ec4`** (v5.33, the feature) and
+**`52765b1`** (v5.34, a no-op version-bump from a routine `/ETCCCarShowAll`) — both
+deployed and pushed; live site is **v5.34**.
+
+**What it does.** Each Backup Log row that still has a real file on disk now gets a
+**↺ Restore** button (next to the existing 🗑 delete). Clicking it opens a modal that
+reads that specific backup's contents (`backup.php` action `get_backup_years`) and
+offers a scope choice: **Everything** (every show year, `shows.json`, and the global
+`members-data.json`/password-reset files/window cards — made to match the backup
+*exactly*, deleting anything live that isn't in it) or **one specific show year**
+(only that year's `data/<year>/` directory, its row in `shows.json`, and its own
+`window-card-<year>.pdf` — every other year and every global file left completely
+untouched). Requires the **Developer password**, checked server-side (same gate
+`shows.php`'s own show-delete already uses) — the site password alone isn't enough.
+A fresh safety backup is always taken automatically right before restoring (logged as
+its own `reason:'pre-restore'` row), so a bad restore is itself always recoverable.
+Every `.json` entry in the backup is decoded and validated *before* anything on disk is
+touched — a corrupted/hand-edited backup aborts with nothing changed. On success the
+whole page reloads, since a restore can rewrite nearly everything.
+
+**Where it came from.** Vette Fest's `backup.php`/`lib.php` already had this exact
+feature — apparently built in a session this repo's own history has no record of (its
+own `PROJECT_STATUS.md` should be checked if that matters later). Ported near-verbatim:
+new `lib.php` functions `carshow_backup_zip_path()`, `carshow_write_raw()`,
+`carshow_backup_years_in_zip()`, `carshow_restore_backup()`, `carshow_rrmdir()`
+(recursive delete — needed because `data/<year>/` now legitimately holds a `logs/`
+subdirectory that `shows.php`'s own flat, one-level show-delete does NOT clean up, a
+pre-existing gap noted but not fixed this session); `backup.php` gained
+`get_backup_years`/`restore` actions; `app.js` gained `openRestoreConfirm()` /
+`performRestore()` / `renderRestoreConfirm()` and a Trigger column
+(Auto/Manual/**Restore**/**Pre-Restore**) in the Backup Log table. The one CarShow-
+specific adaptation beyond Vette Fest's version: CarShow also has a global
+`members-data.json` and per-year (but flat, not under `data/`) `window-card-<year>.pdf`
+that Vette Fest doesn't, both folded into the restore/whole-vs-scoped logic.
+
+**Not yet exercised for real** — built and deployed, but no actual restore (whole or
+scoped) has been run against the live site to confirm the round-trip end-to-end. Worth
+doing once, deliberately, against a low-stakes backup before relying on it in a real
+emergency.
+
+## Known follow-ups / things a new session might need to know (2026-09-14 session, database restore)
+
+- **Restore has never actually been run against the live site.** Built, deployed, code
+  reviewed against Vette Fest's working version — but no one has clicked "Yes, Restore"
+  for real yet, whole or scoped. Do a deliberate test against a low-stakes/old backup
+  before ever depending on this in a real emergency.
+- **`shows.php`'s own show-delete doesn't clean up `data/<year>/logs/`.** Noticed while
+  porting `carshow_rrmdir()` (which DOES handle it, correctly, for restore) — flagged,
+  not fixed. `shows.php`'s delete still does a flat one-level unlink + `@rmdir($dir)`,
+  which silently fails to remove the directory if a `logs/` subfolder is left inside it.
+  Low-stakes (an empty-ish leftover directory, not data loss) but worth a real fix if
+  someone's deleting shows and expects the folder to actually disappear.
+- **Vette Fest already had this exact feature before this session started** — apparently
+  built in a session this repo has no record of. If Vette Fest's own `PROJECT_STATUS.md`
+  doesn't document it either, that's worth reconciling at some point so both apps' docs
+  agree on which one restore actually shipped in first.
+- **`/ETCCCarShowTest` was not run** for this work (not requested) — restore is entirely
+  `backup.php`/`lib.php`/`app.js` Setup-tab wiring, zero automated assertions, same
+  category as the rest of the Backups feature already flagged in earlier sessions' notes.
+
+Previous update: 2026-09-14 (earlier the same day). **Two small, unrelated pieces of
 work: the Sponsor Report's columns were trimmed, and `/ETCCCarShowBackup` gained a
 second artifact.** One checkpoint: **`10b6310`** (v5.30), deployed and pushed; live site
 is **v5.30**.
