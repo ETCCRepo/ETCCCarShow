@@ -592,7 +592,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-credit">v5.52 &middot; Deployed 09/14/2026 03:14 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
+  <div class="footer-credit">v5.54 &middot; Deployed 09/14/2026 03:25 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
 <script>
 /* @license
@@ -2396,6 +2396,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     regReportPageOpen: false,
     memberReportPageOpen: false,
     tshirtReportPageOpen: false,
+    carshowReportPageOpen: false,
     tshirtPurchases: [],       // day-of-event walk-up sales — filled by ingestTshirtPurchases()
     importHistory: [],        // one entry per successful CSV import — filled by ingestImportHistory()
     historySelected: {},       // History tab row checkboxes: entry.timestamp -> true
@@ -7520,6 +7521,8 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     sponsorBtn.addEventListener("click", openSponsorReportPage);
     var tshirtBtn = el("button", { class: "btn" }, ["👕 T-Shirt Report"]);
     tshirtBtn.addEventListener("click", function () { openGenReportPage(TSHIRT_REPORT_SPEC); });
+    var carshowBtn = el("button", { class: "btn" }, ["🏁 Car Show Report"]);
+    carshowBtn.addEventListener("click", function () { openGenReportPage(CARSHOW_REPORT_SPEC); });
     // Moved here from the Registration tab toolbar — not selection-dependent
     // like Print Window Cards, always enabled once there's at least one In
     // Car Show car, so an officer can pull a fresh paper copy at any time
@@ -7533,7 +7536,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     votingBtn.addEventListener("click", printVotingSheet);
     var flyerBtn = el("button", { class: "btn" }, ["🖨️ Print Flyer"]);
     flyerBtn.addEventListener("click", printFlyer);
-    var buttonCol = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start" }, [summaryBtn, regBtn, memberBtn, sponsorBtn, tshirtBtn, tallyBtn, votingBtn, flyerBtn]);
+    var buttonCol = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start" }, [summaryBtn, regBtn, memberBtn, sponsorBtn, tshirtBtn, carshowBtn, tallyBtn, votingBtn, flyerBtn]);
     var row = el("div", { class: "reports-row" }, []);
     if (window.__carshowReportsBanner) {
       row.appendChild(el("img", { src: window.__carshowReportsBanner, class: "reports-banner", alt: "Reports" }));
@@ -8331,8 +8334,31 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     sortValue: regRowSortValue
   };
 
+  var CARSHOW_REPORT_ALL_COLS = [
+    { key: "Reg #", label: "Reg #" },
+    { key: "Last Name", label: "Last Name" },
+    { key: "First Name", label: "First Name" },
+    { key: "Year", label: "Year" },
+    { key: "Model", label: "Model" },
+    { key: "Gen", label: "Gen" }
+  ];
+  var CARSHOW_REPORT_SPEC = {
+    id: "carshow",
+    title: "Car Show Report",
+    allCols: CARSHOW_REPORT_ALL_COLS,
+    defaultKeys: ["Reg #", "Last Name", "First Name", "Year", "Model", "Gen"],
+    defaultSortKey: "Last Name",
+    emptyText: "No cars in the show yet.",
+    // Same "In Car Show?" flag the Registration tab's own "In Car Show"
+    // filter checkbox and printTallySheetForShow() use — the judging-day
+    // roster, not every registration.
+    getRows: carsInShow,
+    cellText: regRowFieldText,
+    sortValue: regRowSortValue
+  };
+
   // ---------- Generic report builder (preview + column/sort picker) ----------
-  // Powers the Registration/Member/T-Shirt reports above, all sharing the
+  // Powers the Registration/Member/T-Shirt/Car Show reports above, all sharing the
   // "preview + pick columns/sort, save automatically, print from here" screen
   // Sponsor Report established. Each report's state lives under its own
   // spec.id prefix (e.g. "reg" -> state.appSettings.regReportColumns,
@@ -9177,6 +9203,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     document.body.appendChild(el("div", { id: "regReportHost" }));
     document.body.appendChild(el("div", { id: "memberReportHost" }));
     document.body.appendChild(el("div", { id: "tshirtReportHost" }));
+    document.body.appendChild(el("div", { id: "carshowReportHost" }));
     document.body.appendChild(el("div", { id: "sponsorFormHost" }));
     document.body.appendChild(el("div", { id: "paymentHost" }));
     document.body.appendChild(el("div", { id: "addRegHost" }));
@@ -9208,6 +9235,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       if (e.key === "Escape" && state.regReportPageOpen) { closeGenReportPage(REG_REPORT_SPEC); return; }
       if (e.key === "Escape" && state.memberReportPageOpen) { closeGenReportPage(MEMBER_REPORT_SPEC); return; }
       if (e.key === "Escape" && state.tshirtReportPageOpen) { closeGenReportPage(TSHIRT_REPORT_SPEC); return; }
+      if (e.key === "Escape" && state.carshowReportPageOpen) { closeGenReportPage(CARSHOW_REPORT_SPEC); return; }
       if (e.key === "Escape" && state.sponsorEditing) { closeSponsorForm(); return; }
       if (e.key === "Escape" && state.addRegOpen) { closeAddRegistration(); return; }
       if (e.key === "Escape" && state.showPendingDelete) { cancelDeleteShow(); return; }
