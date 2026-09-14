@@ -127,7 +127,15 @@ $defaults = [
     'autoImportTimes' => [],
     'autoImportIntervalHours' => 0,
     'autoImportStartDate' => '',
-    'autoImportEndDate' => ''
+    'autoImportEndDate' => '',
+    // Reports tab > Sponsor Report builder (app.js's openSponsorReportPage()).
+    // An empty column list means "never customized" — app.js falls back to its
+    // own SPONSOR_REPORT_DEFAULT_KEYS rather than printing a column-less
+    // report, so the default layout can be changed in one place (the client)
+    // without every existing show's saved settings pinning the old one.
+    'sponsorReportColumns' => [],
+    'sponsorReportSortCol' => 'regDate',
+    'sponsorReportSortDir' => 'asc'
 ];
 
 if ($action === 'get') {

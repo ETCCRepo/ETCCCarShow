@@ -347,6 +347,44 @@ table.grid tr.backup-row-fail td { color: var(--warn); background: #fff5f5; }
 .api-card h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .api-card p { margin: 0; font-size: 13px; line-height: 1.5; }
 .api-url-input { font-family: monospace; font-size: 12px; }
+
+/* Reports tab > Sponsor Report builder screen (app.js's
+   renderSponsorReportPage()) — print preview on the left, column/sort builder
+   on the right. Stacks to one column on a narrow screen/iPad portrait, where
+   side-by-side would squeeze both panes past usefulness. */
+.report-builder-body { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
+.report-preview-pane, .report-builder-pane { min-width: 0; }
+.report-pane-title { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; margin-bottom: 8px; }
+/* The "sheet" — a paper-shaped white card, so the preview reads as a page
+   rather than as just another table on the screen. Its inner header/footer
+   come from the same buildPrintHeader()/buildPrintFooter() the real print
+   path uses, whose own styling is print-media-scoped, so it's restated here
+   for the on-screen copy. */
+.report-preview-sheet { background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.06); padding: 18px 20px; overflow-x: auto; }
+.report-preview-sheet .print-report-head { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 10px; }
+.report-preview-sheet .print-report-head h2 { margin: 0; font-size: 15px; }
+.report-preview-sheet .print-report-head .print-logo { height: 40px; width: 40px; object-fit: contain; }
+.report-preview-sheet .print-report-foot { margin-top: 14px; text-align: center; font-size: 11px; color: var(--muted); }
+.report-preview-table { font-size: 12px; }
+.report-preview-table th, .report-preview-table td { white-space: nowrap; }
+
+.report-col-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.report-col-panel { border: 1px solid var(--line); border-radius: 8px; background: #fff; display: flex; flex-direction: column; min-width: 0; }
+.report-panel-head { font-size: 11px; font-weight: 700; color: var(--muted); padding: 7px 9px; border-bottom: 1px solid var(--line); }
+.report-col-list { padding: 6px; display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; min-height: 60px; }
+.report-col { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fafbfc; font-size: 12px; }
+.report-col.selected { background: #fff; cursor: grab; }
+.report-col.selected:active { cursor: grabbing; }
+.report-col-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-col-grip { color: var(--muted); font-size: 11px; line-height: 1; flex-shrink: 0; }
+.report-col.dragging { opacity: .45; }
+/* Where the dragged column will land — a top edge, matching the "inserts
+   before this row" drop semantics in buildSponsorReportColumnRow(). */
+.report-col.drop-target { border-top: 2px solid var(--red); }
+
+@media (max-width: 1100px) {
+  .report-builder-body { grid-template-columns: minmax(0, 1fr); }
+}
 .api-response { background: #f7f8fa; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 12px; max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 
 /* Developer > T-Shirt Order Email — same full-page shape as Change Log/API
@@ -515,7 +553,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-credit">v5.33 &middot; Deployed 09/14/2026 12:10 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
+  <div class="footer-credit">v5.35 &middot; Deployed 09/14/2026 12:19 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
 <script>
 /* @license
@@ -2188,7 +2226,14 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       autoImportTimes: [],
       autoImportIntervalHours: 0,
       autoImportStartDate: "",
-      autoImportEndDate: ""
+      autoImportEndDate: "",
+      // Reports tab > Sponsor Report builder — the officer-customized column
+      // list (array of SPONSOR_COLS keys, in print order), plus which column
+      // sorts and in which direction. An empty list means "never customized";
+      // sponsorReportColumns() falls back to SPONSOR_REPORT_DEFAULT_KEYS.
+      sponsorReportColumns: [],
+      sponsorReportSortCol: "regDate",
+      sponsorReportSortDir: "asc"
     },
     appSettingsSaving: false,
     appSettingsError: null,   // set when a Settings save fails; shown in the Settings modal
@@ -2298,6 +2343,12 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     emailSent: false,         // brief "Sent!" confirmation after a successful send
     tshirtOrderPageOpen: false, // T-Shirts tab > "T-Shirt Order Form" full-page screen
     tshirtPurchasePageOpen: false, // T-Shirts tab > "Buy T-Shirt" full-page screen
+    // Reports tab > "Sponsor Report" full-page screen — a live print preview
+    // (left) beside a column/sort builder (right). The layout itself lives in
+    // appSettings (persisted per show, see sponsorReportColumns()); only the
+    // open flag and the in-flight drag live here.
+    sponsorReportPageOpen: false,
+    sponsorReportDragKey: null, // key of the Selected-column row currently being dragged
     tshirtPurchases: [],       // day-of-event walk-up sales — filled by ingestTshirtPurchases()
     importHistory: [],        // one entry per successful CSV import — filled by ingestImportHistory()
     historySelected: {},       // History tab row checkboxes: entry.timestamp -> true
@@ -7494,9 +7545,11 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   }
 
   // ---------- Reports tab ----------
-  // A launcher straight into print preview for four reports — no intermediate
-  // on-screen page, each button just builds its report into #printHost and
-  // calls window.print() directly.
+  // A launcher straight into print preview for most reports — each button
+  // builds its report into #printHost and calls window.print() directly, with
+  // no intermediate on-screen page. Sponsor Report is the exception: it opens
+  // a builder screen first (preview + column/sort picker, see
+  // openSponsorReportPage()), and prints from there.
   function buildReportsView() {
     var summaryBtn = el("button", { class: "btn" }, ["📊 Car Show Summary Report"]);
     summaryBtn.addEventListener("click", printSummaryReport);
@@ -7505,7 +7558,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     var memberBtn = el("button", { class: "btn" }, ["👥 Member Report"]);
     memberBtn.addEventListener("click", printMemberReport);
     var sponsorBtn = el("button", { class: "btn" }, ["🤝 Sponsor Report"]);
-    sponsorBtn.addEventListener("click", printSponsorReport);
+    sponsorBtn.addEventListener("click", openSponsorReportPage);
     var tshirtBtn = el("button", { class: "btn" }, ["👕 T-Shirt Report"]);
     tshirtBtn.addEventListener("click", printTshirtReport);
     // Moved here from the Registration tab toolbar — not selection-dependent
@@ -8305,40 +8358,290 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     window.open(pdfCacheBust("CarShowFlyer.pdf"), "_blank");
   }
 
-  // ---------- Sponsor Report (full-page screen) ----------
-  // Reg Date / Sponsor Name / Member Name / Sponsor Type / T-Shirt — a
-  // narrower column set than the Sponsors tab's own SPONSOR_COLS/
-  // printSponsors(). "T-Shirt" uses sponsorFieldText()'s existing "shirtSize"
-  // handling, which already joins a multi-shirt sponsor's sizes with ", ".
-  var SPONSOR_REPORT_COLS = [
-    { key: "regDate", label: "Reg Date" },
-    { key: "name", label: "Sponsor Name" },
-    { key: "etccMemberName", label: "Member Name" },
-    { key: "sponsorType", label: "Sponsor Type" },
-    { key: "shirtSize", label: "T-Shirt" }
-  ];
+  // ---------- Sponsor Report (full-page screen: preview + builder) ----------
+  // The Reports tab's "🤝 Sponsor Report" button used to print immediately
+  // with a fixed 5-column layout. It now opens a builder screen instead: a
+  // live print preview on the left, and on the right two panels (every
+  // available column / the ones currently in the report) plus a sort picker.
+  // The layout is persisted per show in app-settings.json
+  // (sponsorReportColumns / sponsorReportSortCol / sponsorReportSortDir), so
+  // an officer configures it once and every later print — and every other
+  // officer's browser — uses it.
+  //
+  // "Every possible column" is SPONSOR_COLS, the same list the Sponsors tab's
+  // own table is built from, so anything visible there can be reported on;
+  // sponsorFieldText()/sponsorSortValue() already handle every one of those
+  // keys, which is what makes an arbitrary user-chosen subset safe to render
+  // and sort without any per-column special-casing here.
+  var SPONSOR_REPORT_DEFAULT_KEYS = ["regDate", "name", "etccMemberName", "sponsorType", "shirtSize"];
+
+  // The saved layout, resolved against SPONSOR_COLS. Unknown keys (a column
+  // removed from SPONSOR_COLS after someone saved a layout naming it) are
+  // dropped rather than rendered as blank columns; an empty/never-saved list
+  // falls back to the defaults above.
+  function sponsorReportColumns() {
+    var saved = state.appSettings.sponsorReportColumns;
+    var keys = (Array.isArray(saved) && saved.length) ? saved : SPONSOR_REPORT_DEFAULT_KEYS;
+    var cols = [];
+    keys.forEach(function (k) {
+      var c = SPONSOR_COLS.filter(function (x) { return x.key === k; })[0];
+      if (c) cols.push(c);
+    });
+    return cols.length ? cols : SPONSOR_COLS.filter(function (c) { return SPONSOR_REPORT_DEFAULT_KEYS.indexOf(c.key) !== -1; });
+  }
+  // The columns NOT currently in the report, in SPONSOR_COLS' own order —
+  // the left ("Available") panel of the builder.
+  function sponsorReportAvailableColumns() {
+    var chosen = {};
+    sponsorReportColumns().forEach(function (c) { chosen[c.key] = true; });
+    return SPONSOR_COLS.filter(function (c) { return !chosen[c.key]; });
+  }
+  // Which column sorts the report, and which way. Falls back to the first
+  // column in the report if the saved sort column isn't in it any more (e.g.
+  // it was removed from the report after being chosen as the sort).
+  function sponsorReportSortSpec() {
+    var cols = sponsorReportColumns();
+    var savedCol = state.appSettings.sponsorReportSortCol;
+    var inReport = cols.filter(function (c) { return c.key === savedCol; })[0];
+    return {
+      key: inReport ? savedCol : (cols.length ? cols[0].key : "regDate"),
+      dir: state.appSettings.sponsorReportSortDir === "desc" ? -1 : 1
+    };
+  }
   function sponsorReportCell(s, c) {
     return el("td", { text: sponsorFieldText(s, c.key) });
   }
-  // Ascending by Reg Date — same sortValue helper the Sponsors table's own
-  // column sorting already relies on.
+  // Same sortValue helper the Sponsors table's own column sorting relies on,
+  // so a date column sorts chronologically and an amount numerically rather
+  // than as their formatted display strings.
   function sponsorReportSorted() {
+    var spec = sponsorReportSortSpec();
     return visibleSponsors().slice().sort(function (a, b) {
-      return sponsorSortValue(a, "regDate") - sponsorSortValue(b, "regDate");
+      var av = sponsorSortValue(a, spec.key), bv = sponsorSortValue(b, spec.key);
+      if (av < bv) return -spec.dir;
+      if (av > bv) return spec.dir;
+      return 0;
     });
   }
+
+  // Persists a layout change (columns and/or sort) to app-settings.json, with
+  // the same optimistic-local-update-then-push shape saveAppSettings() uses.
+  // Deliberately re-renders only this screen, not renderViews() — the whole
+  // builder lives in an overlay, and a full view re-render underneath it
+  // would be wasted work.
+  function saveSponsorReportLayout(patch) {
+    Object.keys(patch).forEach(function (k) { state.appSettings[k] = patch[k]; });
+    renderSponsorReportPage();
+    if (!SITE_CONFIG.appSettingsApiUrl) return;
+    fetch(SITE_CONFIG.appSettingsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", settings: patch })
+    }).catch(function () { /* layout is cosmetic — keep the local change rather than reverting the UI */ });
+  }
+  function sponsorReportAddColumn(key) {
+    var keys = sponsorReportColumns().map(function (c) { return c.key; });
+    if (keys.indexOf(key) !== -1) return;
+    keys.push(key);
+    saveSponsorReportLayout({ sponsorReportColumns: keys });
+  }
+  function sponsorReportRemoveColumn(key) {
+    var keys = sponsorReportColumns().map(function (c) { return c.key; })
+      .filter(function (k) { return k !== key; });
+    // A report with no columns can't print anything meaningful, and the
+    // "empty means never customized" fallback in sponsorReportColumns() would
+    // silently resurrect the defaults — so the last column can't be removed.
+    if (!keys.length) return;
+    saveSponsorReportLayout({ sponsorReportColumns: keys });
+  }
+  // Drag-to-reorder within the Selected panel: move `key` to the position
+  // currently held by `beforeKey` (or to the end when beforeKey is null).
+  function sponsorReportMoveColumn(key, beforeKey) {
+    if (key === beforeKey) return;
+    var keys = sponsorReportColumns().map(function (c) { return c.key; })
+      .filter(function (k) { return k !== key; });
+    var at = beforeKey === null ? keys.length : keys.indexOf(beforeKey);
+    if (at < 0) at = keys.length;
+    keys.splice(at, 0, key);
+    saveSponsorReportLayout({ sponsorReportColumns: keys });
+  }
+
+  function openSponsorReportPage() { state.sponsorReportPageOpen = true; renderSponsorReportPage(); }
+  function closeSponsorReportPage() { state.sponsorReportPageOpen = false; renderSponsorReportPage(); }
+
   function printSponsorReport() {
     if (!visibleSponsors().length) return;
+    var cols = sponsorReportColumns();
     var host = $("#printHost");
     host.innerHTML = "";
-    var thead = el("thead", {}, [el("tr", {}, SPONSOR_REPORT_COLS.map(function (c) { return el("th", { text: c.label }); }))]);
+    var thead = el("thead", {}, [el("tr", {}, cols.map(function (c) { return el("th", { text: c.label }); }))]);
     var tbody = el("tbody", {}, sponsorReportSorted().map(function (s) {
-      return el("tr", {}, SPONSOR_REPORT_COLS.map(function (c) { return sponsorReportCell(s, c); }));
+      return el("tr", {}, cols.map(function (c) { return sponsorReportCell(s, c); }));
     }));
     host.appendChild(buildPrintHeader("Sponsor Report"));
     host.appendChild(el("table", { class: "grid report-table" }, [thead, tbody]));
     host.appendChild(buildPrintFooter());
     window.print();
+  }
+
+  // The left pane — a WYSIWYG mimic of what printSponsorReport() will put on
+  // paper (same header/table/footer elements), not the browser's own print
+  // preview, which no page can embed. Rendered on a white "sheet" so the
+  // shape of the printed page is recognizable at a glance.
+  function buildSponsorReportPreview() {
+    var cols = sponsorReportColumns();
+    var rows = sponsorReportSorted();
+    var sheet = el("div", { class: "report-preview-sheet" }, [buildPrintHeader("Sponsor Report")]);
+    if (!rows.length) {
+      sheet.appendChild(el("div", { class: "empty-state" }, ["No sponsors to report yet."]));
+    } else {
+      sheet.appendChild(el("table", { class: "grid report-table report-preview-table" }, [
+        el("thead", {}, [el("tr", {}, cols.map(function (c) { return el("th", { text: c.label }); }))]),
+        el("tbody", {}, rows.map(function (s) {
+          return el("tr", {}, cols.map(function (c) { return sponsorReportCell(s, c); }));
+        }))
+      ]));
+    }
+    sheet.appendChild(buildPrintFooter());
+    return el("div", { class: "report-preview-pane" }, [
+      el("div", { class: "report-pane-title", text: "Print Preview" }),
+      sheet
+    ]);
+  }
+
+  // One row in either builder panel. Selected rows are draggable (reorder)
+  // and carry a ✕; available rows carry a + and add on click.
+  function buildSponsorReportColumnRow(col, selected) {
+    var kids = [el("span", { class: "report-col-label", text: col.label })];
+    var row = el("div", { class: "report-col" + (selected ? " selected" : "") }, kids);
+    if (selected) {
+      row.setAttribute("draggable", "true");
+      kids.unshift(el("span", { class: "report-col-grip", title: "Drag to reorder" }, ["⠿"]));
+      var removeBtn = el("button", { type: "button", class: "btn", style: "padding:1px 7px; font-size:12px", title: "Remove from report" }, ["✕"]);
+      removeBtn.addEventListener("click", function () { sponsorReportRemoveColumn(col.key); });
+      row.appendChild(el("span", { class: "spacer" }));
+      row.appendChild(removeBtn);
+      row.addEventListener("dragstart", function (e) {
+        state.sponsorReportDragKey = col.key;
+        row.classList.add("dragging");
+        if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", col.key); } catch (err) { /* IE-ism; the state field is the real channel */ } }
+      });
+      row.addEventListener("dragend", function () {
+        state.sponsorReportDragKey = null;
+        row.classList.remove("dragging");
+      });
+      // Dropping ON a row inserts the dragged column before it — the common
+      // "drag it above this one" expectation. Dropping on the panel's empty
+      // space below the rows appends instead (see the panel's own handlers).
+      row.addEventListener("dragover", function (e) {
+        if (!state.sponsorReportDragKey) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        row.classList.add("drop-target");
+      });
+      row.addEventListener("dragleave", function () { row.classList.remove("drop-target"); });
+      row.addEventListener("drop", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        row.classList.remove("drop-target");
+        var dragged = state.sponsorReportDragKey;
+        state.sponsorReportDragKey = null;
+        if (dragged) sponsorReportMoveColumn(dragged, col.key);
+      });
+    } else {
+      var addBtn = el("button", { type: "button", class: "btn", style: "padding:1px 7px; font-size:12px", title: "Add to report" }, ["+"]);
+      addBtn.addEventListener("click", function () { sponsorReportAddColumn(col.key); });
+      row.appendChild(el("span", { class: "spacer" }));
+      row.appendChild(addBtn);
+      row.addEventListener("dblclick", function () { sponsorReportAddColumn(col.key); });
+    }
+    return row;
+  }
+
+  // The right pane — two panels (Available / In Report) plus the sort picker.
+  function buildSponsorReportBuilder() {
+    var available = sponsorReportAvailableColumns();
+    var selected = sponsorReportColumns();
+
+    var availablePanel = el("div", { class: "report-col-panel" }, [
+      el("div", { class: "report-panel-head", text: "Available Columns" }),
+      available.length
+        ? el("div", { class: "report-col-list" }, available.map(function (c) { return buildSponsorReportColumnRow(c, false); }))
+        : el("div", { class: "hint", style: "padding:10px" }, ["Every column is already in the report."])
+    ]);
+
+    var selectedList = el("div", { class: "report-col-list" }, selected.map(function (c) { return buildSponsorReportColumnRow(c, true); }));
+    // Dropping into the list's empty space (past the last row) moves the
+    // dragged column to the end.
+    selectedList.addEventListener("dragover", function (e) {
+      if (!state.sponsorReportDragKey) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    });
+    selectedList.addEventListener("drop", function (e) {
+      e.preventDefault();
+      var dragged = state.sponsorReportDragKey;
+      state.sponsorReportDragKey = null;
+      if (dragged) sponsorReportMoveColumn(dragged, null);
+    });
+    var selectedPanel = el("div", { class: "report-col-panel" }, [
+      el("div", { class: "report-panel-head", text: "In Report (drag to reorder)" }),
+      selectedList
+    ]);
+
+    var spec = sponsorReportSortSpec();
+    var sortSel = el("select", {});
+    selected.forEach(function (c) { sortSel.appendChild(el("option", { value: c.key, text: c.label })); });
+    sortSel.value = spec.key;
+    sortSel.addEventListener("change", function () {
+      saveSponsorReportLayout({ sponsorReportSortCol: sortSel.value });
+    });
+    var dirSel = el("select", {});
+    dirSel.appendChild(el("option", { value: "asc", text: "Ascending" }));
+    dirSel.appendChild(el("option", { value: "desc", text: "Descending" }));
+    dirSel.value = spec.dir === -1 ? "desc" : "asc";
+    dirSel.addEventListener("change", function () {
+      saveSponsorReportLayout({ sponsorReportSortDir: dirSel.value });
+    });
+
+    var resetBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["↺ Reset to Default"]);
+    resetBtn.addEventListener("click", function () {
+      saveSponsorReportLayout({
+        sponsorReportColumns: SPONSOR_REPORT_DEFAULT_KEYS.slice(),
+        sponsorReportSortCol: "regDate",
+        sponsorReportSortDir: "asc"
+      });
+    });
+
+    return el("div", { class: "report-builder-pane" }, [
+      el("div", { class: "report-pane-title", text: "Report Builder" }),
+      el("div", { class: "hint", style: "margin-bottom:10px" }, [
+        "Click + to add a column, ✕ to remove one, and drag the columns in " +
+        "\"In Report\" to change their print order. Changes save automatically and apply to every printed copy."
+      ]),
+      el("div", { class: "report-col-panels" }, [availablePanel, selectedPanel]),
+      el("div", { class: "form-row", style: "margin-top:14px" }, [
+        el("span", { class: "form-label", text: "Sort by" }),
+        el("div", { style: "display:flex; gap:8px; align-items:center; flex-wrap:wrap" }, [sortSel, dirSel])
+      ]),
+      el("div", { class: "settings-actions" }, [resetBtn])
+    ]);
+  }
+
+  function renderSponsorReportPage() {
+    var host = $("#sponsorReportHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.sponsorReportPageOpen) return;
+
+    var page = el("div", { class: "api-page" }, [
+      buildPageBanner(closeSponsorReportPage, "Sponsor Report", printSponsorReport),
+      el("div", { class: "api-page-body report-builder-body" }, [
+        buildSponsorReportPreview(),
+        buildSponsorReportBuilder()
+      ])
+    ]);
+    host.appendChild(page);
   }
 
   // ---------- T-Shirt Purchases (full-page screen) ----------
@@ -8521,6 +8824,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     document.body.appendChild(el("div", { id: "apiHost" }));
     document.body.appendChild(el("div", { id: "tshirtOrderHost" }));
     document.body.appendChild(el("div", { id: "tshirtPurchaseHost" }));
+    document.body.appendChild(el("div", { id: "sponsorReportHost" }));
     document.body.appendChild(el("div", { id: "sponsorFormHost" }));
     document.body.appendChild(el("div", { id: "paymentHost" }));
     document.body.appendChild(el("div", { id: "addRegHost" }));
@@ -8548,6 +8852,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       if (e.key === "Escape" && state.apiPageOpen) { closeApiPage(); return; }
       if (e.key === "Escape" && state.tshirtOrderPageOpen) { closeTshirtOrderPage(); return; }
       if (e.key === "Escape" && state.tshirtPurchasePageOpen) { closeTshirtPurchasePage(); return; }
+      if (e.key === "Escape" && state.sponsorReportPageOpen) { closeSponsorReportPage(); return; }
       if (e.key === "Escape" && state.sponsorEditing) { closeSponsorForm(); return; }
       if (e.key === "Escape" && state.addRegOpen) { closeAddRegistration(); return; }
       if (e.key === "Escape" && state.showPendingDelete) { cancelDeleteShow(); return; }

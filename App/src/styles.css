@@ -338,6 +338,44 @@ table.grid tr.backup-row-fail td { color: var(--warn); background: #fff5f5; }
 .api-card h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .api-card p { margin: 0; font-size: 13px; line-height: 1.5; }
 .api-url-input { font-family: monospace; font-size: 12px; }
+
+/* Reports tab > Sponsor Report builder screen (app.js's
+   renderSponsorReportPage()) — print preview on the left, column/sort builder
+   on the right. Stacks to one column on a narrow screen/iPad portrait, where
+   side-by-side would squeeze both panes past usefulness. */
+.report-builder-body { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
+.report-preview-pane, .report-builder-pane { min-width: 0; }
+.report-pane-title { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; margin-bottom: 8px; }
+/* The "sheet" — a paper-shaped white card, so the preview reads as a page
+   rather than as just another table on the screen. Its inner header/footer
+   come from the same buildPrintHeader()/buildPrintFooter() the real print
+   path uses, whose own styling is print-media-scoped, so it's restated here
+   for the on-screen copy. */
+.report-preview-sheet { background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.06); padding: 18px 20px; overflow-x: auto; }
+.report-preview-sheet .print-report-head { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 10px; }
+.report-preview-sheet .print-report-head h2 { margin: 0; font-size: 15px; }
+.report-preview-sheet .print-report-head .print-logo { height: 40px; width: 40px; object-fit: contain; }
+.report-preview-sheet .print-report-foot { margin-top: 14px; text-align: center; font-size: 11px; color: var(--muted); }
+.report-preview-table { font-size: 12px; }
+.report-preview-table th, .report-preview-table td { white-space: nowrap; }
+
+.report-col-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.report-col-panel { border: 1px solid var(--line); border-radius: 8px; background: #fff; display: flex; flex-direction: column; min-width: 0; }
+.report-panel-head { font-size: 11px; font-weight: 700; color: var(--muted); padding: 7px 9px; border-bottom: 1px solid var(--line); }
+.report-col-list { padding: 6px; display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; min-height: 60px; }
+.report-col { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fafbfc; font-size: 12px; }
+.report-col.selected { background: #fff; cursor: grab; }
+.report-col.selected:active { cursor: grabbing; }
+.report-col-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-col-grip { color: var(--muted); font-size: 11px; line-height: 1; flex-shrink: 0; }
+.report-col.dragging { opacity: .45; }
+/* Where the dragged column will land — a top edge, matching the "inserts
+   before this row" drop semantics in buildSponsorReportColumnRow(). */
+.report-col.drop-target { border-top: 2px solid var(--red); }
+
+@media (max-width: 1100px) {
+  .report-builder-body { grid-template-columns: minmax(0, 1fr); }
+}
 .api-response { background: #f7f8fa; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 12px; max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 
 /* Developer > T-Shirt Order Email — same full-page shape as Change Log/API
