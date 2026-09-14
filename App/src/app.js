@@ -6023,34 +6023,25 @@
   }
 
   // ---------- Sponsor Report (full-page screen) ----------
-  // Sponsor Name / Member Name / Sponsor Type / Contact / Phone / T-Shirt Text /
-  // payment fields — a narrower column set than the Sponsors tab's own
-  // SPONSOR_COLS/printSponsors(). Email/Website are intentionally omitted here.
+  // Reg Date / Sponsor Name / Member Name / Sponsor Type / T-Shirt — a
+  // narrower column set than the Sponsors tab's own SPONSOR_COLS/
+  // printSponsors(). "T-Shirt" uses sponsorFieldText()'s existing "shirtSize"
+  // handling, which already joins a multi-shirt sponsor's sizes with ", ".
   var SPONSOR_REPORT_COLS = [
+    { key: "regDate", label: "Reg Date" },
     { key: "name", label: "Sponsor Name" },
     { key: "etccMemberName", label: "Member Name" },
     { key: "sponsorType", label: "Sponsor Type" },
-    { key: "contactPerson", label: "Contact" },
-    { key: "phone", label: "Phone" },
-    { key: "individualSponsorshipText", label: "T-Shirt Text" },
-    { key: "lastPaymentDate", label: "Payment Date" },
-    { key: "lastPaymentType", label: "Payment Type" },
-    { key: "lastPaymentCheckNum", label: "Check #" },
-    { key: "lastPaymentAmount", label: "Paid" }
+    { key: "shirtSize", label: "T-Shirt" }
   ];
   function sponsorReportCell(s, c) {
     return el("td", { text: sponsorFieldText(s, c.key) });
   }
-  // Grouped by Sponsor Type (in CONFIG.SPONSOR_TYPES' own order), then by
-  // Payment Date within each type — same sortValue helper the Sponsors table's
-  // own column sorting already relies on.
+  // Ascending by Reg Date — same sortValue helper the Sponsors table's own
+  // column sorting already relies on.
   function sponsorReportSorted() {
-    var typeOrder = {};
-    CONFIG.SPONSOR_TYPES.forEach(function (t, i) { typeOrder[t.key] = i; });
     return visibleSponsors().slice().sort(function (a, b) {
-      var at = typeOrder[a.sponsorType], bt = typeOrder[b.sponsorType];
-      if (at !== bt) return at - bt;
-      return sponsorSortValue(a, "lastPaymentDate") - sponsorSortValue(b, "lastPaymentDate");
+      return sponsorSortValue(a, "regDate") - sponsorSortValue(b, "regDate");
     });
   }
   function printSponsorReport() {
