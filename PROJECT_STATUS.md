@@ -1,11 +1,132 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-14 (end of session, latest). **Setup tab > Backups gained a
-database RESTORE, modeled directly on the sibling Vette Fest app's own restore
-feature** (user: "implement a database restore by modelling the one in
-Z:\Backup\websites\VetteFest"). Two checkpoints: **`a950ec4`** (v5.33, the feature) and
-**`52765b1`** (v5.34, a no-op version-bump from a routine `/ETCCCarShowAll`) — both
-deployed and pushed; live site is **v5.34**.
+Last updated: 2026-09-14 (end of session, latest). **The Reports tab's "preview +
+column/sort builder" screen (introduced for Sponsor Report) was generalized and applied
+to Registration, Member, and T-Shirt Report; a scheduled-task installer download was
+added to Import Schedule; and the standalone Print buttons on the Registration/Sponsors
+tabs were removed.** One checkpoint: **`2f085f6`** (v5.53), deployed and pushed; live
+site is **v5.53**.
+
+## This session's work (2026-09-14, report-builder generalization + task installer)
+
+**1. Registration/Member/T-Shirt Report now open the same builder screen Sponsor Report
+uses**, instead of printing a fixed column set straight to the browser's print dialog.
+User asked for this after first iterating on Sponsor Report's own column-width controls
+(see "false starts" below) and settling on a different feature: "add report preview with
+report builder to registration report, member report, t-shirt report."
+
+- New generic system in `App/src/app.js` (search `GenReport` / `genReport`): column
+  definitions (`REG_REPORT_ALL_COLS`, `MEMBER_REPORT_ALL_COLS`, `TSHIRT_REPORT_ALL_COLS`),
+  per-report specs (`REG_REPORT_SPEC`, `MEMBER_REPORT_SPEC`, `TSHIRT_REPORT_SPEC` — each
+  an object with `id`, `title`, `allCols`, `defaultKeys`, `defaultSortKey`, `getRows`,
+  `cellText`, `sortValue`), and shared functions (`genReportColumns`,
+  `genReportAvailableColumns`, `genReportSortSpec`, `genReportSorted`,
+  `saveGenReportLayout`, `genReportAdd/Remove/MoveColumn`, `genReportAdd/RemoveAllColumns`,
+  `buildGenReportColumnRow`, `printGenReport`, `buildGenReportPreview`,
+  `buildGenReportBuilder`, `renderGenReportPage`, `open/closeGenReportPage`) that all take
+  a spec as their first argument — one implementation instead of three copy-pasted ones.
+  Layout persists to `app-settings.json` under each spec's own key prefix (e.g.
+  `regReportColumns`/`regReportSortCol`/`regReportSortDir`), same mechanism Sponsor
+  Report's own (separate, not-yet-migrated) implementation already used.
+- Registration Report columns: Last Name, First Name, Spouse, Reg #, Reg Date, Status,
+  Email, Phone, Address, City, State, Zip, Year, Model, Shirts (default: Last Name/First
+  Name/Reg #/Shirts, matching the old fixed report). Reads straight off the ClubExpress
+  CSV row shape via `regRowFieldText()`/`regRowSortValue()`.
+- Member Report columns: Last Name, First Name, Reg # (i.e. Member #) — all three
+  columns shown by default, matching the old fixed report exactly (it only ever had
+  three fields available from the roster import).
+- T-Shirt Report columns: Last Name, First Name, Shirts, Reg #, Status (default: Last
+  Name/First Name/Shirts). Rows are paid registrations only (`classifyStatus(...) ===
+  "paid"`), same filter the old fixed report applied — **reuses `regRowFieldText`/
+  `regRowSortValue`**, since it's the same CSV row shape as Registration Report.
+- Three new host divs (`regReportHost`/`memberReportHost`/`tshirtReportHost`) and Escape-
+  key handlers added in `init()`, mirroring `sponsorReportHost`'s own wiring.
+- The Reports tab's Registration/Member/T-Shirt buttons, and the T-Shirts tab's own
+  "T-Shirt Report" button (**removed** — see below), were rewired from their old direct-
+  print functions to `openGenReportPage(SPEC)`.
+- **Dead code removed**: `registrationReportRows()`, `printRegistrationReport()`,
+  `memberReportRows()`, `printMemberReport()`, the old `printTshirtReport()` — all
+  replaced by the generic system, all fully deleted (not left unused).
+- **Not yet migrated**: Sponsor Report's own builder (`SPONSOR_COLS`,
+  `sponsorReportColumns()`, `buildSponsorReportPreview()`, etc.) is still its own separate,
+  hand-written implementation predating this generalization — it was deliberately left
+  alone rather than risking a refactor of already-working, previously-shipped code. A
+  future session could fold it into the generic system too, but there's no functional gap
+  today; it behaves identically to the new three from the user's side.
+
+**2. Setup tab > Import Schedule gained a "Download task installer" link**, ported from
+Vette Fest's own Setup tab (`Z:\Backup\Websites\VetteFest\App\src\app.js`). New
+`App/deploy/install-scheduled-task.cmd` (added to `ftp-deploy.sh`'s upload list) is a
+plain `.cmd` launcher for the already-existing `deploy/install-scheduled-task.ps1
+-Interactive` — contains no secrets, only the hardcoded local repo path
+`Z:\Backup\Websites\CarShow\App\deploy\install-scheduled-task.ps1`. The app.js "Scheduled
+Task" row (in `buildImportScheduleSection()`) sits above the existing Event URL row and
+links to `install-scheduled-task.cmd` with `download` set, same as Vette Fest's.
+
+**3. Standalone Print buttons removed from the Registration and Sponsors tab toolbars**
+(user: "remove print button", shown two screenshots of exactly those two toolbars). The
+now-fully-unused `printRegistration()` and `printSponsors()` functions were deleted
+outright (not left as dead code) along with their stale doc-comment mentions elsewhere in
+the file. Printing registrations/sponsors is still possible via the Reports tab's own
+Registration Report screen (which now has full column control, a superset of what the
+removed button did) — there was never an equivalent replacement needed for Sponsors, since
+Sponsor Report already existed before this session.
+
+**4. T-Shirt Report button removed from the T-Shirts tab** (user: "remove t-shirt report
+button", after seeing it duplicated the Reports tab's own button). T-Shirt Report is now
+reachable only from the Reports tab.
+
+**5. Report table density tuning**, all Reports-tab tables (Sponsor/Registration/Member/
+T-Shirt, which all share the `.dense-report-table`/`.report-preview-table` CSS classes):
+cell padding went from the original `1px 8px` down to `1px 4px` mid-session (a plain
+"reduce column widths" ask), then explicitly back up 20% to **`1px 4.8px`** as the very
+last change of the session ("for every report in the report tab: increase spacing between
+columns by 20%"). If a future session is asked to touch this again, `1px 4.8px` is the
+CURRENT value, not `1px 4px`.
+
+**False starts this session, reverted — worth knowing so they aren't retried
+identically:**
+- **Column-width +/- buttons on Sponsor Report's preview** were built, iterated on twice
+  to actually work (see below), then **entirely removed** at the user's explicit request
+  ("remove the column width controls") once "Add All"/"Remove All" columns buttons were
+  requested as the real fix instead. No trace of the width-button code remains — it was
+  fully deleted, not just hidden.
+  - **Real bug found and worth remembering for any future per-column-width work**: a
+    class-only CSS selector (`.report-preview-table { width: auto }`) LOST to
+    `table.grid { width: 100% }` (line ~169) because `table.grid` (element+class) has
+    *higher* specificity than a bare class selector, even though the class-only rule
+    appeared later in the file. Source order does not override specificity. The fix
+    applied then (`table.report-preview-table` — adding the element to the selector) is
+    still in place today and is why the preview table currently hugs its content
+    width instead of stretching to fill the pane; watch for this same trap if any future
+    change touches `.report-preview-table`'s CSS again.
+- **Report Builder panel was made collapsible, default-collapsed**, and that part
+  *survived* (still true today for Sponsor Report's own builder) — added a ▲Hide/▼Show
+  toggle in the panel's title row, `state.sponsorReportBuilderOpen` (falsy by default).
+  The generic `genReport` system's builder panels copy this same collapsed-by-default
+  toggle.
+
+**Deploy note**: an early `ftp-deploy.sh` run mid-session was interrupted by the user
+(tool-use rejection, not an error) while pivoting to the report-builder request — the
+task-installer code was already written and committed to disk at that point, and was
+picked up and deployed together with everything else in the final checkpoint, so nothing
+was lost or left stale.
+
+## Known follow-ups / things a new session might need to know (2026-09-14 session)
+
+- **Sponsor Report's builder is still its own separate implementation**, not yet folded
+  into the generic `genReport*` system the other three reports now use. Functionally
+  identical from the user's side; only matters if someone needs to change builder
+  behavior in one place and expects it to apply to all four reports.
+- **Report table cell padding is currently `1px 4.8px`** (see item 5 above) — this is a
+  deliberately-chosen, non-round number (4px × 1.2) from the last explicit ask this
+  session. Don't "clean it up" back to a round number without checking whether the user
+  still wants the 20%-larger spacing.
+- **`/ETCCCarShowTest` was not run** for any of this session's work — none of it touches
+  code the regression suite currently covers (it's UI screen wiring + CSS), same category
+  as most Setup-tab work in earlier sessions' notes.
+- Previous session's restore-feature follow-ups (below) are unchanged and still open —
+  this session did not touch backups/restore at all.
 
 **What it does.** Each Backup Log row that still has a real file on disk now gets a
 **↺ Restore** button (next to the existing 🗑 delete). Clicking it opens a modal that
