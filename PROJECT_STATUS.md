@@ -1,13 +1,38 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-14 (end of session, latest). **The Reports tab's "preview +
-column/sort builder" screen (introduced for Sponsor Report) was generalized and applied
-to Registration, Member, and T-Shirt Report; a scheduled-task installer download was
-added to Import Schedule; and the standalone Print buttons on the Registration/Sponsors
-tabs were removed.** One checkpoint: **`2f085f6`** (v5.53), deployed and pushed; live
-site is **v5.53**.
+Last updated: 2026-09-14 (end of session, latest). **A new Car Show Report was added to
+the Reports tab**, using the same generic preview + column/sort builder the previous
+session generalized for Registration/Member/T-Shirt Report. One checkpoint:
+**`5512e2a`** (v5.55), deployed and pushed; live site is **v5.55**.
 
-## This session's work (2026-09-14, report-builder generalization + task installer)
+## This session's work (2026-09-14, Car Show Report)
+
+User: "add a car show report to the report tab. it should be modelled after the sponsor
+report with a preview and report builder. It should contain for every registration row
+in car show: columns for reg #, last name, first name, year, model, gen." Straightforward
+addition to the `genReport*` system the previous same-day session built (see that
+session's notes below for how the generic system itself works) — no new machinery
+needed, just one more spec plus wiring:
+
+- New `CARSHOW_REPORT_ALL_COLS` / `CARSHOW_REPORT_SPEC` in `App/src/app.js` (search
+  `CARSHOW_REPORT`), placed right after `TSHIRT_REPORT_SPEC`. Columns: Reg #, Last Name,
+  First Name, Year, Model, Gen — all six shown by default (the exact set the user asked
+  for, so `defaultKeys` includes every column in `allCols`). Sorted by Last Name by
+  default. Reuses `regRowFieldText`/`regRowSortValue` (same ClubExpress CSV row shape as
+  Registration/T-Shirt Report).
+- **Rows are `carsInShow()`** — registrations with `"In Car Show?"` = "yes" — not every
+  registration. This is the same roster `printTallySheetForShow()` and the Registration
+  tab's own "In Car Show" filter checkbox use, chosen because the user said "for every
+  registration row in car show," read as the judging-day roster rather than every
+  submitted registration (which Registration Report already covers).
+- New `carshowReportHost` div and `state.carshowReportPageOpen` Escape handler in
+  `init()`, mirroring the other three generic reports' own wiring exactly.
+- New "🏁 Car Show Report" button added to the Reports tab's button column, after
+  "T-Shirt Report".
+- Nothing else changed — no CSS, no Sponsor Report changes, no other tabs touched.
+
+## Previous session's work (2026-09-14, earlier the same day — report-builder
+generalization + task installer)
 
 **1. Registration/Member/T-Shirt Report now open the same builder screen Sponsor Report
 uses**, instead of printing a fixed column set straight to the browser's print dialog.
