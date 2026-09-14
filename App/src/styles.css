@@ -346,6 +346,8 @@ table.grid tr.backup-row-fail td { color: var(--warn); background: #fff5f5; }
 .report-builder-body { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
 .report-preview-pane, .report-builder-pane { min-width: 0; }
 .report-pane-title { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; margin-bottom: 8px; }
+.report-pane-title-row { display: flex; align-items: center; justify-content: space-between; }
+.report-pane-title-row .btn { text-transform: none; letter-spacing: normal; font-weight: 600; }
 /* The "sheet" — a paper-shaped white card, so the preview reads as a page
    rather than as just another table on the screen. Its inner header/footer
    come from the same buildPrintHeader()/buildPrintFooter() the real print
@@ -356,12 +358,33 @@ table.grid tr.backup-row-fail td { color: var(--warn); background: #fff5f5; }
 .report-preview-sheet .print-report-head h2 { margin: 0; font-size: 15px; }
 .report-preview-sheet .print-report-head .print-logo { height: 40px; width: 40px; object-fit: contain; }
 .report-preview-sheet .print-report-foot { margin-top: 14px; text-align: center; font-size: 11px; color: var(--muted); }
-.report-preview-table { font-size: 12px; }
-.report-preview-table th, .report-preview-table td { white-space: nowrap; }
+/* Caps the table's own height so a long sponsor list scrolls internally
+   (sticky header included, via table.grid thead th's existing position:sticky)
+   instead of growing the whole sheet past the viewport — the header/footer
+   above and below always stay visible, matching .tablewrap's own pattern for
+   the Registration/Sponsors tabs. */
+.report-preview-tablewrap { max-height: calc(100vh - 320px); overflow: auto; }
+/* Mirrors the print rules for .dense-report-table (see the @media print block)
+   so the preview stays WYSIWYG — same font size, row height, and column
+   sizing the printed page will use. width:auto (not 100%) so columns hug
+   their content instead of an auto-layout table stretching a handful of
+   narrow columns to fill the full page width, which was leaving wide gaps
+   between them for a report this narrow (4-5 columns). */
+/* "table.report-preview-table" (not just ".report-preview-table") to
+   out-specificity table.grid's own width:100% (table.grid { width: 100% } at
+   line 169 wins over a class-only selector) — a bare class selector here was
+   silently losing, leaving the table stretched to the pane's full width with
+   the extra space spread across columns as trailing gaps regardless of
+   content or padding. margin:0 auto centers the now content-width table in
+   the sheet. */
+table.report-preview-table { width: auto; margin: 0 auto; }
+table.report-preview-table th, table.report-preview-table td { font-size: 10px; line-height: 1.15; padding: 1px 4.8px; white-space: nowrap; }
 
 .report-col-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .report-col-panel { border: 1px solid var(--line); border-radius: 8px; background: #fff; display: flex; flex-direction: column; min-width: 0; }
 .report-panel-head { font-size: 11px; font-weight: 700; color: var(--muted); padding: 7px 9px; border-bottom: 1px solid var(--line); }
+.report-panel-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.report-panel-head-btn { font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: normal; padding: 2px 8px; }
 .report-col-list { padding: 6px; display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; min-height: 60px; }
 .report-col { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fafbfc; font-size: 12px; }
 .report-col.selected { background: #fff; cursor: grab; }
@@ -502,6 +525,22 @@ a.show-open:hover { text-decoration: underline; }
     font-size: 12px; line-height: 1.4; padding: 3px 10px; white-space: nowrap;
   }
   #printHost table.report-table th.shirtsum, #printHost table.report-table td.shirtsum { text-align: left; }
+  /* Sponsor Report (the one Reports-tab print whose row count actually runs
+     long) — packed as tightly as stays readable, to maximize rows per page.
+     At 12px/1.4 with 3px padding a landscape page held ~18 sponsors and left
+     most of the sheet empty; at 10px/1.15 with 1px padding it holds roughly
+     twice that. width:100% spreads the columns across the page instead of
+     bunching them against the left margin, which is what made the old output
+     look half-empty even before the row count improved. */
+  #printHost table.dense-report-table { width: 100%; }
+  #printHost table.dense-report-table th, #printHost table.dense-report-table td {
+    font-size: 10px; line-height: 1.15; padding: 1px 4.8px;
+  }
+  /* Repeat the column headers at the top of every printed page, and never
+     split a sponsor's row across a page break — both matter a lot more now
+     that a report routinely runs to several pages. */
+  #printHost table.dense-report-table thead { display: table-header-group; }
+  #printHost table.dense-report-table tr { page-break-inside: avoid; break-inside: avoid; }
   /* Window cards (printWindowCards() in app.js) are no longer printed via
      this page's own @media print rules — they're generated as a real,
      separately-opened PDF (the uploaded fillable template, filled per
