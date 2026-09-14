@@ -386,6 +386,8 @@ table.report-preview-table th, table.report-preview-table td { font-size: 10px; 
 .report-panel-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .report-panel-head-btn { font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: normal; padding: 2px 8px; }
 .report-col-list { padding: 6px; display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; min-height: 60px; }
+.report-sort-editor { display: flex; flex-direction: column; gap: 6px; }
+.report-sort-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .report-col { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fafbfc; font-size: 12px; }
 .report-col.selected { background: #fff; cursor: grab; }
 .report-col.selected:active { cursor: grabbing; }

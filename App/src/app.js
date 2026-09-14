@@ -100,12 +100,12 @@
       autoImportStartDate: "",
       autoImportEndDate: "",
       // Reports tab > Sponsor Report builder — the officer-customized column
-      // list (array of SPONSOR_COLS keys, in print order), plus which column
-      // sorts and in which direction. An empty list means "never customized";
-      // sponsorReportColumns() falls back to SPONSOR_REPORT_DEFAULT_KEYS.
+      // list (array of SPONSOR_COLS keys, in print order), plus a multi-level
+      // sort ([{key,dir}], see sponsorReportSortLevels()). An empty column
+      // list means "never customized"; sponsorReportColumns() falls back to
+      // SPONSOR_REPORT_DEFAULT_KEYS.
       sponsorReportColumns: [],
-      sponsorReportSortCol: "regDate",
-      sponsorReportSortDir: "asc"
+      sponsorReportSortCols: [{ key: "regDate", dir: "asc" }]
     },
     appSettingsSaving: false,
     appSettingsError: null,   // set when a Settings save fails; shown in the Settings modal
@@ -358,6 +358,18 @@
   }
   function shirtTotal(row) {
     return shirtSummaryParts(row).reduce(function (sum, p) { return sum + p.qty; }, 0);
+  }
+  // "SM"/"MED"/etc -> "Small"/"Medium"/etc — used by the T-Shirt Report's
+  // per-size rows (see TSHIRT_REPORT_SPEC) for a spelled-out size, rather
+  // than shirtSummaryText()'s compact "M Free SM" form meant for a narrow
+  // table cell.
+  var SIZE_LABEL_BY_KEY = null;
+  function sizeLabel(sizeKey) {
+    if (!SIZE_LABEL_BY_KEY) {
+      SIZE_LABEL_BY_KEY = {};
+      CONFIG.SIZES.forEach(function (s) { SIZE_LABEL_BY_KEY[s.key] = s.label; });
+    }
+    return SIZE_LABEL_BY_KEY[sizeKey] || sizeKey;
   }
 
   var $ = function (sel, el) { return (el || document).querySelector(sel); };
@@ -6150,21 +6162,52 @@
   var TSHIRT_REPORT_ALL_COLS = [
     { key: "Last Name", label: "Last Name" },
     { key: "First Name", label: "First Name" },
-    { key: "shirts", label: "Shirts", cls: "shirtsum" },
+    { key: "size", label: "Size", cls: "shirtsum" },
+    { key: "qty", label: "Qty" },
     { key: "Reg #", label: "Reg #" },
     { key: "Status", label: "Status" }
   ];
+  // T-Shirt Report rows are normalized one-row-per-shirt-size, not one row
+  // per registrant — a registrant who ordered two different sizes (e.g. one
+  // Men's Large and one Women's Medium) produces two report rows, each
+  // independently sortable by size. `rank` is that bucket's position in
+  // CONFIG.SHIRT_BUCKETS (Men's Free S..3XL, Men's Xtra S..3XL, Women's
+  // Free..., Women's Xtra...) — sorting by "Size" groups same-size shirts
+  // together in a sensible garment order instead of alphabetically (which
+  // would put "2XL" before "Large").
+  function tshirtReportRows() {
+    var out = [];
+    allRegistrations().filter(function (r) { return classifyStatus(r["Status"]) === "paid"; }).forEach(function (r) {
+      CONFIG.SHIRT_BUCKETS.forEach(function (b, idx) {
+        var qty = Number(r[b.col]) || 0;
+        if (qty <= 0) return;
+        var group = CONFIG.GROUPS.filter(function (g) { return g.key === b.groupKey; })[0];
+        var label = (group ? group.label : b.groupKey) + " " + sizeLabel(b.sizeKey);
+        out.push({ row: r, size: label, qty: qty, rank: idx });
+      });
+    });
+    return out;
+  }
+  function tshirtReportCellText(pr, key) {
+    if (key === "size") return pr.size;
+    if (key === "qty") return String(pr.qty);
+    return regRowFieldText(pr.row, key);
+  }
+  function tshirtReportSortValue(pr, key) {
+    if (key === "size") return pr.rank;
+    if (key === "qty") return pr.qty;
+    return regRowSortValue(pr.row, key);
+  }
   var TSHIRT_REPORT_SPEC = {
     id: "tshirt",
     title: "T-Shirt Report",
     allCols: TSHIRT_REPORT_ALL_COLS,
-    defaultKeys: ["Last Name", "First Name", "shirts"],
-    defaultSortKey: "Last Name",
+    defaultKeys: ["Last Name", "First Name", "size", "qty"],
+    defaultSortKey: "size",
     emptyText: "No paid registrations to report yet.",
-    // Only paid registrations get a shirt.
-    getRows: function () { return allRegistrations().filter(function (r) { return classifyStatus(r["Status"]) === "paid"; }); },
-    cellText: regRowFieldText,
-    sortValue: regRowSortValue
+    getRows: tshirtReportRows,
+    cellText: tshirtReportCellText,
+    sortValue: tshirtReportSortValue
   };
 
   var CARSHOW_REPORT_ALL_COLS = [
@@ -6212,24 +6255,32 @@
     genReportColumns(spec).forEach(function (c) { chosen[c.key] = true; });
     return spec.allCols.filter(function (c) { return !chosen[c.key]; });
   }
-  function genReportSortSpec(spec) {
+  // Multi-level sort, same "storage format" ({ key, dir: "asc"|"desc" }
+  // array) and fallback rules as sponsorReportSortLevels() above — see that
+  // function's comment. Persisted under appSettings[spec.id+"ReportSortCols"].
+  function genReportSortLevels(spec) {
     var cols = genReportColumns(spec);
-    var savedCol = state.appSettings[spec.id + "ReportSortCol"];
-    var inReport = cols.filter(function (c) { return c.key === savedCol; })[0];
-    return {
-      key: inReport ? savedCol : (cols.length ? cols[0].key : spec.defaultSortKey),
-      dir: state.appSettings[spec.id + "ReportSortDir"] === "desc" ? -1 : 1
-    };
+    var colKeys = {};
+    cols.forEach(function (c) { colKeys[c.key] = true; });
+    var saved = state.appSettings[spec.id + "ReportSortCols"];
+    var levels = (Array.isArray(saved) ? saved : []).filter(function (lv) {
+      return lv && colKeys[lv.key];
+    }).map(function (lv) { return { key: lv.key, dir: lv.dir === "desc" ? "desc" : "asc" }; });
+    if (!levels.length) levels = [{ key: cols.length ? cols[0].key : spec.defaultSortKey, dir: "asc" }];
+    return levels;
   }
   function genReportCell(spec, row, c) {
     return el("td", { class: c.cls || "", text: spec.cellText(row, c.key) });
   }
   function genReportSorted(spec) {
-    var s = genReportSortSpec(spec);
+    var levels = genReportSortLevels(spec);
     return spec.getRows().slice().sort(function (a, b) {
-      var av = spec.sortValue(a, s.key), bv = spec.sortValue(b, s.key);
-      if (av < bv) return -s.dir;
-      if (av > bv) return s.dir;
+      for (var i = 0; i < levels.length; i++) {
+        var lv = levels[i], d = lv.dir === "desc" ? -1 : 1;
+        var av = spec.sortValue(a, lv.key), bv = spec.sortValue(b, lv.key);
+        if (av < bv) return -d;
+        if (av > bv) return d;
+      }
       return 0;
     });
   }
@@ -6323,6 +6374,59 @@
     }
     return row;
   }
+  // Shared "Sort by ... then by ..." editor used by every report builder
+  // (Sponsor Report's own separate implementation, and every genReport-based
+  // one). `levels` is the current array of { key, dir: "asc"|"desc" }
+  // (storage format — see sponsorReportSortLevels()/genReportSortLevels()),
+  // `cols` is the report's currently-selected columns (only those are valid
+  // sort targets), and `onChange(nextLevels)` is called with the full
+  // updated array on any edit — the caller is responsible for persisting it
+  // and re-rendering. A level can't be removed below one (a report always
+  // sorts by something), and "+ Add sort level" is disabled once every
+  // selected column already has a level (nothing left to add).
+  function buildSortLevelsEditor(levels, cols, onChange) {
+    var wrap = el("div", { class: "report-sort-editor" });
+    levels.forEach(function (lv, idx) {
+      var colSel = el("select", {});
+      cols.forEach(function (c) { colSel.appendChild(el("option", { value: c.key, text: c.label })); });
+      colSel.value = lv.key;
+      colSel.addEventListener("change", function () {
+        var next = levels.slice();
+        next[idx] = { key: colSel.value, dir: lv.dir };
+        onChange(next);
+      });
+      var dirSel = el("select", {});
+      dirSel.appendChild(el("option", { value: "asc", text: "Ascending" }));
+      dirSel.appendChild(el("option", { value: "desc", text: "Descending" }));
+      dirSel.value = lv.dir;
+      dirSel.addEventListener("change", function () {
+        var next = levels.slice();
+        next[idx] = { key: lv.key, dir: dirSel.value };
+        onChange(next);
+      });
+      var removeBtn = el("button", { type: "button", class: "btn", style: "padding:2px 8px; font-size:12px", title: "Remove this sort level" }, ["✕"]);
+      removeBtn.disabled = levels.length <= 1;
+      removeBtn.addEventListener("click", function () {
+        var next = levels.slice();
+        next.splice(idx, 1);
+        onChange(next);
+      });
+      wrap.appendChild(el("div", { class: "report-sort-row" }, [
+        el("span", { class: "hint", style: "min-width:50px" }, [idx === 0 ? "Sort by" : "then by"]),
+        colSel, dirSel, removeBtn
+      ]));
+    });
+    var usedKeys = {};
+    levels.forEach(function (lv) { usedKeys[lv.key] = true; });
+    var addableCols = cols.filter(function (c) { return !usedKeys[c.key]; });
+    var addBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:3px 10px; margin-top:2px" }, ["+ Add sort level"]);
+    addBtn.disabled = !addableCols.length;
+    addBtn.addEventListener("click", function () {
+      onChange(levels.concat([{ key: addableCols[0].key, dir: "asc" }]));
+    });
+    wrap.appendChild(addBtn);
+    return wrap;
+  }
   function printGenReport(spec) {
     var rows = genReportSorted(spec);
     if (!rows.length) return;
@@ -6400,20 +6504,8 @@
       selectedList
     ]);
 
-    var sortSpec = genReportSortSpec(spec);
-    var sortSel = el("select", {});
-    selected.forEach(function (c) { sortSel.appendChild(el("option", { value: c.key, text: c.label })); });
-    sortSel.value = sortSpec.key;
-    sortSel.addEventListener("change", function () {
-      var patch = {}; patch[spec.id + "ReportSortCol"] = sortSel.value;
-      saveGenReportLayout(spec, patch);
-    });
-    var dirSel = el("select", {});
-    dirSel.appendChild(el("option", { value: "asc", text: "Ascending" }));
-    dirSel.appendChild(el("option", { value: "desc", text: "Descending" }));
-    dirSel.value = sortSpec.dir === -1 ? "desc" : "asc";
-    dirSel.addEventListener("change", function () {
-      var patch = {}; patch[spec.id + "ReportSortDir"] = dirSel.value;
+    var sortEditor = buildSortLevelsEditor(genReportSortLevels(spec), selected, function (nextLevels) {
+      var patch = {}; patch[spec.id + "ReportSortCols"] = nextLevels;
       saveGenReportLayout(spec, patch);
     });
 
@@ -6421,8 +6513,7 @@
     resetBtn.addEventListener("click", function () {
       var patch = {};
       patch[spec.id + "ReportColumns"] = spec.defaultKeys.slice();
-      patch[spec.id + "ReportSortCol"] = spec.defaultSortKey;
-      patch[spec.id + "ReportSortDir"] = "asc";
+      patch[spec.id + "ReportSortCols"] = [{ key: spec.defaultSortKey, dir: "asc" }];
       saveGenReportLayout(spec, patch);
     });
 
@@ -6434,10 +6525,7 @@
         "\"In Report\" to change their print order. Changes save automatically and apply to every printed copy."
       ]),
       el("div", { class: "report-col-panels" }, [availablePanel, selectedPanel]),
-      el("div", { class: "form-row", style: "margin-top:14px" }, [
-        el("span", { class: "form-label", text: "Sort by" }),
-        el("div", { style: "display:flex; gap:8px; align-items:center; flex-wrap:wrap" }, [sortSel, dirSel])
-      ]),
+      el("div", { style: "margin-top:14px" }, [sortEditor]),
       el("div", { class: "settings-actions" }, [resetBtn])
     ]);
     var openKey = spec.id + "ReportBuilderOpen";
@@ -6512,7 +6600,7 @@
   // live print preview on the left, and on the right two panels (every
   // available column / the ones currently in the report) plus a sort picker.
   // The layout is persisted per show in app-settings.json
-  // (sponsorReportColumns / sponsorReportSortCol / sponsorReportSortDir), so
+  // (sponsorReportColumns / sponsorReportSortCols), so
   // an officer configures it once and every later print — and every other
   // officer's browser — uses it.
   //
@@ -6544,30 +6632,42 @@
     sponsorReportColumns().forEach(function (c) { chosen[c.key] = true; });
     return SPONSOR_COLS.filter(function (c) { return !chosen[c.key]; });
   }
-  // Which column sorts the report, and which way. Falls back to the first
-  // column in the report if the saved sort column isn't in it any more (e.g.
-  // it was removed from the report after being chosen as the sort).
-  function sponsorReportSortSpec() {
+  // Which columns sort the report, in priority order, and which way each
+  // sorts — a "Last Name, then First Name" style multi-level sort, not just
+  // one column. Persisted as an array of { key, dir: "asc"|"desc" } under
+  // appSettings.sponsorReportSortCols (storage format — dir is kept as the
+  // string here, same shape the builder's sort-level editor reads/writes;
+  // sponsorReportSorted() below converts to a ±1 multiplier when comparing).
+  // Levels naming a column no longer in the report are dropped; an empty/
+  // never-saved list falls back to a single level on the report's first
+  // column.
+  function sponsorReportSortLevels() {
     var cols = sponsorReportColumns();
-    var savedCol = state.appSettings.sponsorReportSortCol;
-    var inReport = cols.filter(function (c) { return c.key === savedCol; })[0];
-    return {
-      key: inReport ? savedCol : (cols.length ? cols[0].key : "regDate"),
-      dir: state.appSettings.sponsorReportSortDir === "desc" ? -1 : 1
-    };
+    var colKeys = {};
+    cols.forEach(function (c) { colKeys[c.key] = true; });
+    var saved = state.appSettings.sponsorReportSortCols;
+    var levels = (Array.isArray(saved) ? saved : []).filter(function (lv) {
+      return lv && colKeys[lv.key];
+    }).map(function (lv) { return { key: lv.key, dir: lv.dir === "desc" ? "desc" : "asc" }; });
+    if (!levels.length) levels = [{ key: cols.length ? cols[0].key : "regDate", dir: "asc" }];
+    return levels;
   }
   function sponsorReportCell(s, c) {
     return el("td", { text: sponsorFieldText(s, c.key) });
   }
   // Same sortValue helper the Sponsors table's own column sorting relies on,
   // so a date column sorts chronologically and an amount numerically rather
-  // than as their formatted display strings.
+  // than as their formatted display strings. Ties on the first sort level
+  // fall through to the next level, and so on.
   function sponsorReportSorted() {
-    var spec = sponsorReportSortSpec();
+    var levels = sponsorReportSortLevels();
     return visibleSponsors().slice().sort(function (a, b) {
-      var av = sponsorSortValue(a, spec.key), bv = sponsorSortValue(b, spec.key);
-      if (av < bv) return -spec.dir;
-      if (av > bv) return spec.dir;
+      for (var i = 0; i < levels.length; i++) {
+        var lv = levels[i], d = lv.dir === "desc" ? -1 : 1;
+        var av = sponsorSortValue(a, lv.key), bv = sponsorSortValue(b, lv.key);
+        if (av < bv) return -d;
+        if (av > bv) return d;
+      }
       return 0;
     });
   }
@@ -6777,27 +6877,15 @@
       selectedList
     ]);
 
-    var spec = sponsorReportSortSpec();
-    var sortSel = el("select", {});
-    selected.forEach(function (c) { sortSel.appendChild(el("option", { value: c.key, text: c.label })); });
-    sortSel.value = spec.key;
-    sortSel.addEventListener("change", function () {
-      saveSponsorReportLayout({ sponsorReportSortCol: sortSel.value });
-    });
-    var dirSel = el("select", {});
-    dirSel.appendChild(el("option", { value: "asc", text: "Ascending" }));
-    dirSel.appendChild(el("option", { value: "desc", text: "Descending" }));
-    dirSel.value = spec.dir === -1 ? "desc" : "asc";
-    dirSel.addEventListener("change", function () {
-      saveSponsorReportLayout({ sponsorReportSortDir: dirSel.value });
+    var sortEditor = buildSortLevelsEditor(sponsorReportSortLevels(), selected, function (nextLevels) {
+      saveSponsorReportLayout({ sponsorReportSortCols: nextLevels });
     });
 
     var resetBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["↺ Reset to Default"]);
     resetBtn.addEventListener("click", function () {
       saveSponsorReportLayout({
         sponsorReportColumns: SPONSOR_REPORT_DEFAULT_KEYS.slice(),
-        sponsorReportSortCol: "regDate",
-        sponsorReportSortDir: "asc"
+        sponsorReportSortCols: [{ key: "regDate", dir: "asc" }]
       });
     });
 
@@ -6812,10 +6900,7 @@
         "\"In Report\" to change their print order. Changes save automatically and apply to every printed copy."
       ]),
       el("div", { class: "report-col-panels" }, [availablePanel, selectedPanel]),
-      el("div", { class: "form-row", style: "margin-top:14px" }, [
-        el("span", { class: "form-label", text: "Sort by" }),
-        el("div", { style: "display:flex; gap:8px; align-items:center; flex-wrap:wrap" }, [sortSel, dirSel])
-      ]),
+      el("div", { style: "margin-top:14px" }, [sortEditor]),
       el("div", { class: "settings-actions" }, [resetBtn])
     ]);
     var isOpen = !!state.sponsorReportBuilderOpen;
