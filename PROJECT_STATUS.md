@@ -1,6 +1,44 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-13 (end of session, latest). **Member-roster imports are now
+Last updated: 2026-09-14 (end of session, latest). **Two small, unrelated pieces of
+work: the Sponsor Report's columns were trimmed, and `/ETCCCarShowBackup` gained a
+second artifact.** One checkpoint: **`10b6310`** (v5.30), deployed and pushed; live site
+is **v5.30**.
+
+**1. Sponsor Report columns trimmed.** User: "change sponsor report to only have reg
+date, sponsor name, member name, sponsor type, t-shirt size. sorted by ascending reg
+date." `SPONSOR_REPORT_COLS` (`App/src/app.js`) went from 10 columns (Sponsor Name /
+Member Name / Sponsor Type / Contact / Phone / T-Shirt Text / Payment Date / Payment
+Type / Check # / Paid) down to 5: **Reg Date, Sponsor Name, Member Name, Sponsor Type,
+T-Shirt**. "T-Shirt" reuses `sponsorFieldText()`'s existing `"shirtSize"` handling
+unchanged — it already joins a multi-shirt sponsor's sizes with `", "` (from the
+2026-09-11 "allow multiple sponsor T-shirts" work), so a sponsor with two shirts prints
+both sizes in one cell rather than needing a new column. `sponsorReportSorted()` was
+simplified from a two-level sort (Sponsor Type group, then Payment Date within each
+group) to a single ascending pass on `regDate` across all sponsors — the Sponsor Type
+grouping is gone entirely, not just de-prioritized.
+
+**2. `/ETCCCarShowBackup` (outside this repo — `C:\Users\Admin\.claude\skills\`) now
+zips the repo too, not just live data.** User: "Update /ETCCCarShowBackup to create a
+zip backup of DB & repo." Matches `BWEBackup`'s / the same-day `ETCCSAMBackup` update's
+two-artifact pattern: Step 1 (unchanged) downloads the live `data/` tree + root globals
+over FTPS to `<timestamp>-CarShowData.zip`; a new Step 2 zips the whole local
+`Z:\Backup\Websites\CarShow` folder (code included, `App/node_modules` included, ~136 MB
+total as of this session — no exclusions, unlike `BWEBackup`'s `.nitro` exclusion,
+since there's no known concurrent-write hazard here) to `<timestamp>-CarShowRepo.zip`,
+using `System.IO.Compression.ZipFile` directly (not `Compress-Archive`) to preserve the
+folder structure. Both share one timestamp. Ran it once after updating: both artifacts
+succeeded, `202609140914-CarShowData.zip` (~1.6 MB) and `202609140914-CarShowRepo.zip`
+(~69.7 MB), no errors. **This change lives entirely in the skill file, not this repo** —
+there is nothing to commit here for it.
+
+**Also this session, before either of the above**: a bare `/ETCCCarShowAll` was invoked
+with no other work pending — both stages correctly found nothing to do (repo already
+clean at v5.29 from the previous session) and were skipped rather than producing a
+no-op version bump, consistent with checkpoint's own "skip if literally nothing changed"
+rule. No commit resulted from that invocation.
+
+Previous update: 2026-09-13 (end of session). **Member-roster imports are now
 logged, with a viewer on the Setup tab.** User asked to "keep a log each time members
 are imported... timestamp and number of members," then separately asked for "a way to
 view the import members history from the setup tab." Two checkpoints: **`ad5beb1`**
@@ -27,6 +65,17 @@ to the existing Instructions button; clicking it shows the same timestamp/count 
 right there, no need to open the standalone page. `buildSetupLauncher()` (`app.js`) was
 generalized to accept multiple extra buttons and optional extra content below the hint
 line — reusable for other Setup-tab launchers later, not just this one.
+
+## Known follow-ups / things a new session might need to know (2026-09-14 session)
+
+- **Nothing new is open.** The Sponsor Report change is a straightforward column-set
+  edit with no known gaps, and the backup-skill update was verified with a real run
+  (both artifacts produced, no errors). No automated coverage exists for either — the
+  report is `app.js` UI/print code, and the backup skill is a standalone PowerShell
+  script outside this repo — but that's the same standing gap every other UI-level
+  change and backup skill already carries, not something new from this session.
+- If a future session is asked to touch the Sponsor Report again, note the grouping-by-
+  Sponsor-Type behavior is gone (see item 1 above) — don't assume it's still there.
 
 ## Known follow-ups / things a new session might need to know (2026-09-13 session, member-import log)
 
