@@ -19,7 +19,9 @@
 // Actions: run (POST, session-or-password), list (GET/POST,
 // session-or-password), download (GET, session-or-password),
 // delete (POST, session-or-password), get_schedule (GET/POST,
-// session-or-password), save_schedule (POST, session-or-password).
+// session-or-password), save_schedule (POST, session-or-password),
+// get_backup_years (POST, session-or-password), restore (POST,
+// session-or-password + Developer password).
 session_start();
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
@@ -158,6 +160,129 @@ if ($action === 'download') {
     header('Content-Disposition: attachment; filename="' . $name . '"');
     header('Content-Length: ' . filesize($path));
     readfile($path);
+    exit;
+}
+
+if ($action === 'get_backup_years') {
+    // Read-only: lists the distinct show years found inside one backup
+    // file, so the Restore UI can offer "restore just this one show" as a
+    // real choice (with real names/file counts) instead of a blind text
+    // field. Same site-or-Developer auth as everything else above — no
+    // elevated gate needed just to look.
+    $timestamp = (string)($input['timestamp'] ?? '');
+    $history = carshow_read_json_list($historyFile);
+    $target = null;
+    foreach ($history as $e) {
+        if (is_array($e) && ($e['timestamp'] ?? null) === $timestamp) { $target = $e; break; }
+    }
+    if ($target === null || ($target['status'] ?? '') !== 'success') {
+        http_response_code(404);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'Backup log entry not found or was not a successful backup.']);
+        exit;
+    }
+    $dir = carshow_backups_dir();
+    $fileName = (string)($target['fileName'] ?? '');
+    $years = ($dir === null) ? null : carshow_backup_years_in_zip($dir, $fileName);
+    if ($years === null) {
+        http_response_code(404);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'Backup file not found on disk — it may have aged past the retention limit (newest ' . CARSHOW_BACKUP_KEEP . ' kept).']);
+        exit;
+    }
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => true, 'years' => $years]);
+    exit;
+}
+
+if ($action === 'restore') {
+    // Restores the live data/ tree from a specific backup file, identified
+    // by its history entry's timestamp (same identity convention 'delete'
+    // above uses). Either EVERYTHING (every show year, data/shows.json, and
+    // the global members-data.json/password-reset files/window cards) or —
+    // when year is given — just that one show's data/<year>/ directory,
+    // its own row in shows.json, and its own window-card-<year>.pdf,
+    // leaving every other year and the global files completely untouched.
+    // See carshow_restore_backup() in lib.php for exactly what that means
+    // and why it's always preceded by a fresh safety backup.
+    //
+    // This is at least as destructive as deleting an entire show —
+    // shows.php's own 'delete' action already requires the Developer
+    // password rather than just the site password everything else in THIS
+    // file uses, and restore follows that same precedent rather than
+    // inventing a new gate. The server checks it here; the client only asks
+    // for it.
+    $devPw = (string)($input['devPassword'] ?? '');
+    $devOk = !empty($DEV_PASSWORD_HASH) && $devPw !== '' &&
+             hash_equals($DEV_PASSWORD_HASH, crypt($devPw, $DEV_PASSWORD_HASH));
+    if (!$devOk) {
+        http_response_code(401);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'The Developer password is required to restore a backup.']);
+        exit;
+    }
+
+    $timestamp = (string)($input['timestamp'] ?? '');
+    $yearRaw = (string)($input['year'] ?? '');
+    $year = $yearRaw !== '' ? carshow_valid_year($yearRaw) : null;
+    if ($yearRaw !== '' && $year === null) {
+        http_response_code(400);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'Invalid show year.']);
+        exit;
+    }
+
+    $history = carshow_read_json_list($historyFile);
+    $target = null;
+    foreach ($history as $e) {
+        if (is_array($e) && ($e['timestamp'] ?? null) === $timestamp) { $target = $e; break; }
+    }
+    if ($target === null || ($target['status'] ?? '') !== 'success') {
+        http_response_code(404);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'Backup log entry not found or was not a successful backup.']);
+        exit;
+    }
+
+    $dir = carshow_backups_dir();
+    $fileName = (string)($target['fileName'] ?? '');
+    $result = ($dir === null) ? ['ok' => false, 'error' => 'Could not access the backups directory.']
+                               : carshow_restore_backup($dir, $fileName, $year);
+
+    // The pre-restore safety snapshot gets its OWN history entry
+    // (reason:'pre-restore'), same as a normal manual/auto backup would —
+    // otherwise the file exists on disk but is invisible and unrestorable
+    // from the UI, defeating the point of taking it. Logged even if the
+    // restore itself then fails, since the safety-backup step runs (and
+    // succeeds) before that.
+    if (!empty($result['preRestoreBackup'])) {
+        $preRestorePath = $dir . '/' . $result['preRestoreBackup'];
+        carshow_append_json_list($historyFile, [
+            'timestamp' => gmdate('c', is_file($preRestorePath) ? filemtime($preRestorePath) : time()),
+            'status' => 'success',
+            'reason' => 'pre-restore',
+            'fileName' => $result['preRestoreBackup'],
+            'sizeBytes' => is_file($preRestorePath) ? filesize($preRestorePath) : 0,
+        ]);
+    }
+
+    $entry = [
+        'timestamp' => gmdate('c'),
+        'status' => !empty($result['ok']) ? 'success' : 'failed',
+        'reason' => 'restore',
+        'restoredFrom' => $fileName,
+        'scope' => $year !== null ? $year : 'all',
+    ];
+    if (!empty($result['ok'])) {
+        $entry['filesWritten'] = $result['filesWritten'];
+        if (!empty($result['scopeName'])) $entry['scopeName'] = $result['scopeName'];
+    } else {
+        $entry['error'] = $result['error'] ?? 'Unknown error.';
+    }
+    carshow_append_json_list($historyFile, $entry);
+
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => !empty($result['ok']), 'error' => $result['error'] ?? null, 'entry' => $entry, 'history' => carshow_read_json_list($historyFile)]);
     exit;
 }
 

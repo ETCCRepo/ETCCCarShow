@@ -557,6 +557,300 @@ function carshow_backup_auto_check() {
     carshow_write_backup_schedule($schedule);
 }
 
+// ---------------------------------------------------------------------------
+// Backups > Restore (Setup tab; see backup.php's 'get_backup_years'/'restore')
+// ---------------------------------------------------------------------------
+// Ported from the sibling Vette Fest app's carshow_restore_backup() (itself
+// ported from SilentAuctionManager's restore_backup(), which
+// deletes-and-reinserts SQL rows inside a transaction) — there is no SQL
+// here, this deletes-and-re-extracts the corresponding data/ subtree
+// instead, the file-based equivalent of the same "make the live state match
+// the backup" semantics: a WHOLE restore matches the backup EXACTLY
+// (something live now that wasn't in the backup gets removed, not left
+// alone) while a SCOPED restore only ever touches the one show year asked
+// for. CarShow-specific difference from Vette Fest: this app also has a
+// global members-data.json and a per-year (but flat, not under data/)
+// window-card-<year>.pdf — both handled below; Vette Fest has neither.
+
+// Same filename shape backup.php validates against (CARSHOW_BACKUP_NAME_PATTERN),
+// duplicated here as a plain regex rather than depending on backup.php's
+// constant, so lib.php doesn't need backup.php loaded first to be safe to call.
+function carshow_backup_zip_path($backupDir, $fileName) {
+    if (!preg_match('/^[0-9]{14}-CarShowData\.zip$/', (string)$fileName)) return null;
+    $path = $backupDir . '/' . $fileName;
+    return is_file($path) ? $path : null;
+}
+
+// Like carshow_write_json() (same locking discipline), but writes a raw
+// string verbatim instead of json_encode()-ing a PHP value — restoring must
+// reproduce the backup's bytes exactly, not re-serialize them.
+function carshow_write_raw($file, $content) {
+    if ($file === null) return false;
+    $fh = fopen($file, 'c+');
+    if (!$fh || !flock($fh, LOCK_EX)) {
+        if ($fh) fclose($fh);
+        return false;
+    }
+    ftruncate($fh, 0);
+    rewind($fh);
+    fwrite($fh, $content);
+    fflush($fh);
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    return true;
+}
+
+// Lists the distinct show years found inside one backup zip, with a display
+// name/status pulled from the zip's OWN data/shows.json (if present) — so
+// the Restore UI can offer real show names instead of bare year numbers,
+// same idea as SAM's sam_backup_auction_ids(). A backup with no shows.json
+// entry for a year that nonetheless has data/<year>/ files in it (shouldn't
+// happen in practice — carshow_run_backup() always includes the whole data/
+// tree together — but handled defensively) falls back to "Show <year>".
+//
+// A year can legitimately appear in shows.json with ZERO data/<year>/ files
+// — a show created right before the backup was taken, before anything else
+// was ever saved to it. That's still real, restorable data (the show's own
+// name/status), not "nothing" — so it's listed here too (fileCount: 0),
+// rather than silently vanishing from the Restore dropdown.
+function carshow_backup_years_in_zip($backupDir, $fileName) {
+    $path = carshow_backup_zip_path($backupDir, $fileName);
+    if ($path === null) return null;
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) return null;
+
+    $shows = [];
+    $showsRaw = $zip->getFromName('data/shows.json');
+    if ($showsRaw !== false) {
+        $decoded = json_decode($showsRaw, true);
+        if (is_array($decoded) && !empty($decoded['shows']) && is_array($decoded['shows'])) {
+            foreach ($decoded['shows'] as $s) {
+                if (is_array($s) && isset($s['year'])) $shows[(string)$s['year']] = $s;
+            }
+        }
+    }
+
+    $fileCounts = [];
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $name = $zip->getNameIndex($i);
+        if (preg_match('#^data/([0-9]{4})/#', $name, $m)) {
+            $fileCounts[$m[1]] = ($fileCounts[$m[1]] ?? 0) + 1;
+        }
+    }
+    $zip->close();
+
+    // Union of "has files" and "has a shows.json row" — either alone is
+    // enough to make a year worth offering.
+    $allYears = $fileCounts;
+    foreach ($shows as $year => $s) { if (!array_key_exists($year, $allYears)) $allYears[$year] = 0; }
+
+    $years = [];
+    foreach ($allYears as $year => $count) {
+        $s = $shows[$year] ?? null;
+        $years[] = [
+            'year' => $year,
+            'name' => ($s && !empty($s['name'])) ? (string)$s['name'] : ('Show ' . $year),
+            'status' => $s ? (string)($s['status'] ?? '') : '',
+            'fileCount' => $count,
+        ];
+    }
+    usort($years, function ($a, $b) { return (int)$b['year'] - (int)$a['year']; });
+    return $years;
+}
+
+// Restores the live data/ tree from one backup zip. $year === null restores
+// EVERYTHING (every show year, data/shows.json, data/api-key.json, and the
+// global members-data.json/password-reset.json/dev-password-reset.json/
+// window-card-<year>.pdf files) so the live tree matches the backup exactly
+// — including deleting a year directory or global file that exists live now
+// but wasn't in the backup. $year (already-validated by the caller) restores
+// only that one show's data/<year>/ directory, its own row in shows.json,
+// and its own window-card-<year>.pdf (if the backup has one) — every other
+// year and every truly-global file (members-data.json, the two
+// password-reset files, api-key.json) stay completely untouched.
+//
+// Every .json entry that's about to be written is decoded and validated
+// FIRST, before anything on disk is touched — a corrupted or hand-edited
+// backup aborts the whole restore with nothing changed, rather than leaving
+// a half-restored data/ tree. A fresh whole-data safety backup is ALWAYS
+// taken first, before either kind of restore, so a bad restore is itself
+// always recoverable by restoring that safety snapshot.
+function carshow_restore_backup($backupDir, $fileName, $year = null) {
+    $path = carshow_backup_zip_path($backupDir, $fileName);
+    if ($path === null) return ['ok' => false, 'error' => 'Backup file not found on disk — it may have aged past the retention limit.'];
+
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) return ['ok' => false, 'error' => 'Could not open the backup zip file.'];
+
+    $dataRoot = carshow_data_root();
+    if ($dataRoot === null) { $zip->close(); return ['ok' => false, 'error' => 'Could not access the data directory.']; }
+
+    // Collect + validate every entry that will be WRITTEN to data/<year>/,
+    // a global root file, or that year's window-card-<year>.pdf. $writes:
+    // zip entry name (e.g. "data/2026/registrations-data.json",
+    // "members-data.json", or "window-card-2026.pdf") => raw bytes. Every
+    // entry lives directly under __DIR__ once its 'data/' prefix (if any) is
+    // put back — that's exactly how carshow_run_backup() named them, so no
+    // path translation is needed beyond __DIR__ . '/' . $name.
+    //
+    // "data/shows.json" is deliberately excluded from $writes for a SCOPED
+    // restore — it must never be written wholesale (that would silently
+    // overwrite every other show's registry row too) — but its content is
+    // still needed afterward, just to read ONE year's row out of it for the
+    // merge below. So it's captured separately into $showsJsonRaw,
+    // regardless of scope, before the zip closes.
+    $writes = [];
+    $showsJsonRaw = null;
+    $prefix = ($year !== null) ? ('data/' . $year . '/') : null;
+    $yearWindowCard = ($year !== null) ? ('window-card-' . $year . '.pdf') : null;
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $name = $zip->getNameIndex($i);
+        $isShowsJson = ($name === 'data/shows.json');
+        if ($prefix !== null) {
+            // Scoped: only this year's data/<year>/ files, its own window
+            // card (if the backup has one), and shows.json (read-only, for
+            // the row merge below) are in scope — everything else (other
+            // years, and the truly-global members-data.json/password-reset
+            // files/api-key.json) is skipped entirely.
+            $inScope = $isShowsJson || strpos($name, $prefix) === 0 || ($yearWindowCard !== null && $name === $yearWindowCard);
+            if (!$inScope) continue;
+        }
+        $content = $zip->getFromName($name);
+        if ($content === false) { $zip->close(); return ['ok' => false, 'error' => "Could not read $name from the backup."]; }
+        if (preg_match('/\.json$/i', $name) && json_decode($content) === null && trim($content) !== 'null') {
+            $zip->close();
+            return ['ok' => false, 'error' => "$name in the backup is not valid JSON — aborted, nothing was changed."];
+        }
+        if ($isShowsJson) { $showsJsonRaw = $content; if ($year !== null) continue; } // scoped: read-only, not written verbatim
+        $writes[$name] = $content;
+    }
+    $zip->close();
+
+    // A year with a real row in the backup's shows.json but zero actual
+    // data files is a legitimate, meaningful thing to restore (its
+    // name/status, from a show created right before that backup was taken,
+    // before anything else was ever saved to it) — NOT the same as "this
+    // year isn't in the backup at all". So the two are checked together:
+    // only truly nothing (no files AND no registry row) fails.
+    $backupEntry = null;
+    if ($year !== null && $showsJsonRaw !== null) {
+        $backupShows = json_decode($showsJsonRaw, true);
+        if (is_array($backupShows) && !empty($backupShows['shows']) && is_array($backupShows['shows'])) {
+            foreach ($backupShows['shows'] as $s) {
+                if (is_array($s) && isset($s['year']) && (string)$s['year'] === $year) { $backupEntry = $s; break; }
+            }
+        }
+    }
+    if ($year !== null && empty($writes) && $backupEntry === null) {
+        return ['ok' => false, 'error' => "This backup has no data, and no shows-list entry, for show $year."];
+    }
+
+    // Safety net first, regardless of scope — cheap, and keeps the recovery
+    // story identical either way: restore this file to undo whatever happens
+    // next.
+    $preRestore = carshow_run_backup();
+    if (empty($preRestore['ok'])) {
+        return ['ok' => false, 'error' => 'Could not take a safety backup before restoring — aborted without changing anything. (' . ($preRestore['error'] ?? 'unknown error') . ')'];
+    }
+
+    $scopeName = 'Everything';
+
+    if ($year === null) {
+        // Whole restore: wipe every existing year directory, then delete any
+        // global file (or per-year window card) the backup doesn't have —
+        // so the live tree ends up matching the backup exactly, not a union
+        // of the two.
+        foreach (glob($dataRoot . '/*', GLOB_ONLYDIR) ?: [] as $dir) {
+            if (preg_match('#[\\\\/][0-9]{4}$#', $dir)) carshow_rrmdir($dir);
+        }
+        $showsPath = carshow_shows_path();
+        if ($showsPath !== null && is_file($showsPath) && !array_key_exists('data/shows.json', $writes)) {
+            @unlink($showsPath);
+        }
+        foreach (['members-data.json', 'password-reset.json', 'dev-password-reset.json'] as $rootFile) {
+            if (!array_key_exists($rootFile, $writes)) {
+                $target = __DIR__ . '/' . $rootFile;
+                if (is_file($target)) @unlink($target);
+            }
+        }
+        foreach ((glob(__DIR__ . '/window-card-*.pdf') ?: []) as $existing) {
+            $base = basename($existing);
+            if (!array_key_exists($base, $writes)) @unlink($existing);
+        }
+    } else {
+        // Scoped: only this year's directory is wiped/re-extracted. Its row
+        // in shows.json is updated in place further below; nothing else in
+        // shows.json, no other year, and no global file is touched. Its own
+        // window-card-<year>.pdf is overwritten below if the backup has one
+        // — otherwise left exactly as-is (never deleted by a scoped restore).
+        $yearDir = $dataRoot . '/' . $year;
+        if (is_dir($yearDir)) carshow_rrmdir($yearDir);
+        $scopeName = $year;
+    }
+
+    $filesWritten = 0;
+    foreach ($writes as $name => $content) {
+        $target = __DIR__ . '/' . $name;
+        $dir = dirname($target);
+        if (!is_dir($dir)) @mkdir($dir, 0755, true);
+        if (!carshow_write_raw($target, $content)) {
+            return ['ok' => false, 'error' => "Could not write $name during restore. A pre-restore safety backup was taken first — see the Backups log.", 'preRestoreBackup' => $preRestore['fileName']];
+        }
+        $filesWritten++;
+    }
+
+    // Scoped restore: merge just this year's row into the LIVE shows.json
+    // (replacing it if present, appending it if the live registry had
+    // dropped it somehow) from the BACKUP's shows.json — every other year's
+    // row, and 'current', stay exactly as they are live. Mirrors SAM
+    // restoring just one auction's row in its 'auctions' table on a scoped
+    // restore, not the whole table. $backupEntry was already resolved above
+    // (needed there too, for the "nothing to restore" guard).
+    if ($year !== null && $backupEntry !== null) {
+        $registry = carshow_read_shows();
+        $found = false;
+        foreach ($registry['shows'] as $idx => $s) {
+            if (is_array($s) && isset($s['year']) && (string)$s['year'] === $year) {
+                $registry['shows'][$idx] = $backupEntry;
+                $found = true;
+                break;
+            }
+        }
+        if (!$found) $registry['shows'][] = $backupEntry;
+        if (!carshow_write_shows($registry)) {
+            return ['ok' => false, 'error' => "Restored show $year's data, but could not update its entry in the shows list. A pre-restore safety backup was taken first — see the Backups log.", 'preRestoreBackup' => $preRestore['fileName']];
+        }
+        $scopeName = (string)($backupEntry['name'] ?? $year);
+    }
+
+    return [
+        'ok' => true,
+        'scope' => $year !== null ? $year : 'all',
+        'scopeName' => $scopeName,
+        'filesWritten' => $filesWritten,
+        'preRestoreBackup' => $preRestore['fileName'],
+    ];
+}
+
+// Recursive delete — used only by carshow_restore_backup() above, to wipe a
+// year's directory (which now legitimately holds a subdirectory,
+// data/<year>/logs/, unlike the flat single-level layout
+// carshow_show_files() still assumes for shows.php's own show-delete
+// action — see that function's comment). Safe here because the only paths
+// ever passed in are ones this same function derived from $dataRoot/<year>,
+// never anything caller-supplied directly.
+function carshow_rrmdir($dir) {
+    if (!is_dir($dir)) return;
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    foreach ($items as $item) {
+        if ($item->isDir()) { @rmdir($item->getPathname()); } else { @unlink($item->getPathname()); }
+    }
+    @rmdir($dir);
+}
+
 function carshow_migrate_to_multi_show() {
     $path = carshow_shows_path();
     if ($path === null) return false;          // data/ not creatable — caller reports it
