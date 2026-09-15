@@ -1971,8 +1971,13 @@
   }
   function shirtMatrix(s) {
     var C = CONFIG;
+    // "Xtra" reads as "Purchased" here (and only here — this is the one
+    // matrix that splits Free vs. paid-additional shirts into their own
+    // columns) — g.label itself stays "Men's Xtra"/etc. unchanged, since
+    // it's also the literal CSV column-name prefix (config.js's
+    // SHIRT_BUCKETS) used for import matching well beyond this display.
     var head = el("tr", {}, [el("th", { class: "lbl", text: "Size" })].concat(
-      C.GROUPS.map(function (g) { return el("th", { text: g.label }); })));
+      C.GROUPS.map(function (g) { return el("th", { text: g.label.replace("Xtra", "Purchased") }); })));
     var sizeRows = C.SIZES.map(function (sz) {
       var vals = C.GROUPS.map(function (g) { return s.shirtTotals[g.key + sz.key] || 0; });
       var cells = [el("td", { class: "lbl", text: sz.label })].concat(
@@ -6188,20 +6193,37 @@
   // T-Shirt Report rows are normalized one-row-per-shirt-size, not one row
   // per registrant — a registrant who ordered two different sizes (e.g. one
   // Men's Large and one Women's Medium) produces two report rows, each
-  // independently sortable by size. `rank` is that bucket's position in
-  // CONFIG.SHIRT_BUCKETS (Men's Free S..3XL, Men's Xtra S..3XL, Women's
-  // Free..., Women's Xtra...) — sorting by "Size" groups same-size shirts
-  // together in a sensible garment order instead of alphabetically (which
-  // would put "2XL" before "Large").
+  // independently sortable by size. The printed/on-screen "Size" text drops
+  // the Free/Purchased distinction (just "Men's Large", not "Men's Free
+  // Large") — that's internal bookkeeping for which CSV column/quota a
+  // shirt came from, not something this report needs to show;
+  // CONFIG.GROUPS[].label itself is left alone since it's also the literal
+  // CSV column-name prefix (SHIRT_BUCKETS' own `col`), used well beyond
+  // this one report.
+  //
+  // `rank` groups by GENDER + SIZE ONLY (not the underlying Free vs.
+  // Purchased bucket) so every row that prints as "Men's Small" sorts
+  // together, regardless of which of the two buckets it came from — a plain
+  // CONFIG.SHIRT_BUCKETS index (this report's original approach) put the
+  // Free buckets' 6 sizes before the Purchased buckets' 6 sizes, so "Men's
+  // Small (Free)" and "Men's Small (Purchased)" sorted 6 slots apart even
+  // though the Free/Purchased distinction is no longer visible in the text —
+  // the report LOOKED unsorted because the same label appeared in two
+  // different places.
   function tshirtReportRows() {
     var out = [];
+    var sizeIndex = {};
+    CONFIG.SIZES.forEach(function (sz, i) { sizeIndex[sz.key] = i; });
+    var genderRank = { "Men's": 0, "Women's": 1 };
     allRegistrations().filter(function (r) { return classifyStatus(r["Status"]) === "paid"; }).forEach(function (r) {
-      CONFIG.SHIRT_BUCKETS.forEach(function (b, idx) {
+      CONFIG.SHIRT_BUCKETS.forEach(function (b) {
         var qty = Number(r[b.col]) || 0;
         if (qty <= 0) return;
         var group = CONFIG.GROUPS.filter(function (g) { return g.key === b.groupKey; })[0];
-        var label = (group ? group.label : b.groupKey) + " " + sizeLabel(b.sizeKey);
-        out.push({ row: r, size: label, qty: qty, rank: idx });
+        var gender = group ? group.gender : "";
+        var label = gender + " " + sizeLabel(b.sizeKey);
+        var rank = (genderRank[gender] || 0) * CONFIG.SIZES.length + (sizeIndex[b.sizeKey] || 0);
+        out.push({ row: r, size: label, qty: qty, rank: rank });
       });
     });
     return out;
