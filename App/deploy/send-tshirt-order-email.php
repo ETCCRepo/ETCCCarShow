@@ -1,6 +1,6 @@
 <?php
 // Officer-only endpoint to send the T-Shirt Order Email
-// (T-Shirts tab > T-Shirt Order Form). Same session/password dual auth
+// (T-Shirts tab > T-Shirt Order Email). Same session/password dual auth
 // as every other endpoint here (lib.php's carshow_authed()) — since the
 // caller is already an authenticated officer, a client-supplied "to" is
 // trusted here (unlike, say, the external Paid Registrations API). Falls

@@ -213,7 +213,7 @@
     emailSending: false,
     emailSendError: null,
     emailSent: false,         // brief "Sent!" confirmation after a successful send
-    tshirtOrderPageOpen: false, // T-Shirts tab > "T-Shirt Order Form" full-page screen
+    tshirtOrderPageOpen: false, // T-Shirts tab > "T-Shirt Order Email" full-page screen
     tshirtPurchasePageOpen: false, // T-Shirts tab > "Buy T-Shirt" full-page screen
     // Reports tab > "Sponsor Report" full-page screen — a live print preview
     // (left) beside a column/sort builder (right). The layout itself lives in
@@ -2121,6 +2121,17 @@
       .slice()
       .sort(function (a, b) { return sponsorSortValue(a, "regDate") - sponsorSortValue(b, "regDate"); });
   }
+  // "M/D" (no leading zeros, no year/time) — same raw source
+  // sponsorFieldText()'s "regDate" case reads (s.regDate from the CSV
+  // auto-sync, or s.submittedAt from a web sponsor-form submission), just
+  // formatted short for the T-Shirt Order Email's Premier/Corporate lines.
+  function tshirtEmailRegDateShort(sp) {
+    var raw = sp.regDate || sp.submittedAt;
+    if (!raw) return "";
+    var d = new Date(raw);
+    if (isNaN(d.getTime())) return "";
+    return (d.getMonth() + 1) + "/" + d.getDate();
+  }
   // Plain text (not HTML) — carshow_send_mail() only sends text/plain, and a
   // plain-text preview is trivially exact: what's shown is byte-for-byte
   // what gets sent, with no separate HTML-rendering path to drift from it.
@@ -2135,12 +2146,19 @@
       }
       lines.push("");
     }
-    section("PREMIER SPONSORS", tshirtEmailSponsorList("premier"), function (sp) {
-      return sp.individualSponsorshipText || sp.name;
-    });
-    section("CORPORATE SPONSORS", tshirtEmailSponsorList("corporate"), function (sp) {
-      return sp.individualSponsorshipText || sp.name;
-    });
+    // Premier/Corporate lines carry a trailing "(M/D)" reg date — ordering
+    // ascending by that same date (already tshirtEmailSponsorList()'s sort)
+    // means the printed date always increases down the list, at a glance
+    // confirming nothing is out of order. Individual Sponsors below
+    // deliberately doesn't get a date suffix — not asked for, and that list
+    // often reads "(Text)" already via individualSponsorshipText.
+    function withRegDate(sp) {
+      var label = sp.individualSponsorshipText || sp.name;
+      var short = tshirtEmailRegDateShort(sp);
+      return short ? label + " (" + short + ")" : label;
+    }
+    section("PREMIER SPONSORS", tshirtEmailSponsorList("premier"), withRegDate);
+    section("CORPORATE SPONSORS", tshirtEmailSponsorList("corporate"), withRegDate);
     section("INDIVIDUAL SPONSORS", tshirtEmailSponsorList("individual"), function (sp) {
       return sp.individualSponsorshipText || sp.name;
     });
@@ -5233,7 +5251,7 @@
 
     // Navigation into the two full-page screens below — T-Shirt Report itself
     // is only on the Reports tab now (see TSHIRT_REPORT_SPEC / openGenReportPage()).
-    var orderBtn = el("button", { class: "btn primary" }, ["📧 T-Shirt Order Form"]);
+    var orderBtn = el("button", { class: "btn primary" }, ["📧 T-Shirt Order Email"]);
     orderBtn.addEventListener("click", openTshirtOrderPage);
     var purchaseBtn = el("button", { class: "btn" }, ["🛒 Buy T-Shirt"]);
     purchaseBtn.addEventListener("click", openTshirtPurchasePage);
@@ -5249,7 +5267,7 @@
   // ---------- Page banner helper (shared by all full-page overlays) ----------
   // Single-line banner: Back button + logo on the left, "Car Show Manager"
   // (plus an optional pageTitle sub-line naming the specific screen, e.g.
-  // "T-Shirt Order Form") centered — grid layout so the title stays
+  // "T-Shirt Order Email") centered — grid layout so the title stays
   // centered on the page regardless of the left content's width.
   // printCallback is optional — when given, a "🖨 Print" button appears in
   // the banner's upper-right corner (same position on every full-page report
@@ -5280,7 +5298,7 @@
     ]);
   }
 
-  // ---------- T-Shirt Order Form (full-page screen) ----------
+  // ---------- T-Shirt Order Email (full-page screen) ----------
   function openTshirtOrderPage() {
     if (!state.emailTo) state.emailTo = state.appSettings.tshirtVendorEmail || "";
     if (!state.emailSubject) state.emailSubject = "ETCC Car Show — T-Shirt Order";
@@ -5296,7 +5314,7 @@
     host.innerHTML = "";
     if (!state.tshirtOrderPageOpen) return;
 
-    var head = buildPageBanner(closeTshirtOrderPage, "T-Shirt Order Form");
+    var head = buildPageBanner(closeTshirtOrderPage, "T-Shirt Order Email");
 
     var body = el("div", { class: "api-page-inner" });
 
