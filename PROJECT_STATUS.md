@@ -1,11 +1,100 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-14 (end of session, latest). **T-Shirt Report rows are now
-normalized to one row per shirt size, and every report builder (Sponsor/Registration/
-Member/T-Shirt/Car Show) gained multi-column sort.** One checkpoint: **`637c50a`**
-(v5.57), deployed and pushed; live site is **v5.57**.
+Last updated: 2026-09-15 (end of session, latest). **The main login page (index.php)
+now accepts a second, hidden admin password** in addition to the normal site password —
+and a real bug in both password-reset flows (they'd have silently deleted that hidden
+password on first use) was found and fixed in the same session. Two checkpoints:
+**`f448b69`** (v5.59, the feature + fix) and **`a1bc80e`** (v5.60, a no-op version-bump
+from this `/ETCCCarShowAll` run) — both deployed and pushed; live site is **v5.60**.
 
-## This session's work (2026-09-14, T-Shirt Report normalization + multi-column sort)
+## This session's work (2026-09-15, hidden admin login password)
+
+User initially asked to "create a website login page at https://etccapps.com/apps/
+carshow/admin like screenshot" — a screenshot of the app's *existing* login screen
+(`_login.html`), which already matched what was asked for pixel-for-pixel. Investigating
+revealed the real ask needed clarifying:
+
+- **First false start**: assumed this meant deploying a second copy of the app to a new
+  path on a possibly-new domain. Investigation found the deploy FTP account
+  (`deploy/.ftp-credentials`, `FTP_HOST=ftp.etccapps.com`) is **chroot-jailed to the
+  current carshow folder** — confirmed by requesting `../` over FTP, which returned the
+  identical directory listing rather than a parent. So `etccapps.com` turned out to
+  already be the *same* server this app already lives on (the FTP hostname itself says
+  so) — `etccwebsite.com` in the footer/emails is just the public-facing domain name
+  pointed at this same hosting, not a different server. A new path on that domain would
+  still need its own separate FTP account scoped to it — this app's own FTP account
+  can't reach outside its jail no matter which domain fronts it.
+- **User's actual ask, once clarified**: "can we just have a second hidden password that
+  the current login page accepts" — much simpler, no new deployment at all. Implemented
+  as:
+  - New `$ADMIN_PASSWORD_HASH` in `App/deploy/secrets.php` (gitignored, not committed —
+    local repo copy IS updated, but see "manual deploy step" below) and documented (empty
+    by default) in `secrets.example.php`. The actual password isn't written here (this
+    file is committed/pushed to GitHub, unlike `secrets.php`) — the user chose it
+    directly and it's hashed with the same `openssl passwd -6` scheme the other two
+    passwords use.
+  - `index.php`'s `action=login` check (~line 19) now does
+    `hash_equals($PASSWORD_HASH, ...) || (!empty($ADMIN_PASSWORD_HASH) && hash_equals($ADMIN_PASSWORD_HASH, ...))`
+    — either password logs in to the exact same session the same way. Nothing in
+    `_login.html` or anywhere else in the UI hints a second password exists.
+  - **`secrets.php` is deliberately never auto-uploaded by `ftp-deploy.sh`** (see that
+    script's own comment — `reset-password.php` can rewrite the live copy directly, so an
+    ordinary deploy re-uploading a stale local copy would silently revert password
+    changes made via "Forgot password?"). This session's new hash was pushed to the live
+    server with **one manual `curl -T` command** (documented in `ftp-deploy.sh`'s own
+    comment block) — done once, not part of the repeatable checkpoint flow. **A new
+    session picking this up should know the local `secrets.php` and the live one are now
+    in sync as of this session — if either drifts, only $ADMIN_PASSWORD_HASH's value
+    would differ, everything else in that file follows the reset-flow's normal path.**
+  - **Verified live** (not just code review): a POST to
+    `https://etccapps.com/apps/carshow/index.php` with `action=login` and the chosen
+    admin password returned `{"success":true}`, and a wrong password returned
+    `{"success":false}` / HTTP 401 as expected. This confirms the actual site URL is
+    `https://etccapps.com/apps/carshow/` — the `etccwebsite.com` domain seen in the
+    footer text is a separate, cosmetic/marketing pointer, not the URL this app is
+    actually served from technically.
+- **Bug found and fixed while double-checking**, user explicitly asked: "confirm a
+  password reset only changes the normal password and does not change to admin
+  password." Investigation found both `reset-password.php` (main password reset) and
+  `dev-reset-password.php` (Developer-menu password reset) do a **full rewrite** of
+  `secrets.php` — each already knew to preserve the *other* hash and SMTP config (a
+  fix from an earlier, undocumented session — see `reset-password.php`'s own header
+  comment about an "earlier version...silently broke reset-email delivery"), but
+  **neither knew `$ADMIN_PASSWORD_HASH` existed**, since it didn't exist before this
+  session. Without the fix, completing either reset flow for real would have **silently
+  deleted** the hidden password from `secrets.php` (not merely left it unchanged — the
+  variable would vanish from the rewritten file, so `!empty($ADMIN_PASSWORD_HASH)` in
+  `index.php` would then always be false). Fixed by adding the exact same
+  read-then-re-emit preservation pattern already used for `$DEV_PASSWORD_HASH`, in both
+  files. **Not tested end-to-end against production** (that would require actually
+  triggering a real reset via `forgot-password.php`'s email flow, which would change the
+  real live main password — deliberately not done); the fix was verified by close code
+  reading only, matching the pre-existing `$DEV_PASSWORD_HASH` preservation exactly.
+
+## Known follow-ups / things a new session might need to know (2026-09-15 session,
+hidden admin password)
+
+- **The main password reset flow has never been exercised for real against production
+  since the `$ADMIN_PASSWORD_HASH` preservation fix landed.** Code-reviewed only, not
+  live-tested (see above — a live test would change the real site password). Worth doing
+  once, deliberately, if anyone wants certainty before depending on it: use "Forgot
+  password?", complete a reset, then confirm both the new main password AND the
+  (unchanged) admin password still log in afterward.
+- **The actual technical site URL is `https://etccapps.com/apps/carshow/`**, confirmed
+  live this session — not `etccwebsite.com`, which only appears as a cosmetic domain in
+  footer text/emails and is not necessarily the URL this app is reachable at. If a future
+  session needs to hit the live site directly (curl, browser), use the etccapps.com URL.
+- **The FTP account (`deploy/.ftp-credentials`) is chroot-jailed** to the current
+  carshow folder — confirmed by testing `../` this session. Any future request to deploy
+  a *second*, separate copy of this (or another) app to a different path/domain will need
+  its own separate FTP account created in hPanel, scoped to that destination — this
+  account cannot reach outside its own folder no matter what.
+- The admin password is intentionally undocumented in any user-facing text, and
+  deliberately NOT written in this file either (this file is committed/pushed to a
+  public-reachable git remote, unlike gitignored `secrets.php`) — it lives only in
+  `secrets.php`'s hash and with whoever the user told directly.
+
+## Previous session's work (2026-09-14, T-Shirt Report normalization + multi-column sort)
 
 Two related requests in one session, both touching the `genReport*` system and Sponsor
 Report's own (still separate) builder from the prior same-day session.
