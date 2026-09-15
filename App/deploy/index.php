@@ -19,7 +19,13 @@ require __DIR__ . '/lib.php';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login') {
     header('Content-Type: application/json');
     $pw = (string)($_POST['password'] ?? '');
-    $ok = hash_equals($PASSWORD_HASH, crypt($pw, $PASSWORD_HASH));
+    // Two valid passwords, same login form, same resulting session — a
+    // hidden admin password ($ADMIN_PASSWORD_HASH, secrets.php) that isn't
+    // hinted at anywhere in the UI, checked alongside the normal one. Empty/
+    // unset (the secrets.example.php default) disables it rather than
+    // matching everything, since crypt() against an empty hash is unsafe.
+    $ok = hash_equals($PASSWORD_HASH, crypt($pw, $PASSWORD_HASH)) ||
+        (!empty($ADMIN_PASSWORD_HASH) && hash_equals($ADMIN_PASSWORD_HASH, crypt($pw, $ADMIN_PASSWORD_HASH)));
     if ($ok) {
         session_regenerate_id(true);
         $_SESSION['carshow_authenticated'] = true;

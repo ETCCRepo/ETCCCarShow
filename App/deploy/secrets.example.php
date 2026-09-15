@@ -4,6 +4,11 @@
 //   openssl passwd -6 -salt "$(openssl rand -hex 8)" 'the-actual-password'
 $PASSWORD_HASH = '$6$replace-with-real-salt$replaceWithRealHashXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX.';
 
+// Optional second, hidden admin password — the main login page accepts
+// either this OR $PASSWORD_HASH above (see index.php's action=login check).
+// Not surfaced anywhere in the UI; leave unset/empty to disable it.
+$ADMIN_PASSWORD_HASH = '';
+
 // Separate "Developer" password (app.js's Developer Login screen, hamburger
 // menu > 🛠 Developer) — a distinct credential from $PASSWORD_HASH above.
 // Same generation command, different password. If left empty/unset, the

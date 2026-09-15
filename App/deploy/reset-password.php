@@ -36,10 +36,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
         // rewrite with only $PASSWORD_HASH and silently broke reset-email
         // delivery the first time someone completed a reset. Also preserve
         // $DEV_PASSWORD_HASH (the separate Developer-menu password, see
-        // dev-reset-password.php) for the same reason — this reset flow only
-        // touches the main login password, not that one.
+        // dev-reset-password.php) and $ADMIN_PASSWORD_HASH (the hidden
+        // second login password index.php also accepts) for the same
+        // reason — this reset flow only touches the main login password,
+        // not either of those.
         $SMTP_HOST = $SMTP_PORT = $SMTP_USER = $SMTP_PASS = $SMTP_FROM = null;
         $DEV_PASSWORD_HASH = null;
+        $ADMIN_PASSWORD_HASH = null;
         if (is_file($SECRETS_FILE)) require $SECRETS_FILE;
 
         $newHash = crypt($pw1, '$6$' . bin2hex(random_bytes(8)) . '$');
@@ -48,6 +51,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
             '// Not committed to git (see .gitignore) — the live site\'s actual password hash.',
             '$PASSWORD_HASH = ' . var_export($newHash, true) . ';',
         ];
+        if ($ADMIN_PASSWORD_HASH !== null) {
+            $lines[] = '';
+            $lines[] = '// Hidden second login password (see index.php\'s action=login check).';
+            $lines[] = '$ADMIN_PASSWORD_HASH = ' . var_export($ADMIN_PASSWORD_HASH, true) . ';';
+        }
         if ($DEV_PASSWORD_HASH !== null) {
             $lines[] = '';
             $lines[] = '// Separate Developer password (hamburger > \xf0\x9f\x9b\xa0 Developer).';

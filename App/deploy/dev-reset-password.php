@@ -2,8 +2,9 @@
 // Reached via the link dev-forgot-password.php emails to the admin address.
 // Mirrors reset-password.php exactly, but validates against
 // dev-password-reset.json and rewrites $DEV_PASSWORD_HASH instead of
-// $PASSWORD_HASH — preserving that main password and any SMTP config already
-// in secrets.php, same reasoning as reset-password.php's own preservation.
+// $PASSWORD_HASH — preserving that main password, the hidden
+// $ADMIN_PASSWORD_HASH, and any SMTP config already in secrets.php, same
+// reasoning as reset-password.php's own preservation.
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 require __DIR__ . '/lib.php';
 
@@ -28,6 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
         $errors[] = 'Passwords do not match.';
     } else {
         $PASSWORD_HASH = null;
+        $ADMIN_PASSWORD_HASH = null;
         $SMTP_HOST = $SMTP_PORT = $SMTP_USER = $SMTP_PASS = $SMTP_FROM = null;
         if (is_file($SECRETS_FILE)) require $SECRETS_FILE;
 
@@ -36,6 +38,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
         if ($PASSWORD_HASH !== null) {
             $lines[] = '// Not committed to git (see .gitignore) — the live site\'s actual password hash.';
             $lines[] = '$PASSWORD_HASH = ' . var_export($PASSWORD_HASH, true) . ';';
+        }
+        if ($ADMIN_PASSWORD_HASH !== null) {
+            $lines[] = '';
+            $lines[] = '// Hidden second login password (see index.php\'s action=login check).';
+            $lines[] = '$ADMIN_PASSWORD_HASH = ' . var_export($ADMIN_PASSWORD_HASH, true) . ';';
         }
         $lines[] = '';
         $lines[] = '// Separate Developer password (hamburger > \xf0\x9f\x9b\xa0 Developer).';
