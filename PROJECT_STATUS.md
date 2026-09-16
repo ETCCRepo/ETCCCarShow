@@ -1,12 +1,65 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-16 (end of session, latest). **A long, request-by-request session
+Last updated: 2026-09-16 (end of session, latest). **Sponsors gained a Donation field —
+the biggest single piece of a second long session today.** One checkpoint
+(**`ea8af6e`**, v5.77), deployed and pushed; live site is **v5.77**.
+
+**1. Order T-Shirt's Reason dropdown: dropped "Sponsor."** Earlier today's new Reason
+field (Walk-in/Member/Sponsor) lost its third option on a follow-up ask — now just
+Walk-in/Member, still defaulting to Walk-in. `tshirt-purchases.php`'s doc comment and
+`app.js`'s state-field comment updated to match; no change to already-saved records that
+have "Sponsor" stored (historical data displays as-is).
+
+**2. "Become a Car Show Sponsor" gained a Donation field — the session's main feature.**
+Both `public-sponsor-form.php` and `member-sponsor-form.php` gained a currency
+**Donation** field right after Sponsor Type, defaulting to **$250 Premier / $100
+Corporate/Individual** and re-applying on Sponsor Type change only until the visitor
+types into it themselves. Submitting with Donation at **$0** now also writes a $0
+payment dated today straight to `sponsor-payments.json` — nothing owed, nothing to
+collect, no dangling "unpaid" sponsor for an officer to chase.
+
+App-wide (`app.js`): a new `donation` field threaded through
+`sponsorFieldText`/`sponsorSortValue`/`buildSponsorRecord`/`blankSponsor`; a new
+**Donation** column on the Sponsors tab (right after Sponsor Type, per an explicit ask);
+`backfillSponsorDonations()` (fills the per-type default for any sponsor missing it,
+wired into the same four load/save points `backfillPaymentDefaults()` already uses —
+idempotent, never overwrites an existing value including a deliberate $0).
+`sponsorAmountIsZero()` (the Paid/Unpaid filter and "Mark Paid…" button's gate) now
+treats a $0-Donation sponsor as always paid, regardless of payment history. Both the
+Edit Sponsor modal's own Record Payment section and the separate Mark Paid modal now
+default the payment Amount to the sponsor's actual Donation instead of a flat per-type
+fee.
+
+**One same-day correction, worth calling out explicitly**: the first pass made the
+Summary tab's sponsor totals sum pledged Donations. The user came back minutes later —
+*"the totals should be the sum of the donations **paid**"* — so that sum was reverted to
+what it was before this feature (each sponsor's last recorded PAYMENT amount, 0 if
+none). **Donation drives the paid/unpaid determination and per-sponsor defaults; it does
+NOT drive the Summary tab's dollar totals** — don't re-introduce that conflation.
+
+## Known follow-ups / things a new session might need to know (2026-09-16, Donation field)
+
+- **`/ETCCCarShowTest` was not run** for this session's work (not requested). The Donation
+  feature in particular touches paid/unpaid logic, Summary tab totals, and an automated
+  backfill — worth an explicit test pass before relying on it unattended.
+- **Donation vs. "amount paid" is two separate numbers now — don't conflate them again.**
+  `sponsor.donation` = pledged/owed (drives Sponsors-tab display, paid/unpaid
+  determination when it's $0, and default Amount in the payment modals). The Summary
+  tab's dollar totals = actual payments collected (`getLastPaymentForSponsor`). A first
+  pass this session summed Donation for the Summary totals; the user corrected it within
+  minutes. See the entry above for the reasoning either way.
+- **The $0-Donation auto-paid path has not been exercised on the live site** — built and
+  code-reviewed, but no one has actually submitted a real $0-Donation sponsorship through
+  `public-sponsor-form.php`/`member-sponsor-form.php` yet to confirm the sponsor shows up
+  correctly marked Paid with today's date.
+
+Previous update: 2026-09-16 (earlier the same day). **A long, request-by-request session
 touching the T-Shirt Order Email, T-Shirt Report, four report-builder screens plus
 Sponsor Report/Registration tab/Summary tab (new Export buttons), password reset link
-TTL, and the Order T-Shirt screen.** Live site is **v5.73**, one checkpoint this session
-(**`1b613ef`**), deployed and pushed. **Also confirmed unchanged**: the Registration
-tab's checkbox-select + "🪟 Print Window Cards" bulk-print already existed and works as
-asked — nothing needed building there.
+TTL, and the Order T-Shirt screen.** Live site was **v5.73** at that point, one
+checkpoint (**`1b613ef`**), deployed and pushed. **Also confirmed unchanged**: the
+Registration tab's checkbox-select + "🪟 Print Window Cards" bulk-print already existed
+and works as asked — nothing needed building there.
 
 **1. T-Shirt Order Email.** Premier/Corporate sponsor lines now carry a trailing
 "(M/D)" reg date (`tshirtEmailRegDateShort()`) — the list was already sorted ascending
