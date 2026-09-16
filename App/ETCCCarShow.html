@@ -594,7 +594,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-credit">v5.93 &middot; Deployed 09/16/2026 05:53 AM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
+  <div class="footer-credit">v5.105 &middot; Deployed 09/16/2026 09:23 AM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
 <script>
 /* @license
@@ -2452,17 +2452,38 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     // state.financials itself since that array gets wholesale-replaced by
     // whatever the server echoes back on every save.
     financialsExpandedIds: {},
-    // Financials tab > "Save Report"/"History" — named, timestamped snapshots
-    // of the whole financials list, kept separately from the live-edited
-    // list itself (see financials.php's save_report/list_reports/load_report
-    // actions). financialsHistoryOpen is the modal's open/closed flag;
-    // financialsReports/financialsReportsLoaded are only populated once the
-    // History modal is actually opened.
-    financialsHistoryOpen: false,
-    financialsReports: [],
-    financialsReportsLoaded: false,
-    financialsReportsLoading: false,
-    financialsReportsError: null,
+    // Financials tab navigation — the tab opens on a three-choice menu
+    // (Import / View / Project), not straight into an editor:
+    //   "menu"   → buildFinancialsMenu()
+    //   "picker" → buildFinancialsPicker(), listing this show's live
+    //              financials plus every saved report to pick from;
+    //              financialsPickerMode says which choice opened it
+    //   "editor" → buildFinancialsEditor(), showing financialsEditItems
+    // financialsSource records WHERE the editor's items came from, which is
+    // also where its saves go back to: { kind: "live" } is this show's own
+    // financials.json, { kind: "report", id, label } is one saved snapshot.
+    // financialsProjecting = "Project" mode: every existing field is
+    // read-only and a separate editable Projected amount sits beside it.
+    // financialsSource always carries the show year it belongs to, since
+    // this tab can open a PAST show's financials, and every save has to go
+    // back to that year's own file rather than the open show's.
+    financialsScreen: "menu",
+    financialsPickerMode: "view",
+    financialsSource: { kind: "live", year: "" },
+    financialsEditItems: [],
+    financialsProjecting: false,
+    // Every show's financials + saved reports, for the picker (financials.php's
+    // list_all). Refetched each time the picker opens, so counts can't go
+    // stale behind a save.
+    financialsAll: [],
+    financialsAllLoading: false,
+    financialsAllLoaded: false,
+    financialsAllError: null,
+    // Financials tab > "Save Report" — named, timestamped snapshots of a
+    // whole financials list, kept per show year separately from that year's
+    // own live list (see financials.php's save_report/update_report/
+    // delete_report actions). They reach the UI through financialsAll above,
+    // which is what the View/Project picker lists.
     financialsSavingReport: false,
     // rowKey(r) -> integer Dash # (the judging-day placard number, e.g. 100,
     // 101, 200...) — assigned once per car by ensureDashNumbers() and then
@@ -2943,7 +2964,14 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         // Financials isn't part of carshow_boot_data()'s inlined payload
         // (see financials.php's own comment on why it's a separate file) —
         // load fresh, once, the first time this tab is opened this session.
-        if (id === "financials" && !state.financialsLoaded) loadFinancials();
+        if (id === "financials") {
+          // Selecting the tab always lands back on its Import/View/Project
+          // menu, so a half-finished editor from earlier in the session isn't
+          // what greets you on the way back.
+          state.financialsScreen = "menu";
+          state.financialsSource = { kind: "live", year: financialsCurrentYear() };
+          if (!state.financialsLoaded) loadFinancials();
+        }
       });
       return t;
     };
@@ -4210,11 +4238,46 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       ])
     ]));
 
-    // totals cards
-    container.appendChild(el("div", { class: "cards" }, [
-      card("Registrations", s.registrations),
-      card("Total Income", fmtMoney(totalIncome))
-    ]));
+    // Registrations + Total Income by category — one line: the headline
+    // Registrations/Total Income figures, then the same three components
+    // totalIncome sums (registration fees, Premier/Corporate sponsor fees,
+    // Walk-In T-Shirt purchases) broken out, PLUS Individual Sponsors shown
+    // for visibility only — it's a muted figure since that $ is already
+    // inside Registration Fees (each individual sponsor's fee rides on
+    // their own registration's Total Fee), same double-counting reason
+    // totalIncome's own comment gives; it isn't summed into Total Income.
+    (function () {
+      var premierTotal = sponsorStatsByType("premier").total;
+      var corporateTotal = sponsorStatsByType("corporate").total;
+      var individualTotal = sponsorStatsByType("individual").total;
+      // One inline "Label: $amount" (or bare number, for Registrations) run
+      // per figure, all on a single line — wrapping only if the panel is
+      // too narrow to fit them. The Individual Sponsors caveat is a hover
+      // tooltip instead of its own footnote line, to keep this to one line.
+      function stat(label, value, opts) {
+        opts = opts || {};
+        var kids = [
+          el("span", { style: "color:var(--muted)", text: label + ": " }),
+          el("span", { style: "font-weight:700" + (opts.muted ? "; color:var(--muted); font-weight:600" : ""), text: opts.raw ? String(value) : fmtMoney(value) })
+        ];
+        var wrap = el("span", { style: "white-space:nowrap" }, kids);
+        if (opts.title) wrap.title = opts.title;
+        return wrap;
+      }
+      var sep = function () { return el("span", { style: "color:var(--line)", text: "|" }); };
+      container.appendChild(el("div", { class: "panel", style: "padding:10px 14px; margin-bottom:10px" }, [
+        el("div", { style: "font-weight:700; color:var(--red-dark); font-size:15px; margin-bottom:6px", text: "Summary" }),
+        el("div", { style: "display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 14px; font-size:13px" }, [
+          stat("Registrations", s.registrations, { raw: true }), sep(),
+          stat("Total Income", totalIncome), sep(),
+          stat("Registration Fees", Number(s.funds) || 0), sep(),
+          stat("Premier Sponsors", premierTotal), sep(),
+          stat("Corporate Sponsors", corporateTotal), sep(),
+          stat("Walk-In T-Shirts", tshirtPurchaseTotal), sep(),
+          stat("Individual Sponsors (included in Registration Fees)", individualTotal, { muted: true, title: "Already counted in Registration Fees — not added into Total Income." })
+        ])
+      ]));
+    })();
 
     // sponsor cards (independent of the loaded CSVs — reads state.sponsors directly)
     container.appendChild(el("div", { class: "panel" }, [
@@ -4287,7 +4350,6 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     if (extra) kids.push(extra);
     return el("li", {}, kids);
   }
-  function card(k, v) { return el("div", { class: "card" }, [el("div", { class: "k", text: k }), el("div", { class: "v", text: String(v) })]); }
 
   // Appends "Total Men's" / "Total Women's" / "Grand Total" columns (row-wise
   // sums, using each group's gender) and a bottom "Total" footer row
@@ -8725,13 +8787,56 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         };
       });
       state.financialsUploadParsing = false;
+      // An import always lands on the OPEN show's financials, then drops
+      // straight into the editor showing what it just brought in.
       state.financials = toAdd;
+      state.financialsSource = { kind: "live", year: financialsCurrentYear() };
+      state.financialsAllLoaded = false;
+      state.financialsEditItems = toAdd;
+      state.financialsProjecting = false;
+      state.financialsScreen = "editor";
       saveFinancialsImmediate(toAdd);
     }).catch(function (err) {
       state.financialsUploadParsing = false;
       state.financialsUploadError = "Could not read that PDF: " + (err && err.message ? err.message : err);
       renderViews();
     });
+  }
+
+  // The OPEN show's year — the default target for anything that doesn't name
+  // one (the import, the initial load), and what tells a save whether it's
+  // writing this show's financials or some past show's.
+  function financialsCurrentYear() {
+    return state.currentShow ? String(state.currentShow.year) : "";
+  }
+
+  // Every show's financials and saved reports in one request, for the
+  // View/Project picker.
+  function loadFinancialsAll() {
+    if (!SITE_CONFIG.financialsApiUrl) return;
+    state.financialsAllLoading = true;
+    state.financialsAllError = null;
+    renderViews();
+    fetch(SITE_CONFIG.financialsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list_all" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.financialsAllLoading = false;
+        state.financialsAllLoaded = true;
+        if (r.ok && r.data && r.data.ok) {
+          state.financialsAll = r.data.shows || [];
+        } else {
+          state.financialsAllError = "Could not load the list of shows' financials.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.financialsAllLoading = false;
+        state.financialsAllLoaded = true;
+        state.financialsAllError = "Could not load the list of shows' financials — check your connection.";
+        renderViews();
+      });
   }
 
   function loadFinancials() {
@@ -8742,13 +8847,16 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     fetch(SITE_CONFIG.financialsApiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "list" })
+      body: JSON.stringify({ action: "list", year: financialsCurrentYear() })
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
       .then(function (r) {
         state.financialsLoading = false;
         state.financialsLoaded = true;
         if (r.ok && r.data && r.data.ok) {
           state.financials = r.data.items || [];
+          if (state.financialsSource.kind === "live" && state.financialsSource.year === financialsCurrentYear()) {
+            state.financialsEditItems = state.financials;
+          }
         } else {
           state.financialsError = "Could not load financials.";
         }
@@ -8777,12 +8885,18 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     fetch(SITE_CONFIG.financialsApiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "save", items: items })
+      body: JSON.stringify({ action: "save", items: items, year: state.financialsSource.year || financialsCurrentYear() })
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
       .then(function (r) {
         state.financialsSaving = false;
         if (r.ok && r.data && r.data.ok) {
-          state.financials = r.data.items || [];
+          var saved = r.data.items || [];
+          // Only the OPEN show's list is mirrored into state.financials —
+          // editing a past show's financials must not overwrite it.
+          if ((state.financialsSource.year || financialsCurrentYear()) === financialsCurrentYear()) {
+            state.financials = saved;
+          }
+          state.financialsEditItems = saved;
           state.financialsSaved = true;
         } else {
           state.financialsError = "Could not save — please try again.";
@@ -8799,14 +8913,53 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // time" pattern the Sponsor Type/shirt-size rows use elsewhere.
   var saveFinancials = debounce(saveFinancialsImmediate, 1200);
 
-  // ---- Saved report history ("Save Report" / "History") ----
-  // A named, timestamped snapshot of the CURRENT financials list — separate
-  // from the live-edited list itself, so saving one doesn't touch what's on
-  // screen and loading one back replaces the live list the same way an
-  // "Import Selected" would (immediate save, not debounced).
+  // Writes one saved snapshot's edited items back over itself (financials.php's
+  // update_report), for the View/Project screens when the thing on screen came
+  // from the report history rather than from this show's live financials.
+  function saveFinancialsReportItemsImmediate(items) {
+    var source = state.financialsSource;
+    if (!SITE_CONFIG.financialsApiUrl || source.kind !== "report") return;
+    state.financialsSaving = true;
+    state.financialsSaved = false;
+    state.financialsError = null;
+    renderViews();
+    fetch(SITE_CONFIG.financialsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update_report", id: source.id, items: items, year: source.year || financialsCurrentYear() })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.financialsSaving = false;
+        if (r.ok && r.data && r.data.ok) {
+          state.financialsEditItems = r.data.items || [];
+          state.financialsAllLoaded = false; // picker counts are stale now
+          state.financialsSaved = true;
+        } else {
+          state.financialsError = (r.data && r.data.error) || "Could not save — please try again.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.financialsSaving = false;
+        state.financialsError = "Could not save — check your connection.";
+        renderViews();
+      });
+  }
+  var saveFinancialsReportItems = debounce(saveFinancialsReportItemsImmediate, 1200);
+
+  // The editor's one save path, whichever source it's showing.
+  function saveFinancialsEdits(items) {
+    if (state.financialsSource.kind === "report") saveFinancialsReportItems(items);
+    else saveFinancials(items);
+  }
+
+  // ---- Saved reports ("Save Report") ----
+  // A named, timestamped snapshot of whatever the editor currently has open,
+  // filed under that same show year. Saving one doesn't touch what's on
+  // screen — it just adds another entry to the View/Project picker.
   function saveFinancialsReport() {
     if (!SITE_CONFIG.financialsApiUrl || state.financialsSavingReport) return;
-    if (!state.financials.length) return;
+    var items = financialsShownItems();
+    if (!items.length) return;
     var label = window.prompt("Name this saved report (e.g. \"After ClubExpress import\"):", "");
     if (label === null) return; // cancelled
     label = label.trim() || ("Report — " + new Date().toLocaleString());
@@ -8815,18 +8968,19 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     fetch(SITE_CONFIG.financialsApiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "save_report", items: state.financials, label: label })
+      body: JSON.stringify({
+        action: "save_report", items: items, label: label,
+        year: state.financialsSource.year || financialsCurrentYear()
+      })
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
       .then(function (r) {
         state.financialsSavingReport = false;
         if (r.ok && r.data && r.data.ok) {
-          state.financialsReports = r.data.reports || [];
-          state.financialsReportsLoaded = true;
+          state.financialsAllLoaded = false; // the picker has a new entry to pick up
         } else {
           state.financialsError = (r.data && r.data.error) || "Could not save report.";
         }
         renderViews();
-        renderFinancialsHistory();
       }).catch(function () {
         state.financialsSavingReport = false;
         state.financialsError = "Could not save report — check your connection.";
@@ -8834,89 +8988,31 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       });
   }
 
-  function loadFinancialsReports() {
-    if (!SITE_CONFIG.financialsApiUrl) return;
-    state.financialsReportsLoading = true;
-    state.financialsReportsError = null;
-    renderFinancialsHistory();
-    fetch(SITE_CONFIG.financialsApiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "list_reports" })
-    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
-      .then(function (r) {
-        state.financialsReportsLoading = false;
-        state.financialsReportsLoaded = true;
-        if (r.ok && r.data && r.data.ok) {
-          state.financialsReports = r.data.reports || [];
-        } else {
-          state.financialsReportsError = "Could not load saved reports.";
-        }
-        renderFinancialsHistory();
-      }).catch(function () {
-        state.financialsReportsLoading = false;
-        state.financialsReportsLoaded = true;
-        state.financialsReportsError = "Could not load saved reports — check your connection.";
-        renderFinancialsHistory();
-      });
-  }
-
-  function openFinancialsHistory() {
-    state.financialsHistoryOpen = true;
-    if (!state.financialsReportsLoaded) loadFinancialsReports();
-    else renderFinancialsHistory();
-  }
-  function closeFinancialsHistory() {
-    state.financialsHistoryOpen = false;
-    renderFinancialsHistory();
-  }
-
-  // Replaces the LIVE list with a saved report's snapshot and saves
-  // immediately — same "recall = restore" behavior as reverting to an old
-  // version, not a merge.
-  function recallFinancialsReport(id) {
-    if (!SITE_CONFIG.financialsApiUrl) return;
-    if (!window.confirm("Load this saved report? It will replace what's currently on the Financials tab.")) return;
-    fetch(SITE_CONFIG.financialsApiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "load_report", id: id })
-    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
-      .then(function (r) {
-        if (r.ok && r.data && r.data.ok && r.data.report) {
-          var items = r.data.report.items || [];
-          state.financials = items;
-          state.financialsHistoryOpen = false;
-          renderFinancialsHistory();
-          saveFinancialsImmediate(items);
-        } else {
-          state.financialsError = (r.data && r.data.error) || "Could not load that report.";
-          renderFinancialsHistory();
-        }
-      }).catch(function () {
-        state.financialsError = "Could not load that report — check your connection.";
-        renderFinancialsHistory();
-      });
-  }
-
-  function deleteFinancialsReport(id) {
+  // Deleting the snapshot that's currently open in the editor drops back to
+  // the picker rather than leaving an editor pointed at something gone.
+  function deleteFinancialsReport(year, id) {
     if (!SITE_CONFIG.financialsApiUrl) return;
     if (!window.confirm("Delete this saved report? This cannot be undone.")) return;
     fetch(SITE_CONFIG.financialsApiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "delete_report", id: id })
+      body: JSON.stringify({ action: "delete_report", id: id, year: year })
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
       .then(function (r) {
         if (r.ok && r.data && r.data.ok) {
-          state.financialsReports = r.data.reports || [];
-        } else {
-          state.financialsReportsError = (r.data && r.data.error) || "Could not delete that report.";
+          if (state.financialsSource.kind === "report" && state.financialsSource.id === id) {
+            state.financialsScreen = "picker";
+            state.financialsSource = { kind: "live", year: financialsCurrentYear() };
+            state.financialsEditItems = state.financials;
+          }
+          loadFinancialsAll();
+          return;
         }
-        renderFinancialsHistory();
+        state.financialsAllError = (r.data && r.data.error) || "Could not delete that report.";
+        renderViews();
       }).catch(function () {
-        state.financialsReportsError = "Could not delete that report — check your connection.";
-        renderFinancialsHistory();
+        state.financialsAllError = "Could not delete that report — check your connection.";
+        renderViews();
       });
   }
 
@@ -8924,73 +9020,338 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // Same "clone what's on screen into #printHost" pattern printSummaryReport()
   // uses — a plain read-only Income/Expense table, since the live editable
   // rows (inputs, ✕ buttons) have no business on a printed page.
+  // The bottom-line summary, as a table: one row per figure (Income,
+  // Expenses, Net Profit/Loss) against Actual, and in Project mode also
+  // Projected and the percentage difference between them. Shared by the
+  // on-screen editor and the printed copy so the two can't drift.
+  // A % difference off a zero actual is undefined, not 0% or infinity — it
+  // prints as "—".
+  function financialsPctDiff(actual, projected) {
+    if (!actual) return "—";
+    var pct = ((projected - actual) / Math.abs(actual)) * 100;
+    return (pct > 0 ? "+" : "") + pct.toFixed(1) + "%";
+  }
+  function buildFinancialsTotalsTable(income, expense, projectedIncome, projectedExpense, projecting) {
+    var net = income - expense;
+    var projectedNet = projectedIncome - projectedExpense;
+    var head = [el("th", { style: "text-align:left; padding:2px 10px 2px 0", text: "Description" }),
+      el("th", { style: "text-align:right; padding:2px 10px", text: "Actual" })];
+    if (projecting) {
+      head.push(el("th", { style: "text-align:right; padding:2px 10px", text: "Projected" }));
+      head.push(el("th", { style: "text-align:right; padding:2px 0 2px 10px", text: "% Diff" }));
+    }
+    function row(label, actual, projected, color) {
+      var style = "font-weight:700; font-size:15px" + (color ? "; color:" + color : "");
+      var cells = [
+        el("td", { style: style + "; padding:2px 10px 2px 0", text: label }),
+        el("td", { style: style + "; text-align:right; padding:2px 10px", text: fmtMoney(actual) })
+      ];
+      if (projecting) {
+        cells.push(el("td", { style: style + "; text-align:right; padding:2px 10px", text: fmtMoney(projected) }));
+        cells.push(el("td", { style: style + "; text-align:right; padding:2px 0 2px 10px", text: financialsPctDiff(actual, projected) }));
+      }
+      return el("tr", {}, cells);
+    }
+    return el("table", { class: "financials-totals-table", style: "border-collapse:collapse" }, [
+      el("thead", {}, [el("tr", {}, head)]),
+      el("tbody", {}, [
+        row("Income", income, projectedIncome, null),
+        row("Expenses", expense, projectedExpense, null),
+        row("Net Profit/Loss", net, projectedNet, net >= 0 ? "var(--good)" : "var(--warn)")
+      ])
+    ]);
+  }
+
+  // Both act on whatever the editor currently has open (this show's live
+  // financials or a saved report), and carry the Projected column only when
+  // it's actually in play.
   function printFinancials() {
-    var totalIncome = 0, totalExpense = 0;
-    state.financials.forEach(function (item) {
-      if (item.type === "income") totalIncome += Number(item.amount) || 0;
-      else totalExpense += Number(item.amount) || 0;
+    var shown = financialsShownItems();
+    var projecting = state.financialsProjecting;
+    var totalIncome = 0, totalExpense = 0, projectedIncome = 0, projectedExpense = 0;
+    shown.forEach(function (item) {
+      var amount = Number(item.amount) || 0;
+      var projected = item.projected == null ? amount : Number(item.projected) || 0;
+      if (item.type === "income") { totalIncome += amount; projectedIncome += projected; }
+      else { totalExpense += amount; projectedExpense += projected; }
     });
+    // Each category prints with its own transaction lines indented beneath
+    // it, so a printed copy carries the same detail the on-screen expand
+    // does rather than just the category subtotals.
     function table(title, items) {
-      var rows = items.map(function (item) {
-        return el("tr", {}, [
-          el("td", { text: item.category }),
-          el("td", { style: "text-align:right", text: fmtMoney(Number(item.amount) || 0) }),
-          el("td", { text: item.notes || "" })
-        ]);
+      var head = [el("th", { style: "text-align:left", text: "Category" }), el("th", { style: "text-align:right", text: "Amount" })];
+      if (projecting) head.push(el("th", { style: "text-align:right", text: "Projected" }));
+      var colSpan = projecting ? 3 : 2;
+      var rows = [];
+      items.forEach(function (item) {
+        var amount = Number(item.amount) || 0;
+        var cells = [
+          el("td", { style: "font-weight:600", text: item.category }),
+          el("td", { style: "text-align:right; font-weight:600", text: fmtMoney(amount) })
+        ];
+        if (projecting) {
+          cells.push(el("td", { style: "text-align:right; font-weight:600", text: fmtMoney(item.projected == null ? amount : Number(item.projected) || 0) }));
+        }
+        rows.push(el("tr", {}, cells));
+        (item.details || []).forEach(function (d) {
+          var label = [d.date || "", d.text || ""].filter(Boolean).join(" — ");
+          var detailCells = [
+            el("td", { style: "padding-left:18px; font-size:11px", text: label }),
+            el("td", { style: "text-align:right; font-size:11px", text: d.amount == null ? "" : fmtMoney(d.amount) })
+          ];
+          if (projecting) detailCells.push(el("td", {}));
+          rows.push(el("tr", {}, detailCells));
+        });
       });
       return el("div", { style: "flex:1 1 320px" }, [
         el("h4", { text: title }),
         el("table", { style: "width:100%; border-collapse:collapse" }, [
-          el("tbody", {}, rows.length ? rows : [el("tr", {}, [el("td", { text: "None" })])])
+          el("thead", {}, [el("tr", {}, head)]),
+          el("tbody", {}, rows.length ? rows : [el("tr", {}, [el("td", { colspan: String(colSpan), text: "None" })])])
         ])
       ]);
     }
+    var totals = [buildFinancialsTotalsTable(totalIncome, totalExpense, projectedIncome, projectedExpense, projecting)];
     var host = $("#printHost");
     host.innerHTML = "";
-    host.appendChild(buildPrintHeader("Car Show Financials Report"));
+    host.appendChild(buildPrintHeader((projecting ? "Projected Financials — " : "Financials — ") + financialsSourceLabel()));
     host.appendChild(el("div", { class: "panel" }, [
       el("div", { style: "display:flex; gap:24px; flex-wrap:wrap" }, [
-        table("Income", state.financials.filter(function (i) { return i.type === "income"; })),
-        table("Expenses", state.financials.filter(function (i) { return i.type !== "income"; }))
+        table("Income", shown.filter(function (i) { return i.type === "income"; })),
+        table("Expenses", shown.filter(function (i) { return i.type !== "income"; }))
       ]),
-      el("div", { style: "margin-top:14px; padding-top:14px; border-top:1px solid var(--line)" }, [
-        el("div", { style: "font-weight:700", text: "Total Income: " + fmtMoney(totalIncome) }),
-        el("div", { style: "font-weight:700", text: "Total Expenses: " + fmtMoney(totalExpense) }),
-        el("div", { style: "font-weight:700", text: "Net Profit/Loss: " + fmtMoney(totalIncome - totalExpense) })
-      ])
+      el("div", { style: "margin-top:14px; padding-top:14px; border-top:1px solid var(--line)" }, totals)
     ]));
     host.appendChild(buildPrintFooter());
     window.print();
   }
 
+  // One row per category, each followed by its own transaction detail rows
+  // (a leading Level column says which is which, so the file is still
+  // sortable/filterable once it's in a spreadsheet).
   function exportFinancialsCsv() {
-    if (!state.financials.length) return;
-    var lines = [["Category", "Type", "Amount", "Notes"].map(csvField).join(",")];
-    var totalIncome = 0, totalExpense = 0;
-    state.financials.forEach(function (item) {
+    var shown = financialsShownItems();
+    if (!shown.length) return;
+    var projecting = state.financialsProjecting;
+    var header = ["Level", "Category / Description", "Date", "Type", "Amount"];
+    if (projecting) header.push("Projected");
+    header.push("Notes");
+    var lines = [header.map(csvField).join(",")];
+    var totalIncome = 0, totalExpense = 0, projectedIncome = 0, projectedExpense = 0;
+    shown.forEach(function (item) {
       var amount = Number(item.amount) || 0;
-      if (item.type === "income") totalIncome += amount; else totalExpense += amount;
-      lines.push([item.category, item.type === "income" ? "Income" : "Expense", fmtMoney(amount), item.notes || ""].map(csvField).join(","));
+      var projected = item.projected == null ? amount : Number(item.projected) || 0;
+      if (item.type === "income") { totalIncome += amount; projectedIncome += projected; }
+      else { totalExpense += amount; projectedExpense += projected; }
+      var cells = ["Category", item.category, "", item.type === "income" ? "Income" : "Expense", fmtMoney(amount)];
+      if (projecting) cells.push(fmtMoney(projected));
+      cells.push(item.notes || "");
+      lines.push(cells.map(csvField).join(","));
+      (item.details || []).forEach(function (d) {
+        var detailCells = ["Detail", d.text || "", d.date || "", "", d.amount == null ? "" : fmtMoney(d.amount)];
+        if (projecting) detailCells.push("");
+        detailCells.push("");
+        lines.push(detailCells.map(csvField).join(","));
+      });
     });
+    function totalLine(label, value) {
+      var cells = ["Total", label, "", "", fmtMoney(value)];
+      if (projecting) cells.push("");
+      cells.push("");
+      return cells.map(csvField).join(",");
+    }
     lines.push("");
-    lines.push(["Total Income", "", fmtMoney(totalIncome), ""].map(csvField).join(","));
-    lines.push(["Total Expenses", "", fmtMoney(totalExpense), ""].map(csvField).join(","));
-    lines.push(["Net Profit/Loss", "", fmtMoney(totalIncome - totalExpense), ""].map(csvField).join(","));
+    lines.push(totalLine("Total Income", totalIncome));
+    lines.push(totalLine("Total Expenses", totalExpense));
+    lines.push(totalLine("Net Profit/Loss", totalIncome - totalExpense));
+    if (projecting) {
+      lines.push(totalLine("Projected Income", projectedIncome));
+      lines.push(totalLine("Projected Expenses", projectedExpense));
+      lines.push(totalLine("Projected Net Profit/Loss", projectedIncome - projectedExpense));
+    }
     downloadTextFile("car-show-financials.csv", lines.join("\n"), "text/csv");
+  }
+
+  // Whatever the editor currently has open — what Print/Export/Save Report
+  // all act on, whichever of the two sources it came from.
+  function financialsShownItems() {
+    return state.financialsEditItems || [];
+  }
+
+  function financialsSourceLabel(source) {
+    source = source || state.financialsSource;
+    var year = source.year || financialsCurrentYear();
+    if (source.kind === "report") return "Car Show " + year + " — " + (source.label || "Saved report");
+    return "Car Show " + year;
+  }
+
+  function openFinancialsEditor(source, items, projecting) {
+    if (!source.year) source.year = financialsCurrentYear();
+    state.financialsSource = source;
+    state.financialsEditItems = items || [];
+    state.financialsProjecting = !!projecting;
+    state.financialsExpandedIds = {};
+    state.financialsScreen = "editor";
+    state.financialsError = null;
+    state.financialsSaved = false;
+    renderViews();
   }
 
   function buildFinancialsView() {
     if (state.financialsLoading && !state.financialsLoaded) {
       return el("div", { class: "view" }, [el("div", { class: "panel" }, [el("div", { class: "hint" }, ["Loading…"])])]);
     }
+    if (state.financialsScreen === "picker") {
+      return el("div", { class: "view financials-view" }, [buildFinancialsPicker()]);
+    }
+    if (state.financialsScreen === "editor") {
+      return el("div", { class: "view financials-view" }, [buildFinancialsEditor()]);
+    }
+    return el("div", { class: "view financials-view" }, [buildFinancialsMenu()]);
+  }
+
+  // The tab's landing screen: Import / View / Project. Import goes straight
+  // to the file picker (and on to the editor once the PDF is parsed); the
+  // other two go to buildFinancialsPicker() to choose WHICH financials.
+  function buildFinancialsMenu() {
+    var uploadInput = el("input", { type: "file", accept: "application/pdf,.pdf", style: "display:none" });
+    uploadInput.addEventListener("change", function () {
+      if (uploadInput.files && uploadInput.files[0]) handleFinancialsPdfUpload(uploadInput.files[0]);
+      uploadInput.value = ""; // so re-selecting the same file still fires "change"
+    });
+
+    function choice(title, desc, onClick, disabled) {
+      var btn = el("button", {
+        type: "button", class: "btn",
+        style: "display:block; width:100%; text-align:left; padding:12px 14px; margin-bottom:10px"
+      }, [
+        el("div", { style: "font-weight:700; font-size:15px", text: title }),
+        el("div", { class: "hint", style: "margin-top:2px", text: desc })
+      ]);
+      if (disabled) btn.setAttribute("disabled", "disabled");
+      else btn.addEventListener("click", onClick);
+      return btn;
+    }
+
+    function openPicker(mode) {
+      state.financialsPickerMode = mode;
+      state.financialsScreen = "picker";
+      loadFinancialsAll(); // always refetched — a save may have changed the counts
+    }
+
+    var kids = [
+      el("h3", { text: "Financials" }),
+      el("div", { class: "hint", style: "margin-bottom:14px" }, [
+        "This show's income/expense summary — import it from the club's accounting export, " +
+        "open one to view and edit, or build projections against one."
+      ]),
+      choice(
+        state.financialsUploadParsing ? "📄 Import Financials — reading…" : "📄 Import Financials",
+        "Upload the club's \"Account Transactions\" PDF export. Its categories, totals and " +
+        "transaction detail REPLACE this show's financials, then open for editing.",
+        function () { uploadInput.click(); },
+        state.financialsUploadParsing
+      ),
+      choice("📋 View Financials",
+        "Pick this show's financials or any saved report, then view and edit it.",
+        function () { openPicker("view"); }),
+      choice("📈 Project Financials",
+        "Pick this show's financials or any saved report and enter projected amounts beside " +
+        "the real ones. The actual figures stay read-only.",
+        function () { openPicker("project"); }),
+      uploadInput
+    ];
+    if (state.financialsError) kids.push(el("div", { class: "form-error" }, [state.financialsError]));
+    if (state.financialsUploadError) kids.push(el("div", { class: "form-error" }, [state.financialsUploadError]));
+    return el("div", { class: "panel" }, kids);
+  }
+
+  // "Which financials?" — EVERY show year's live list plus each of its saved
+  // reports, newest show first, shared by both View and Project
+  // (state.financialsPickerMode says which, and that's what decides whether
+  // the editor opens read-only-with-projections or fully editable).
+  function buildFinancialsPicker() {
+    var projecting = state.financialsPickerMode === "project";
+    var currentYear = financialsCurrentYear();
+    var backBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["← Back"]);
+    backBtn.addEventListener("click", function () { state.financialsScreen = "menu"; renderViews(); });
+
+    function entry(label, sub, onOpen, onDelete) {
+      var openBtn = el("button", {
+        type: "button", class: "btn",
+        style: "flex:1 1 auto; text-align:left; padding:10px 12px"
+      }, [
+        el("div", { style: "font-weight:600", text: label }),
+        el("div", { class: "hint", style: "margin-top:2px", text: sub })
+      ]);
+      openBtn.addEventListener("click", onOpen);
+      var kids = [openBtn];
+      if (onDelete) {
+        var delBtn = el("button", { type: "button", class: "btn", title: "Delete this saved report", style: "padding:4px 10px; flex:0 0 auto" }, ["✕"]);
+        delBtn.addEventListener("click", onDelete);
+        kids.push(delBtn);
+      }
+      return el("div", { style: "display:flex; gap:6px; align-items:stretch; margin-bottom:8px" }, kids);
+    }
+
+    var kids = [
+      el("h3", { text: projecting ? "Project Financials" : "View Financials" }),
+      el("div", { class: "hint", style: "margin-bottom:12px" }, [
+        projecting
+          ? "Pick which show's financials to project from — any year, or any saved report. Its real figures open read-only, with an editable Projected amount beside each one."
+          : "Pick which show's financials to open — any year, or any saved report. Edits save automatically, back to whichever one you picked."
+      ])
+    ];
+
+    if (state.financialsAllLoading && !state.financialsAllLoaded) {
+      kids.push(el("div", { class: "hint" }, ["Loading…"]));
+    } else if (state.financialsAllError) {
+      kids.push(el("div", { class: "form-error" }, [state.financialsAllError]));
+    } else if (!state.financialsAll.length) {
+      kids.push(el("div", { class: "hint" }, ["No car shows found."]));
+    } else {
+      state.financialsAll.slice().sort(function (a, b) {
+        return String(b.year).localeCompare(String(a.year));
+      }).forEach(function (show) {
+        var year = String(show.year);
+        var items = show.items || [];
+        var reports = (show.reports || []).slice().sort(function (a, b) {
+          return (b.savedAt || "").localeCompare(a.savedAt || "");
+        });
+        kids.push(el("h4", { style: "margin:14px 0 6px", text: "Car Show " + year + (year === currentYear ? " (open show)" : "") }));
+        kids.push(entry(
+          "Car Show " + year,
+          items.length + " line item" + (items.length === 1 ? "" : "s") + " — this show's financials",
+          function () { openFinancialsEditor({ kind: "live", year: year }, items, projecting); },
+          null
+        ));
+        reports.forEach(function (r) {
+          var when = r.savedAt ? new Date(r.savedAt).toLocaleString() : "";
+          var count = (r.items || []).length;
+          kids.push(entry(
+            r.label || "Report",
+            when + " — " + count + " line item" + (count === 1 ? "" : "s") + " (saved report)",
+            function () {
+              openFinancialsEditor({ kind: "report", id: r.id, label: r.label, year: year }, (r.items || []).slice(), projecting);
+            },
+            function () { deleteFinancialsReport(year, r.id); }
+          ));
+        });
+      });
+    }
+
+    kids.push(el("div", { class: "settings-actions", style: "margin-top:12px" }, [backBtn]));
+    return el("div", { class: "panel" }, kids);
+  }
+
+  function buildFinancialsEditor() {
+    var items = financialsShownItems();
+    var projecting = state.financialsProjecting;
     var datalist = el("datalist", { id: "financialsCategoryList" },
       FINANCIALS_SUGGESTED_CATEGORIES.map(function (c) { return el("option", { value: c }); }));
 
-    // Two-column income-statement layout: a category's row lives in whichever
-    // column matches its CURRENT type, decided when the row is (re)built —
-    // switching the Income/Expense dropdown moves it to the other column on
-    // the next render (after the save that change triggers), same lag as the
-    // Total figures below already have.
+    // Two-column income-statement layout — a row's column IS its type (see
+    // addRow), so there's no type control on the row itself.
     var incomeWrap = el("div", {});
     var expenseWrap = el("div", {});
     var totalIncome = 0, totalExpense = 0;
@@ -9002,21 +9363,26 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     function collectAndSave() {
       var rows = Array.prototype.slice.call(incomeWrap.querySelectorAll(".financials-row"))
         .concat(Array.prototype.slice.call(expenseWrap.querySelectorAll(".financials-row")));
-      var items = rows.map(function (row) {
+      var collected = rows.map(function (row) {
+        var projectedInput = row.querySelector(".financials-projected");
         return {
           id: row.getAttribute("data-id") || "",
           category: row.querySelector(".financials-category").value.trim(),
           type: row.getAttribute("data-type") === "income" ? "income" : "expense",
           amount: Number(row.querySelector(".financials-amount").value) || 0,
           notes: row._notes || "",
-          details: row._details || []
+          details: row._details || [],
+          projected: projectedInput
+            ? (projectedInput.value === "" ? null : (Number(projectedInput.value) || 0))
+            : (row._projected == null ? null : row._projected)
         };
       }).filter(function (item) { return item.category !== ""; });
-      saveFinancials(items);
+      state.financialsEditItems = collected;
+      saveFinancialsEdits(collected);
     }
 
     function addRow(item) {
-      item = item || { id: "", category: "", type: "expense", amount: "", notes: "", details: [] };
+      item = item || { id: "", category: "", type: "expense", amount: "", notes: "", details: [], projected: null };
       var hasId = !!item.id;
       var expanded = hasId && !!state.financialsExpandedIds[item.id];
 
@@ -9042,11 +9408,28 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       // dropdown, no move button; a category that's really the other type
       // gets deleted and re-added with "+ Add Line" in that column.
       var removeBtn = el("button", { type: "button", class: "btn", title: "Remove this line", style: "padding:4px 10px; flex:0 0 auto" }, ["✕"]);
+      // Project mode: everything that describes what actually happened is
+      // locked, and a Projected figure sits beside the real one as the only
+      // editable thing on the row.
+      var projectedField = null;
+      if (projecting) {
+        categoryInput.setAttribute("disabled", "disabled");
+        amountField.input.setAttribute("disabled", "disabled");
+        projectedField = moneyInput({ value: item.projected == null ? "" : String(item.projected), placeholder: "Projected" });
+        projectedField.wrap.style.flex = "0 0 130px";
+        projectedField.input.className = "financials-projected";
+        projectedField.input.addEventListener("blur", collectAndSave);
+        projectedField.input.addEventListener("change", collectAndSave);
+      }
+      var rowKids = [toggleBtn, categoryInput, amountField.wrap];
+      if (projectedField) rowKids.push(projectedField.wrap);
+      else rowKids.push(removeBtn);
       var row = el("div", {
         class: "financials-row", style: "display:flex; gap:6px; align-items:center; margin-bottom:6px",
         "data-type": item.type === "income" ? "income" : "expense"
-      }, [toggleBtn, categoryInput, amountField.wrap, removeBtn]);
+      }, rowKids);
       if (item.id) row.setAttribute("data-id", item.id);
+      row._projected = item.projected == null ? null : Number(item.projected);
       // Notes has no input of its own anymore (dropped from the row), but
       // whatever was already saved there is kept round-tripping through
       // collectAndSave rather than being silently wiped on the next save.
@@ -9066,6 +9449,8 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         collectAndSave();
       });
       var targetWrap = item.type === "income" ? incomeWrap : expenseWrap;
+      var emptyHint = targetWrap.querySelector(".financials-empty-hint");
+      if (emptyHint) targetWrap.removeChild(emptyHint);
       targetWrap.appendChild(row);
 
       if (expanded) {
@@ -9086,140 +9471,135 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
             amtField.input.addEventListener("blur", collectAndSave);
             var delDetailBtn = el("button", { type: "button", class: "btn", title: "Remove this transaction line", style: "padding:2px 8px; flex:0 0 auto" }, ["✕"]);
             delDetailBtn.addEventListener("click", function () { row._details.splice(dIdx, 1); renderDetailRows(); collectAndSave(); });
-            detailsWrap.appendChild(el("div", { style: "display:flex; gap:6px; align-items:center; padding:2px 0" }, [dateInput, textInput, amtField.wrap, delDetailBtn]));
+            var detailKids = [dateInput, textInput, amtField.wrap];
+            if (projecting) {
+              [dateInput, textInput, amtField.input].forEach(function (i) { i.setAttribute("disabled", "disabled"); });
+            } else {
+              detailKids.push(delDetailBtn);
+            }
+            detailsWrap.appendChild(el("div", { style: "display:flex; gap:6px; align-items:center; padding:2px 0" }, detailKids));
           });
-          var addDetailBtn = el("button", { type: "button", class: "btn", style: "font-size:11px; padding:2px 8px; margin-top:4px" }, ["+ Add Line Item"]);
-          addDetailBtn.addEventListener("click", function () { row._details.push({ date: "", text: "", amount: null }); renderDetailRows(); });
-          detailsWrap.appendChild(addDetailBtn);
+          if (!projecting) {
+            var addDetailBtn = el("button", { type: "button", class: "btn", style: "font-size:11px; padding:2px 8px; margin-top:4px" }, ["+ Add Line Item"]);
+            addDetailBtn.addEventListener("click", function () { row._details.push({ date: "", text: "", amount: null }); renderDetailRows(); });
+            detailsWrap.appendChild(addDetailBtn);
+          }
         }
         renderDetailRows();
         targetWrap.appendChild(detailsWrap);
       }
     }
-    (state.financials.length ? state.financials : []).forEach(addRow);
-    state.financials.forEach(function (item) {
-      if (item.type === "income") totalIncome += Number(item.amount) || 0;
-      else totalExpense += Number(item.amount) || 0;
+    var totalProjectedIncome = 0, totalProjectedExpense = 0;
+    items.forEach(addRow);
+    items.forEach(function (item) {
+      var amount = Number(item.amount) || 0;
+      var projected = item.projected == null ? amount : Number(item.projected) || 0;
+      if (item.type === "income") { totalIncome += amount; totalProjectedIncome += projected; }
+      else { totalExpense += amount; totalProjectedExpense += projected; }
     });
 
-    var addBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["+ Add Line"]);
-    addBtn.addEventListener("click", function () { addRow(); });
+    // Project mode: every other field on a row is disabled, so the default
+    // Tab order would otherwise land on each row's (still-enabled) ▸ toggle
+    // button in between — jump straight from one Projected field to the
+    // next instead, in the same top-to-bottom-then-next-column reading
+    // order the two columns are laid out in.
+    if (projecting) {
+      var projectedInputs = Array.prototype.slice.call(incomeWrap.querySelectorAll(".financials-projected"))
+        .concat(Array.prototype.slice.call(expenseWrap.querySelectorAll(".financials-projected")));
+      projectedInputs.forEach(function (input, idx) {
+        input.addEventListener("keydown", function (e) {
+          if (e.key !== "Tab") return;
+          var target = idx + (e.shiftKey ? -1 : 1);
+          if (target < 0 || target >= projectedInputs.length) return; // let Tab leave the table normally
+          e.preventDefault();
+          projectedInputs[target].focus();
+          projectedInputs[target].select();
+        });
+      });
+    }
 
-    var uploadInput = el("input", { type: "file", accept: "application/pdf,.pdf", style: "display:none" });
-    uploadInput.addEventListener("change", function () {
-      if (uploadInput.files && uploadInput.files[0]) handleFinancialsPdfUpload(uploadInput.files[0]);
-      uploadInput.value = ""; // so re-selecting the same file still fires "change"
-    });
-    var uploadBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" },
-      [state.financialsUploadParsing ? "Reading…" : "📄 Upload Report"]);
-    if (state.financialsUploadParsing) uploadBtn.setAttribute("disabled", "disabled");
-    uploadBtn.addEventListener("click", function () { uploadInput.click(); });
+    var backBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["← Back"]);
+    backBtn.addEventListener("click", function () { state.financialsScreen = "menu"; renderViews(); });
+
+    // Two Add buttons, not one — a row's column IS its type, so which button
+    // you press is the only way to say which side a new category belongs on.
+    function addLineBtn(label, type) {
+      var btn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, [label]);
+      btn.addEventListener("click", function () {
+        addRow({ id: "", category: "", type: type, amount: "", notes: "", details: [], projected: null });
+      });
+      return btn;
+    }
 
     var saveReportBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" },
       [state.financialsSavingReport ? "Saving…" : "💾 Save Report"]);
-    if (state.financialsSavingReport || !state.financials.length) saveReportBtn.setAttribute("disabled", "disabled");
+    if (state.financialsSavingReport || !items.length) saveReportBtn.setAttribute("disabled", "disabled");
     saveReportBtn.addEventListener("click", saveFinancialsReport);
 
-    var historyBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["🕒 History"]);
-    historyBtn.addEventListener("click", openFinancialsHistory);
-
     var printBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["🖨 Print"]);
-    if (!state.financials.length) printBtn.setAttribute("disabled", "disabled");
+    if (!items.length) printBtn.setAttribute("disabled", "disabled");
     printBtn.addEventListener("click", printFinancials);
 
     var exportBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["⬇ Export"]);
-    if (!state.financials.length) exportBtn.setAttribute("disabled", "disabled");
+    if (!items.length) exportBtn.setAttribute("disabled", "disabled");
     exportBtn.addEventListener("click", exportFinancialsCsv);
 
     var saveStatus = [];
     if (state.financialsSaving) saveStatus.push(el("span", { class: "count" }, ["Saving…"]));
     else if (state.financialsSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
     if (state.financialsError) saveStatus.push(el("div", { class: "form-error" }, [state.financialsError]));
-    if (state.financialsUploadError) saveStatus.push(el("div", { class: "form-error" }, [state.financialsUploadError]));
 
     var kids = [
-      el("h3", { text: "Financials" }),
+      el("h3", { text: (projecting ? "Projected: " : "") + financialsSourceLabel() }),
       el("div", { class: "hint", style: "margin-bottom:12px" }, [
-        "A short income/expense summary for this show year — enter each category by hand, or click " +
-        "\"Upload Report\" to pull categories and totals straight out of the club's \"Account Transactions\" " +
-        "PDF export (this REPLACES whatever's currently listed below — use \"Save Report\" first if you want " +
-        "to keep a copy). Changes save automatically as you type."
+        projecting
+          ? "Every real figure below is read-only — type a what-if number in the Projected column beside it. " +
+            "A category left blank projects at its actual amount. Projections save automatically, onto this " +
+            "same " + (state.financialsSource.kind === "report" ? "saved report" : "show's financials") + "."
+          : "Income and expense categories for " + financialsSourceLabel() + ". Expand a category (▸) to see " +
+            "and edit the individual transactions behind it. Changes save automatically as you type, back to " +
+            (state.financialsSource.kind === "report"
+              ? "this saved report."
+              : "Car Show " + (state.financialsSource.year || financialsCurrentYear()) + "'s own financials.")
       ]),
       datalist
     ];
-    if (!state.financials.length) {
+    if (!items.length) {
       kids.push(el("div", { class: "hint", style: "margin-bottom:10px" }, ["No financial line items yet."]));
     }
-    if (!incomeWrap.children.length) incomeWrap.appendChild(el("div", { class: "hint" }, ["None yet."]));
-    if (!expenseWrap.children.length) expenseWrap.appendChild(el("div", { class: "hint" }, ["None yet."]));
-    kids.push(el("div", { style: "display:flex; gap:24px; flex-wrap:wrap" }, [
-      el("div", { style: "flex:1 1 320px; min-width:280px" }, [
-        el("h4", { style: "margin:0 0 8px; color:var(--good)", text: "Income (" + fmtMoney(totalIncome) + ")" }),
-        incomeWrap
-      ]),
-      el("div", { style: "flex:1 1 320px; min-width:280px" }, [
-        el("h4", { style: "margin:0 0 8px; color:var(--warn)", text: "Expenses (" + fmtMoney(totalExpense) + ")" }),
-        expenseWrap
-      ])
-    ]));
-    kids.push(el("div", { class: "settings-actions" }, [addBtn, uploadBtn, uploadInput, saveReportBtn, historyBtn, printBtn, exportBtn].concat(saveStatus)));
-    kids.push(el("div", { class: "financials-total", style: "margin-top:14px; padding-top:14px; border-top:1px solid var(--line)" }, [
-      el("div", { style: "font-weight:700; font-size:15px" }, ["Total Income: " + fmtMoney(totalIncome)]),
-      el("div", { style: "font-weight:700; font-size:15px" }, ["Total Expenses: " + fmtMoney(totalExpense)]),
-      el("div", { style: "font-weight:700; font-size:15px; color:" + (totalIncome - totalExpense >= 0 ? "var(--good)" : "var(--warn)") },
-        ["Net Profit/Loss: " + fmtMoney(totalIncome - totalExpense)])
-    ]));
+    if (!incomeWrap.children.length) incomeWrap.appendChild(el("div", { class: "hint financials-empty-hint" }, ["None yet."]));
+    if (!expenseWrap.children.length) expenseWrap.appendChild(el("div", { class: "hint financials-empty-hint" }, ["None yet."]));
 
-    return el("div", { class: "view financials-view" }, [el("div", { class: "panel" }, kids)]);
-  }
-
-  // "🕒 History" modal — every saved report (name + timestamp) with a Load
-  // button, newest first. Same modal-backdrop pattern as renderImportHelp().
-  function renderFinancialsHistory() {
-    var host = $("#financialsHistoryHost");
-    if (!host) return;
-    host.innerHTML = "";
-    if (!state.financialsHistoryOpen) return;
-
-    var closeBtn = el("button", { class: "btn" }, ["✕"]);
-    closeBtn.addEventListener("click", closeFinancialsHistory);
-    var head = el("div", { class: "modal-head" }, [
-      el("h3", { text: "Saved Reports" }),
-      el("span", { class: "spacer" }), closeBtn
-    ]);
-
-    var bodyKids = [];
-    if (state.financialsReportsLoading) {
-      bodyKids.push(el("div", { class: "hint" }, ["Loading…"]));
-    } else if (state.financialsReportsError) {
-      bodyKids.push(el("div", { class: "form-error" }, [state.financialsReportsError]));
-    } else if (!state.financialsReports.length) {
-      bodyKids.push(el("div", { class: "hint" }, ["No saved reports yet — use \"Save Report\" on the Financials tab to snapshot the current list."]));
-    } else {
-      var sorted = state.financialsReports.slice().sort(function (a, b) {
-        return (b.savedAt || "").localeCompare(a.savedAt || "");
-      });
-      sorted.forEach(function (r) {
-        var when = r.savedAt ? new Date(r.savedAt).toLocaleString() : "";
-        var loadBtn = el("button", { type: "button", class: "btn primary", style: "font-size:12px; padding:4px 10px" }, ["Load"]);
-        loadBtn.addEventListener("click", function () { recallFinancialsReport(r.id); });
-        var deleteBtn = el("button", { type: "button", class: "btn", title: "Delete this saved report", style: "font-size:12px; padding:4px 10px" }, ["✕"]);
-        deleteBtn.addEventListener("click", function () { deleteFinancialsReport(r.id); });
-        bodyKids.push(el("div", { style: "display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--line)" }, [
-          el("div", {}, [
-            el("div", { style: "font-weight:600", text: r.label || "Report" }),
-            el("div", { class: "hint", text: when + " — " + ((r.items || []).length) + " line item" + ((r.items || []).length === 1 ? "" : "s") })
-          ]),
-          el("div", { style: "display:flex; gap:6px; flex:0 0 auto" }, [loadBtn, deleteBtn])
+    function column(title, color, wrap, actual, projected) {
+      var heading = projecting
+        ? title + " — actual " + fmtMoney(actual) + ", projected " + fmtMoney(projected)
+        : title + " (" + fmtMoney(actual) + ")";
+      var colKids = [el("h4", { style: "margin:0 0 8px; color:" + color, text: heading })];
+      if (projecting) {
+        colKids.push(el("div", { class: "hint", style: "display:flex; gap:6px; margin-bottom:4px" }, [
+          el("span", { style: "flex:3 1 0; min-width:0; padding-left:34px", text: "Category" }),
+          el("span", { style: "flex:0 0 130px", text: "Actual" }),
+          el("span", { style: "flex:0 0 130px", text: "Projected" })
         ]));
-      });
+      }
+      colKids.push(wrap);
+      return el("div", { style: "flex:1 1 360px; min-width:300px" }, colKids);
     }
+    kids.push(el("div", { style: "display:flex; gap:24px; flex-wrap:wrap" }, [
+      column("Income", "var(--good)", incomeWrap, totalIncome, totalProjectedIncome),
+      column("Expenses", "var(--warn)", expenseWrap, totalExpense, totalProjectedExpense)
+    ]));
 
-    var modal = el("div", { class: "modal" }, [head, el("div", { class: "modal-body" }, bodyKids)]);
-    modal.addEventListener("click", function (e) { e.stopPropagation(); });
-    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
-    backdrop.addEventListener("click", closeFinancialsHistory);
-    host.appendChild(backdrop);
+    var actions = [backBtn];
+    if (!projecting) actions.push(addLineBtn("+ Add Income", "income"), addLineBtn("+ Add Expense", "expense"));
+    actions.push(saveReportBtn, printBtn, exportBtn);
+    kids.push(el("div", { class: "settings-actions" }, actions.concat(saveStatus)));
+
+    kids.push(el("div", { class: "financials-total", style: "margin-top:14px; padding-top:14px; border-top:1px solid var(--line)" }, [
+      buildFinancialsTotalsTable(totalIncome, totalExpense, totalProjectedIncome, totalProjectedExpense, projecting)
+    ]));
+
+    return el("div", { class: "panel" }, kids);
   }
 
   // "❓ Instructions" next to an import button on the Setup tab — a static,
@@ -10424,7 +10804,6 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     document.body.appendChild(el("div", { id: "addRegHost" }));
     document.body.appendChild(el("div", { id: "confirmHost" }));
     document.body.appendChild(el("div", { id: "importHelpHost" }));
-    document.body.appendChild(el("div", { id: "financialsHistoryHost" }));
     document.body.appendChild(el("div", { id: "testsHost" }));
     document.body.appendChild(el("div", { id: "developerLoginHost" }));
     // window.__carshowSite is set (by index.php, before this script runs) —
@@ -10457,7 +10836,6 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       if (e.key === "Escape" && state.showPendingDelete) { cancelDeleteShow(); return; }
       if (e.key === "Escape" && state.clearSponsorsOpen) { closeClearSponsorsConfirm(); return; }
       if (e.key === "Escape" && state.importHelp) { closeImportHelp(); return; }
-      if (e.key === "Escape" && state.financialsHistoryOpen) { closeFinancialsHistory(); return; }
       if (e.key === "Escape" && state.deleteSelectedOpen) { closeDeleteSelectedConfirm(); return; }
       if (e.key === "Escape" && state.deleteRegSelectedOpen) { closeDeleteRegSelectedConfirm(); return; }
       if (e.key === "Escape" && state.menuOpen) { closeMenu(); return; }

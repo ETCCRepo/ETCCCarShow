@@ -12,25 +12,30 @@
 // reviewing what got parsed out of its own "Total <category>" subtotal rows.
 //
 // Each record is { id, category, type ("income"|"expense"), amount, notes,
-// details }. "details" is optional — the individual transaction lines (each
-// { date, text, amount }) a category was built from when it came in via
-// "Upload Report", kept purely so an officer can expand a category later and
-// see what fed it; hand-typed categories simply have an empty details list.
+// details, projected }. "details" is optional — the individual transaction
+// lines (each { date, text, amount }) a category was built from when it came
+// in via "Upload Report", kept purely so an officer can expand a category
+// later and see what fed it; hand-typed categories simply have an empty
+// details list. "projected" is the Financials tab's "Project" mode: a
+// what-if figure entered alongside (never replacing) the real amount, null
+// until someone types one.
 // Stored whole — 'save' replaces the entire list for the year in one shot
 // (the Financials tab has no per-row add/delete endpoint of its own; it
 // always POSTs its current full set of rows), same "save the whole thing"
 // shape app-settings.php uses, simpler than a real per-row API for a list an
 // officer edits a few times a year.
 //
-// Actions: list (default), save, save_report, list_reports, load_report,
-// delete_report.
+// Actions: list (default), save, list_all, save_report, update_report,
+// delete_report. Every action except list_all works on one show year, named
+// by the request body's "year" (falling back to ?year=); list_all spans
+// every show in the registry, which is what the tab's View/Project picker
+// lists.
 //
-// "Reports" (save_report/list_reports/load_report) are a separate, append-
-// only history of named snapshots — a whole copy of the current items list
-// plus a label and timestamp — stored in its own financials-reports.json so
-// an officer can save "as of" points (e.g. right after each PDF import) and
-// come back to any of them later without the live edits in progress
-// overwriting that history.
+// "Reports" (save_report/update_report/delete_report) are named snapshots —
+// a whole copy of a year's items list plus a label and timestamp — stored in
+// that year's own financials-reports.json so an officer can save "as of"
+// points (e.g. right after each PDF import) and come back to any of them
+// later without the live edits in progress overwriting that history.
 //
 // Auth via lib.php's carshow_authed() — same PHP-session-or-password dual
 // check every endpoint here uses.
@@ -57,10 +62,39 @@ if (!carshow_authed($PASSWORD_HASH, $input['password'] ?? ($_POST['password'] ??
     exit;
 }
 
-// Per-show data: every request must name the car show year it belongs to —
-// same reasoning as every other per-show endpoint here (index.php appends
-// ?year= to this URL in window.__carshowSite).
-$year = carshow_valid_year($_GET['year'] ?? ($input['year'] ?? ''));
+$action = (string)($input['action'] ?? 'list');
+
+// The one action that isn't about a single year: the Financials tab's
+// View/Project picker lists EVERY show's financials (2025 alongside 2026),
+// so it needs each year's own list and saved reports in one round trip
+// rather than one request per show. Answered before the per-year plumbing
+// below, since it belongs to no single year.
+if ($action === 'list_all') {
+    $registry = carshow_read_shows();
+    $out = [];
+    foreach ($registry['shows'] as $show) {
+        if (!is_array($show)) continue;
+        $y = carshow_valid_year($show['year'] ?? '');
+        if ($y === null) continue;
+        $itemsFile = carshow_show_file($y, 'financials.json');
+        $repFile = carshow_show_file($y, 'financials-reports.json');
+        $out[] = [
+            'year' => $y,
+            'name' => (string)($show['name'] ?? ''),
+            'items' => $itemsFile === null ? [] : carshow_read_json_list($itemsFile),
+            'reports' => $repFile === null ? [] : carshow_read_json_list($repFile),
+        ];
+    }
+    echo json_encode(['ok' => true, 'shows' => $out, 'current' => $registry['current']]);
+    exit;
+}
+
+// Per-show data: every other request names the car show year it belongs to.
+// The request BODY wins over ?year= here (unlike the other per-show
+// endpoints, which only ever touch the open show): this tab reads and edits
+// other years' financials too, and index.php has already pinned ?year= to
+// whichever show happens to be open.
+$year = carshow_valid_year($input['year'] ?? ($_GET['year'] ?? ''));
 if ($year === null) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Missing or invalid show year.']);
@@ -72,7 +106,6 @@ if ($file === null) {
     echo json_encode(['ok' => false, 'error' => 'Could not open the data directory for ' . $year . '.']);
     exit;
 }
-$action = (string)($input['action'] ?? 'list');
 
 if ($action === 'list') {
     echo json_encode(['ok' => true, 'items' => carshow_read_json_list($file)]);
@@ -134,6 +167,8 @@ function financials_clean_items($items) {
             'amount' => round((float)($item['amount'] ?? 0), 2),
             'notes' => trim((string)($item['notes'] ?? '')),
             'details' => financials_clean_details($item['details'] ?? null),
+            'projected' => ($item['projected'] ?? null) === null || $item['projected'] === ''
+                ? null : round((float)$item['projected'], 2),
         ];
     }
     return $clean;
@@ -164,24 +199,33 @@ if ($action === 'save_report') {
     exit;
 }
 
-if ($action === 'list_reports') {
-    echo json_encode(['ok' => true, 'reports' => carshow_read_json_list($reportsFile)]);
-    exit;
-}
-
-if ($action === 'load_report') {
+// Overwrites one saved snapshot's items in place, keeping its id/label/
+// savedAt — the Financials tab's View and Project modes edit a chosen
+// report directly (the live list has its own 'save' above), so "edit a
+// saved report" must not turn into "append another snapshot".
+if ($action === 'update_report') {
     $id = (string)($input['id'] ?? '');
+    $clean = financials_clean_items($input['items'] ?? null);
     $reports = carshow_read_json_list($reportsFile);
-    $found = null;
-    foreach ($reports as $r) {
-        if (is_array($r) && (string)($r['id'] ?? '') === $id) { $found = $r; break; }
+    $found = false;
+    foreach ($reports as $i => $r) {
+        if (is_array($r) && (string)($r['id'] ?? '') === $id) {
+            $reports[$i]['items'] = $clean;
+            $found = true;
+            break;
+        }
     }
-    if ($found === null) {
+    if (!$found) {
         http_response_code(404);
         echo json_encode(['ok' => false, 'error' => 'That saved report could not be found.']);
         exit;
     }
-    echo json_encode(['ok' => true, 'report' => $found]);
+    if (!carshow_write_json($reportsFile, $reports)) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => 'Could not save report.']);
+        exit;
+    }
+    echo json_encode(['ok' => true, 'items' => $clean, 'reports' => $reports]);
     exit;
 }
 
