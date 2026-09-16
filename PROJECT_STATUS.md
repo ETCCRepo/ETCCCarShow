@@ -1,6 +1,83 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-15 (end of session, latest). **The main login page (index.php)
+Last updated: 2026-09-16 (end of session, latest). **A long, request-by-request session
+touching the T-Shirt Order Email, T-Shirt Report, four report-builder screens plus
+Sponsor Report/Registration tab/Summary tab (new Export buttons), password reset link
+TTL, and the Order T-Shirt screen.** Live site is **v5.73**, one checkpoint this session
+(**`1b613ef`**), deployed and pushed. **Also confirmed unchanged**: the Registration
+tab's checkbox-select + "🪟 Print Window Cards" bulk-print already existed and works as
+asked — nothing needed building there.
+
+**1. T-Shirt Order Email.** Premier/Corporate sponsor lines now carry a trailing
+"(M/D)" reg date (`tshirtEmailRegDateShort()`) — the list was already sorted ascending
+by reg date. Renamed "T-Shirt Order Form" → "T-Shirt Order Email" everywhere (button,
+banner title, comments) — the screen's internal `tshirtOrder*` state/function names were
+left alone, only user-facing text changed.
+
+**2. T-Shirt Report — three related fixes, in order.** (a) Dropped the Free/Purchased
+distinction from the "Size" column text (`tshirtReportRows()`) — "Men's Free Large" and
+"Men's Xtra Large" both just print "Men's Large" now; `CONFIG.GROUPS[].label` itself was
+deliberately left alone since it's also the literal CSV column-name prefix
+(`SHIRT_BUCKETS`' `col`) used for import matching. (b) That same session, **renamed
+"Xtra" to "Purchased"** in the two places `CONFIG.GROUPS[].label` gets shown verbatim —
+the Registration Shirts matrix's column headers (`shirtMatrix()`) and the compact
+per-row Shirts-column summary (`groupShort()`) — again display-only, the underlying
+label/CSV-matching untouched. (c) Fixing (a) broke sorting: `tshirtReportRows()`'s
+`rank` was still the raw `CONFIG.SHIRT_BUCKETS` index (Free's 6 sizes, then Purchased's
+6), so "Men's Small" from each bucket sorted 6 slots apart despite now printing
+identical text — the report **looked** unsorted because the same label appeared twice.
+Fixed: `rank` is now gender+size only (`genderRank * 6 + sizeIndex`), so every row that
+prints the same label sorts into one contiguous block.
+
+**3. Export buttons — CSV, no library, added across two rounds.** Round one: the four
+generic report-builder screens (Registration/Car Show/T-Shirt/Member Reports) gained a
+shared **⬇ Export** button immediately left of 🖨 Print (`exportGenReportCsv()`,
+`buildPageBanner()`'s new `exportCallback` param — inserted so callers not passing it
+are unaffected). Round two, same day: **Sponsor Report** (its own separate
+implementation, predates and isn't wired into the generic screens —
+`exportSponsorReportCsv()`), the **Registration tab** (its toolbar's own Export —
+exactly what's on screen right now: current search/Status/In Car Show filters, the
+collapsed Shirts summary column, via a new `regCellText()` helper shared with the
+on-screen render), and the **Summary tab** (one CSV with a blank-line-separated section
+per dashboard panel — Overview, Sponsors by Type, Registration Shirts, Total Shirts
+Needed, Walk-In Purchases, Car Show generations, Clubs — reading the same data
+functions the dashboard itself calls, not the rendered DOM). All six export paths share
+`csvField()`/`downloadTextFile()` — UTF-8 BOM so Excel doesn't mangle accented
+names, `<a download>` blob trick, no ExcelJS/library involvement (ExcelJS stays scoped
+to `logic.js`'s own workbook + the regression suite, as before).
+
+**4. Password reset links: 1 hour → 24 hours.** `TOKEN_TTL_SECONDS` (3600 → 86400), the
+emailed link text, and the on-screen "valid for N hour(s)" confirmation — all three
+spots, in **both** `forgot-password.php` (site password) and `dev-forgot-password.php`
+(Developer password). `reset-password.php`/`dev-reset-password.php` needed no change —
+they just check the stored `expiresAt`, computed once at request time.
+
+**5. Order T-Shirt screen.** Renamed "Buy T-Shirt" → "Order T-Shirt" everywhere
+(button, banner title, every comment across `app.js`/`index.php`/
+`tshirt-purchases.php`). Removed the **"📋 Walk-In Purchase Details" button** — it
+turned out to open the exact same screen as "Order T-Shirt" (pure redundancy, not a
+distinct feature). Added a **Reason dropdown** (Walk-in / Member / Sponsor, default
+Walk-in) to the purchase form, persisted per-purchase (`tshirt-purchases.php` stores
+whatever object it's given verbatim, so no server-side change was needed beyond a doc
+comment) and shown as its own column in the purchase history table — an older purchase
+recorded before this field existed displays "Walk-in" (the only reason this screen ever
+supported) rather than a blank cell.
+
+## Known follow-ups / things a new session might need to know (2026-09-16 session)
+
+- **`/ETCCCarShowTest` was not run** for any of this session's work (not requested). All
+  of it is `app.js` UI/export wiring or standalone PHP (password reset) — zero automated
+  assertions either way, same category as most Setup-tab/Reports-tab features flagged in
+  earlier sessions' notes.
+- **CSV exports have not been opened/verified in Excel** — built and reviewed by
+  reading the code (correct field escaping, BOM, column/row shape match the preview),
+  but no one has actually downloaded and opened one of the six export paths yet.
+- **This session's edits landed on top of a large stretch of OTHER sessions' work**
+  (v5.30 through v5.60, per the "Previous update" entry below and git log) that this
+  session did not review in detail — if something in that range seems related to what's
+  documented here, check that entry rather than assuming it's covered above.
+
+Previous update: 2026-09-15 (end of session, latest). **The main login page (index.php)
 now accepts a second, hidden admin password** in addition to the normal site password —
 and a real bug in both password-reset flows (they'd have silently deleted that hidden
 password on first use) was found and fixed in the same session. Two checkpoints:
