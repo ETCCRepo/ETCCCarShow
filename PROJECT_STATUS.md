@@ -1,9 +1,30 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-16 (end of session, latest). **Financials tab redesigned around
-three modes — Import / View / Project — with a picker that spans EVERY car show year,
-not just the open one.** One checkpoint (**`e35ffd8`**, v5.106), deployed and pushed;
-live site is **v5.106**.
+Last updated: 2026-09-16 (end of session, latest). **Small, isolated fix: the sponsor
+forms' "Done" button is now labeled "Cancel"** — a short, separate session from the
+Financials tab work below. One checkpoint (**`d5b0575`**, v5.107), deployed and pushed;
+live site is **v5.107**.
+
+## This session's work (2026-09-16, later session — sponsor form button label)
+
+Small, self-contained fix — a new session, unrelated to the Financials tab work below.
+The user pointed at a screenshot of the public sponsorship form's button row (Done /
+Submit Sponsorship) and asked for Done → Cancel, clarifying the two buttons' behavior
+should be: Cancel doesn't add a sponsor, Submit Sponsorship adds one and closes the
+form.
+
+**Investigation found the behavior already matched the ask — only the label was
+wrong.** In both `App/deploy/public-sponsor-form.php` (line ~336) and
+`App/deploy/member-sponsor-form.php` (line ~395), the "Done" button is a
+`type="button"` that just does `location.href = $cancelUrl` (back to the app's Sponsors
+tab, or the club's public page) — it was never wired to submit anything. "Submit
+Sponsorship" is the actual `type="submit"` button that POSTs the form. So this was a
+one-word text change in each file (`Done` → `Cancel`), no logic touched. Built (bumps
+`version.json`), deployed via FTP, committed as `d5b0575`, pushed — v5.107 is live.
+
+## Known follow-ups / things a new session might need to know (2026-09-16, sponsor form button label)
+
+- None — this was a pure label fix with no behavior change and no open questions.
 
 ## This session's work (2026-09-16, later session — Financials tab: Import/View/Project + cross-year picker)
 
