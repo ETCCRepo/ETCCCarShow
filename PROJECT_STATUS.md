@@ -1,8 +1,148 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-16 (end of session, latest). **Sponsors gained a Donation field —
+Last updated: 2026-09-16 (end of session, latest). **New Financials tab feature set —
+PDF-driven category import (now with per-transaction detail lines), Save/History,
+Print/Export — built from scratch across many rapid follow-up requests in one session.**
+One checkpoint (**`96abb61`**, v5.94), deployed and pushed; live site is **v5.94**.
+
+## This session's work (2026-09-16, Financials tab: PDF import + history + print/export)
+
+Everything below lives in three files: `App/src/app.js` (client logic — the Financials
+tab is one big block of functions, all searchable by the `financials`/`Financials`
+prefix), `App/deploy/financials.php` (new — the server endpoint), and
+`App/deploy/.htaccess` (one CSP fix). The Financials tab itself already existed before
+this session (hand-typed category/type/amount/notes rows with autosave); this session
+added the "Upload Report" PDF pipeline and everything downstream of it, then iterated on
+it heavily based on rapid-fire feedback. **Read the whole entry before touching this
+code again — several early design choices were explicitly reversed later in the same
+session**, called out below.
+
+**1. Fixed "Upload Report" not working at all.** The PDF-worker Blob URL
+(`ensurePdfjsWorker()`, `app.js` ~line 6280) was being blocked by the site's own CSP —
+`script-src` had no `blob:`. Fixed in `App/deploy/.htaccess`: added `blob:` to
+`script-src` and a new `worker-src 'self' blob:'` directive. **Watch for this if any
+other feature ever needs a Web Worker or blob: URL — the CSP is intentionally strict
+everywhere else.**
+
+**2. PDF parsing now captures per-transaction detail lines, not just category totals.**
+`extractFinancialsCategories()` (`app.js`) always parsed each category's "Total ..."
+subtotal row; it now also calls `extractFinancialsDetailLines()` on every raw line
+between a category's header and its Total row, producing `{date, text, amount}` entries.
+**This went through three different strategies in one session — the final one is what's
+live:**
+  - v1: multi-line buffering that merged everything between amount-bearing lines into one
+    entry (lost the "one PDF line, one entry" guarantee).
+  - v2 (per explicit ask, "keep all line items"): one detail entry per raw PDF line, no
+    merging at all — but this surfaced every column-wrap fragment as its own bogus
+    $0.00 row (e.g. "Stripe Payout - Daly - Car" / "May 16, 2025 - 35.38 4022 Car Show" /
+    "Show" as three separate rows).
+  - **v3 (current, per explicit ask, "merge 0.00 lines with lines that have non-zero
+    payment"): `mergeFinancialsZeroDetails()`** — every $0.00/blank-amount fragment is
+    folded into whichever ACTUAL-amount line is closest to it (by array position),
+    preserving original print order in the merged text. A category with NO non-zero
+    lines at all is left as one un-merged list (nothing to fold into).
+  - **If a future session touches this again: the current behavior (v3) is almost
+    certainly what's wanted — don't reintroduce v1's buffering or revert to v2's raw
+    per-line dump without being asked.**
+
+**3. Category names are cleaned on import.** `cleanFinancialsCategoryName()` strips the
+literal words "Car Show" and "Reeder" (case-insensitive) plus whatever `-`/`:`
+punctuation is left dangling, so `"Car Show - Reeder:Sponsors"` → `"Sponsors"`. **"Reeder"
+is hardcoded** (this year's show location, per an explicit ask) — a future year's report
+will need this updated (or generalized) if the location name changes.
+
+**4. "Upload Report" REPLACES the list, not appends.** This reversed the original
+design: the very first version added a review/confirm screen (checkboxes, editable
+rows, a "Import Selected" button) where categories were merged into the existing list.
+That entire review screen was **removed** later in the session ("eliminate review page
+and directly upload and go to financials page") — upload now parses, then saves straight
+to the main tab, no confirmation step. Then, separately, appending was changed to
+**replacing** ("uploaded financials should replace existing and not append") since
+re-uploading the same report was doubling every category. `handleFinancialsPdfUpload()`
+now shows a `window.confirm()` warning how many existing line items will be replaced,
+suggesting "Save Report" first — then sets `state.financials` directly to the parsed
+list (no `.concat()`).
+
+**5. Two-column Income/Expense layout, on the MAIN tab (not just a one-time review).**
+`buildFinancialsView()` now splits `state.financials` into two side-by-side columns
+(`incomeWrap`/`expenseWrap`) with per-column subtotals, using each row's `data-type`
+DOM attribute (not a `<select>` — see point 7) to decide which column it renders in.
+
+**6. Expandable per-category transaction details, with add/delete, on the MAIN tab.**
+Each saved category row has a ▸/▾ toggle (disabled until the row has a real `id`, i.e.
+until it's been saved at least once) that reveals its `details` array as editable
+date/description/amount rows with a ✕ per row and a "+ Add Line Item" button. Expansion
+state persists in `state.financialsExpandedIds` (keyed by item id, NOT inside
+`state.financials` itself, since that array gets wholesale-replaced by every save
+response). `row._details` is the live working copy `collectAndSave()` reads back on
+every save — same "read straight off the DOM/closure, don't mirror into state on every
+keystroke" pattern the rest of this tab already used.
+
+**7. Removed the Income/Expense dropdown AND the Notes field from the main row UI** (both
+per explicit late-session asks). Type is now fixed by column placement alone (no
+`<select>`, no reassignment button — a miscategorized row is deleted and re-added with
+"+ Add Line" in the correct column). Notes has no input anymore, but **existing saved
+`notes` values are preserved** (round-tripped via `row._notes`, set once from `item.notes`
+at row-build time) rather than being silently wiped on the next autosave — just not
+shown or editable through this UI anymore.
+
+**8. Save Report / History — new server-side snapshot feature.** "💾 Save Report" prompts
+for a label and POSTs the current list to a new `save_report` action; "🕒 History" opens
+a modal (`renderFinancialsHistory()`, new `#financialsHistoryHost` DOM node, Escape-key
+wired in) listing every saved snapshot newest-first with **Load** and **✕ Delete**
+buttons. Backend: `App/deploy/financials.php` gained `save_report` / `list_reports` /
+`load_report` / `delete_report` actions, storing an array of
+`{id, label, savedAt, items}` in a new **`financials-reports.json`** per show year
+(separate file from `financials.json`, append-only except for explicit deletes). Loading
+a report REPLACES the live list (same "restore, not merge" behavior as the PDF import).
+
+**9. Print / Export, and "Net Profit/Loss" labeling.** "🖨 Print" clones a read-only
+Income/Expense table into `#printHost` (same `buildPrintHeader`/`buildPrintFooter`
+pattern every other report in this app uses) and calls `window.print()`. "⬇ Export"
+downloads a CSV (`csvField`/`downloadTextFile`, both pre-existing shared helpers) with
+category/type/amount/notes plus totals. The bottom total line (main view, print, and
+CSV) now reads **"Net Profit/Loss"** instead of just "Net" (explicit ask).
+
+**10. Long-field truncation fix.** Category/Notes/detail-description `<input>`s now use
+`flex-basis:0` with a bigger `flex-grow` (category `3`, notes `1`) instead of fixed
+widths, plus a `title` attribute that updates live on every keystroke — so a name too
+long even for the wider field is still readable via hover tooltip. Applies to the main
+tab's category input and each detail row's description input.
+
+**Data shape change**: financials line items now carry an optional `details: [{date,
+text, amount}]` array (`App/deploy/financials.php`'s `financials_clean_items()` /
+`financials_clean_details()` validate and round it same as every other field). Existing
+records saved before this session simply have no `details` key — treated as `[]`
+everywhere it's read.
+
+## Known follow-ups / things a new session might need to know (2026-09-16, Financials session)
+
+- **`/ETCCCarShowTest` was not run.** This is a substantial new feature surface (PDF
+  parsing, a new PHP endpoint, a new JSON file per show year) with zero regression
+  coverage — worth an explicit test pass, and worth adding real test cases for
+  `extractFinancialsDetailLines()`/`mergeFinancialsZeroDetails()`/
+  `cleanFinancialsCategoryName()` given how much back-and-forth the parsing logic went
+  through.
+- **PHP syntax was NOT locally verified** — no `php` binary available in this dev
+  environment (`php -l` failed with "command not found"). `App/deploy/financials.php`
+  was reviewed by eye instead. If anything in the Financials tab breaks server-side after
+  this deploy, check that file first.
+- **The PDF parsing is still heuristic, not a real table parser.** It assumes the club's
+  "Account Transactions" export keeps the same row shape (`"Total <category> <debit>
+  <credit>"` subtotal rows, transaction rows in between). A differently-formatted export
+  (different accounting software, a different report type) will likely need
+  `extractFinancialsCategories()`/`extractFinancialsDetailLines()` revisited.
+- **"Reeder" is hardcoded** in `cleanFinancialsCategoryName()` — next year's show
+  location name will need this line updated (or the whole thing generalized to strip
+  "the current show's location name" instead of a literal string).
+- **Not user-tested with a real PDF upload end-to-end this session** — the parsing
+  logic was iterated on based on screenshots of intermediate results, but no final
+  "upload a real report, confirm the categories/amounts/details all look right, save,
+  reload the page, confirm it persisted" pass was explicitly confirmed back by the user.
+
+Previous update: 2026-09-16 (earlier the same day). **Sponsors gained a Donation field —
 the biggest single piece of a second long session today.** One checkpoint
-(**`ea8af6e`**, v5.77), deployed and pushed; live site is **v5.77**.
+(**`ea8af6e`**, v5.77), deployed and pushed; live site was **v5.77** at that point.
 
 **1. Order T-Shirt's Reason dropdown: dropped "Sponsor."** Earlier today's new Reason
 field (Walk-in/Member/Sponsor) lost its third option on a follow-up ask — now just
