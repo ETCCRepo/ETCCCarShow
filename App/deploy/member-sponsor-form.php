@@ -392,7 +392,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       </div>
       <?php $cancelUrl = $fromParam === 'app' ? 'index.php#sponsors' : 'https://www.etccwebsite.com/content.aspx?page_id=0&club_id=313652'; ?>
       <div class="btn-row">
-        <button type="button" class="btn btn-secondary" onclick="location.href='<?php echo htmlspecialchars($cancelUrl, ENT_QUOTES); ?>'">Done</button>
+        <button type="button" class="btn btn-secondary" onclick="location.href='<?php echo htmlspecialchars($cancelUrl, ENT_QUOTES); ?>'">Cancel</button>
         <button type="submit" class="btn">Submit Sponsorship</button>
       </div>
     </form>
