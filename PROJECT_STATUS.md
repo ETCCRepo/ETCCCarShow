@@ -48,10 +48,9 @@ NOT drive the Summary tab's dollar totals** — don't re-introduce that conflati
   tab's dollar totals = actual payments collected (`getLastPaymentForSponsor`). A first
   pass this session summed Donation for the Summary totals; the user corrected it within
   minutes. See the entry above for the reasoning either way.
-- **The $0-Donation auto-paid path has not been exercised on the live site** — built and
-  code-reviewed, but no one has actually submitted a real $0-Donation sponsorship through
-  `public-sponsor-form.php`/`member-sponsor-form.php` yet to confirm the sponsor shows up
-  correctly marked Paid with today's date.
+- **User-tested and confirmed working (2026-09-16, later the same day)** — "it worked
+  fine." No specifics on exactly which path(s) were exercised, but the feature has now
+  had real hands-on use, not just code review.
 
 Previous update: 2026-09-16 (earlier the same day). **A long, request-by-request session
 touching the T-Shirt Order Email, T-Shirt Report, four report-builder screens plus
