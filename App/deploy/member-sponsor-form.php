@@ -35,6 +35,11 @@ $SPONSOR_TYPES = [
     'corporate' => 'Corporate ($100)',
     'individual' => 'Individual ($100)',
 ];
+// Default Donation amount per Sponsor Type — same $ figures as the labels
+// above (and CONFIG.SPONSOR_TYPES' `fee` in App/src/config.js, which the
+// in-app Add/Edit Sponsor modal uses for the same default). The field
+// itself is editable, so a sponsor/officer can still override it.
+$SPONSOR_DEFAULT_DONATION = ['premier' => 250, 'corporate' => 100, 'individual' => 100];
 $SHIRT_SIZES = [
     "Men's Small", "Men's Medium", "Men's Large", "Men's Extra Large", "Men's 2XL", "Men's 3XL",
     "Women's Small", "Women's Medium", "Women's Large", "Women's Extra Large", "Women's 2XL", "Women's 3XL",
@@ -57,7 +62,8 @@ $errors = [];
 $success = false;
 $values = [
     'name' => '', 'contactPerson' => '', 'phone' => '', 'email' => '', 'address' => '',
-    'website' => '', 'etccMemberName' => '', 'memberEmail' => '', 'sponsorType' => 'premier', 'shirtSize' => '',
+    'website' => '', 'etccMemberName' => '', 'memberEmail' => '', 'sponsorType' => 'premier',
+    'donation' => $SPONSOR_DEFAULT_DONATION['premier'], 'shirtSize' => '',
 ];
 // See the post-submit redirect below for what this actually controls —
 // carried as a hidden form field (not just the URL's query string) so it
@@ -70,10 +76,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $values['sponsorType'] = (string)($_POST['sponsorType'] ?? '');
     $values['shirtSize'] = (string)($_POST['shirtSize'] ?? '');
+    $donationRaw = trim((string)($_POST['donation'] ?? ''));
+    $values['donation'] = $donationRaw; // re-shown as typed if validation fails below
 
     if ($values['name'] === '') $errors[] = 'Sponsor Name is required.';
     if (!array_key_exists($values['sponsorType'], $SPONSOR_TYPES)) $errors[] = 'Choose a valid sponsor type.';
     if ($values['shirtSize'] !== '' && !in_array($values['shirtSize'], $SHIRT_SIZES, true)) $errors[] = 'Choose a valid T-shirt size.';
+    if (!is_numeric($donationRaw) || (float)$donationRaw < 0) $errors[] = 'Donation must be a number (0 or more).';
     if ($values['etccMemberName'] === '') {
         $errors[] = 'ETCC Member Name is required.';
     } else {
@@ -86,6 +95,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (!$errors) {
+        $donation = round((float)$donationRaw, 2);
+        $values['donation'] = $donation; // numeric now that it's validated
         $record = [
             'id' => 'web' . str_replace('.', '', uniqid('', true)),
             'name' => $values['name'],
@@ -97,6 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'etccMemberName' => $values['etccMemberName'],
             'memberEmail' => $values['memberEmail'],
             'sponsorType' => $values['sponsorType'],
+            'donation' => $donation,
             'shirtSize' => $values['shirtSize'],
             'submittedAt' => gmdate('c'),
         ];
@@ -133,6 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $rows = [
                         'Sponsor Type'     => $SPONSOR_TYPES[$record['sponsorType']] ?? $record['sponsorType'],
                         'Sponsor Name'     => $record['name'],
+                        'Donation'         => '$' . number_format($record['donation'], 2),
                         'ETCC Member Name' => $record['etccMemberName'],
                         'Member Email'     => $record['memberEmail'],
                         'Contact Person'   => $record['contactPerson'],
@@ -171,9 +184,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             } catch (Exception $e) { /* email is best-effort, submission already succeeded */ }
 
-            // No payment is ever recorded from this form — a sponsorship
-            // submitted here isn't actually paid yet; an officer records the
-            // real payment later from the Sponsors tab's "Mark Paid…" modal.
+            // Normally no payment is ever recorded from this form — a
+            // sponsorship submitted here isn't actually paid yet; an officer
+            // records the real payment later from the Sponsors tab's "Mark
+            // Paid…" modal. The one exception: a $0 Donation means nothing is
+            // actually owed, so there's nothing for an officer to go collect
+            // — record a $0 payment dated today right now so the Sponsors
+            // tab shows this sponsor as already settled (see
+            // App/src/app.js's sponsorAmountIsZero(), which treats a sponsor
+            // with a $0 donation as paid regardless of payment history, and
+            // Payment Date so it isn't left blank on an otherwise "paid" row).
+            if ($donation == 0) {
+                $paymentFile = carshow_show_file($currentShowYear, 'sponsor-payments.json');
+                carshow_append_json_list($paymentFile, [
+                    'id' => 'pay' . str_replace('.', '', uniqid('', true)),
+                    'sponsorId' => $record['id'],
+                    'sponsorName' => $record['name'],
+                    'paymentType' => 'N/A',
+                    'checkNum' => '',
+                    'date' => date('Y-m-d'),
+                    'amount' => 0,
+                    'recordedAt' => gmdate('c'),
+                ]);
+            }
+
             // Stay on this same form after a successful submission (rather
             // than redirecting away) so an officer can add several sponsors
             // back to back without re-navigating here each time — show a
@@ -181,7 +215,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $success = true;
             $values = [
                 'name' => '', 'contactPerson' => '', 'phone' => '', 'email' => '', 'address' => '',
-                'website' => '', 'etccMemberName' => '', 'memberEmail' => '', 'sponsorType' => 'premier', 'shirtSize' => '',
+                'website' => '', 'etccMemberName' => '', 'memberEmail' => '', 'sponsorType' => 'premier',
+                'donation' => $SPONSOR_DEFAULT_DONATION['premier'], 'shirtSize' => '',
             ];
         } else {
             $errors[] = 'Could not save your submission right now — please try again in a moment.';
@@ -208,9 +243,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; }
   .form-row { margin: 12px 0; }
   label { display:block; font-weight:600; font-size:13px; margin-bottom:4px; }
-  input[type=text], input[type=email], input[type=tel], input[type=url], select {
+  input[type=text], input[type=email], input[type=tel], input[type=url], input[type=number], select {
     width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:7px; font-size:14px; font-family:inherit; color: var(--ink); background: #fff;
   }
+  .money-wrap { position:relative; }
+  .money-wrap input { padding-left:22px; }
+  .money-prefix { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--muted); font-size:14px; pointer-events:none; }
   .checkbox-row { display:flex; align-items:center; gap:8px; }
   .checkbox-row label { margin:0; font-weight:600; }
   .checkbox-row input { width:auto; }
@@ -250,6 +288,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           <?php endforeach; ?>
         </select>
       </div>
+      <div class="form-row">
+        <label for="f-donation">Donation *</label>
+        <div class="money-wrap">
+          <span class="money-prefix">$</span>
+          <input type="number" id="f-donation" name="donation" step="0.01" min="0" inputmode="decimal"
+                 value="<?php echo htmlspecialchars((string)$values['donation']); ?>">
+        </div>
+      </div>
+      <script>
+        (function () {
+          var typeSel = document.getElementById('f-type');
+          var donationInput = document.getElementById('f-donation');
+          // Same $ figures as $SPONSOR_DEFAULT_DONATION server-side.
+          var defaults = { premier: 250, corporate: 100, individual: 100 };
+          // Only re-applies the default while the visitor hasn't typed into
+          // Donation themselves — once they have, switching Sponsor Type
+          // must never clobber a value they deliberately chose (e.g. a
+          // discounted or $0 donation).
+          var touched = false;
+          donationInput.addEventListener('input', function () { touched = true; });
+          typeSel.addEventListener('change', function () {
+            if (!touched && Object.prototype.hasOwnProperty.call(defaults, typeSel.value)) {
+              donationInput.value = defaults[typeSel.value];
+            }
+          });
+        })();
+      </script>
       <div class="form-row">
         <label for="f-name">Sponsor Name * <small style="font-weight:normal;color:var(--muted)">(Will appear on shirt)</small></label>
         <input type="text" id="f-name" name="name" required value="<?php echo htmlspecialchars($values['name']); ?>">

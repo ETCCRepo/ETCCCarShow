@@ -594,7 +594,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-credit">v5.72 &middot; Deployed 09/15/2026 08:43 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
+  <div class="footer-credit">v5.76 &middot; Deployed 09/16/2026 04:31 AM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
 <script>
 /* @license
@@ -2411,7 +2411,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     dashNumberSyncError: null,
     tshirtPurchaseName: "",    // Order T-Shirt form's in-progress Name field
     tshirtPurchaseCost: "",    // Order T-Shirt form's in-progress Cost field (defaults from settings when opened)
-    tshirtPurchaseReason: "Walk-in", // Order T-Shirt form's in-progress Reason field (Walk-in/Member/Sponsor)
+    tshirtPurchaseReason: "Walk-in", // Order T-Shirt form's in-progress Reason field (Walk-in/Member)
     tshirtPurchaseSize: "",    // Order T-Shirt form's in-progress T-Shirt Size field (e.g. "Men's Large")
     tshirtPurchasePaymentType: "Cash", // Order T-Shirt form's in-progress Payment Type field
     tshirtPurchaseCheckNum: "", // Order T-Shirt form's in-progress Check # field (only used when Payment Type is Check)
@@ -2627,6 +2627,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     // the next full page load re-runs ingestPayments(). See also
     // upsertSponsor()'s own call, which covers the "+ Add Sponsor"/Edit
     // Sponsor path (individual sponsor added directly, not via CSV).
+    backfillSponsorDonations();
     backfillPaymentDefaults();
     syncPaidRegistrationsCache();
     renderViews();
@@ -4483,6 +4484,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     { key: "etccMemberName", label: "Member" },
     { key: "regDate", label: "Reg Date" },
     { key: "sponsorType", label: "Sponsor Type" },
+    { key: "donation", label: "Donation" },
     { key: "lastPaymentDate", label: "Payment Date" },
     { key: "lastPaymentType", label: "Type" },
     { key: "lastPaymentCheckNum", label: "Check #" },
@@ -4516,11 +4518,13 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         if (info.gender === "Men's") sizeCounts[info.sizeKey].mens++; else sizeCounts[info.sizeKey].womens++;
       });
     });
-    // Sum each sponsor's actual last-recorded payment (same value the
-    // Sponsors table's own "Paid" column shows via getLastPaymentForSponsor)
-    // rather than assuming every sponsor of this type paid the standard fee —
-    // a sponsor with no payment recorded yet, a partial payment, or a
-    // discounted amount is reflected exactly as entered instead of estimated.
+    // Sum what's actually been PAID, not what's pledged — a sponsor's own
+    // "donation" field (SPONSOR_COLS' "Donation") is the amount owed, set
+    // when they're added/backfilled, but this total should only count money
+    // actually collected: each sponsor's last recorded payment amount (0 if
+    // none yet). A sponsor whose Donation is $0 already has a $0 payment on
+    // file (see public-sponsor-form.php/member-sponsor-form.php), which
+    // correctly contributes nothing here either way.
     var total = matches.reduce(function (sum, s) {
       var payment = getLastPaymentForSponsor(s.id);
       return sum + (payment ? Number(payment.amount) || 0 : 0);
@@ -4566,13 +4570,20 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // the Sponsors table shows a "Mark Paid…" button in the Amount column for
   // these, opening Edit Sponsor's Record Payment section so an officer can
   // enter the actual amount/type/check # instead of assuming a default.
+  // Exception: a sponsor whose Donation is pledged at $0 owes nothing, so
+  // they're never "unpaid" regardless of payment history — the public
+  // sponsor forms already record a $0 payment dated today for exactly this
+  // case (see public-sponsor-form.php/member-sponsor-form.php's own
+  // comment), so this only matters if that record is ever missing/edited.
   function sponsorAmountIsZero(s) {
+    if (Number(s.donation) === 0) return false;
     var payment = getLastPaymentForSponsor(s.id);
     return !payment || !payment.amount || Number(payment.amount) === 0;
   }
 
   function sponsorFieldText(s, colKey) {
     if (colKey === "sponsorType") return sponsorTypeLabel(s.sponsorType);
+    if (colKey === "donation") return s.donation == null || s.donation === "" ? "" : fmtMoney(s.donation);
     if (colKey === "lastPaymentDate") {
       var payment = getLastPaymentForSponsor(s.id);
       return payment ? fmtDate(payment.date) : "";
@@ -4622,6 +4633,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       if (colKey === "lastPaymentAmount") return payment ? Number(payment.amount) || 0 : 0;
       return payment && payment.date ? parseMaybeDateOnly(payment.date).getTime() : -Infinity;
     }
+    if (colKey === "donation") return Number(s.donation) || 0;
     return sponsorFieldText(s, colKey).toLowerCase();
   }
   function sortedSponsors() {
@@ -4659,6 +4671,11 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     // modal's Save, or a member-sponsor-form.php submission ingested via
     // ingestSponsors) — backfillPaymentDefaults() no-ops for sponsors that
     // already have a payment record, so this is safe to call unconditionally.
+    // backfillSponsorDonations() is likewise a no-op here in the common case
+    // (buildSponsorRecord() already sets `donation` on every save) — this
+    // covers records upserted some other way (e.g. a CSV sync record with no
+    // donation field at all).
+    backfillSponsorDonations();
     backfillPaymentDefaults();
   }
   // CSV-auto-synced sponsors (id shape "csvind_..." — see csvSponsorId())
@@ -4833,6 +4850,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       }
       if (paymentsRes && paymentsRes.ok) state.payments = Array.isArray(paymentsRes.payments) ? paymentsRes.payments : [];
       syncSponsorsFromRegistrations();
+      if (sponsorsRes && sponsorsRes.ok) backfillSponsorDonations();
       if (paymentsRes && paymentsRes.ok) backfillPaymentDefaults();
       state.sponsorsRefreshing = false;
       renderViews();
@@ -5074,8 +5092,8 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   function blankSponsor() {
     return {
       id: null, name: "", contactPerson: "", phone: "", email: "", address: "", website: "",
-      etccMemberName: "", sponsorType: CONFIG.SPONSOR_TYPES[0].key, shirtSizes: [],
-      individualSponsorshipText: ""
+      etccMemberName: "", sponsorType: CONFIG.SPONSOR_TYPES[0].key, donation: CONFIG.SPONSOR_TYPES[0].fee,
+      shirtSizes: [], individualSponsorshipText: ""
     };
   }
   function openSponsorForm(sponsor) {
@@ -5098,7 +5116,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // field; shirtSize (singular, first entry or "") is kept alongside it
   // purely for any older code/report that still reads the old field name —
   // see LOGIC.sponsorShirtSizes's own comment.
-  function buildSponsorRecord(editing, fieldEls, typeSel, shirtValues) {
+  function buildSponsorRecord(editing, fieldEls, typeSel, shirtValues, donationInput) {
     var name = fieldEls.name.value.trim();
     if (!name) return null;
     return {
@@ -5114,6 +5132,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       etccMemberName: fieldEls.etccMemberName.value.trim(),
       individualSponsorshipText: fieldEls.individualSponsorshipText.value.trim() || name,
       sponsorType: typeSel.value,
+      donation: donationInput.value.trim() === "" ? 0 : Number(donationInput.value),
       shirtSizes: shirtValues,
       shirtSize: shirtValues[0] || ""
     };
@@ -5161,6 +5180,20 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       typeSel.appendChild(o);
     });
     body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "Sponsor Type" }), typeSel]));
+
+    // ---- Donation — defaults per Sponsor Type (Premier $250, Corporate/
+    // Individual $100 — CONFIG.SPONSOR_TYPES' own `fee`), editable, and
+    // re-applied whenever Sponsor Type changes UNLESS this field has been
+    // manually touched — same "don't clobber a deliberate override" rule
+    // the public sponsor forms' matching JS uses. This is what
+    // sponsorStatsByType() sums for the Summary tab's sponsor totals (not
+    // actual payments — see that function's own comment) and what
+    // sponsorAmountIsZero() treats as "nothing owed" when it's $0.
+    var donationField = moneyInput({ value: editing.donation != null ? String(editing.donation) : "" });
+    var donationInput = donationField.input;
+    var donationTouched = false;
+    donationInput.addEventListener("input", function () { donationTouched = true; });
+    body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "Donation" }), donationField.wrap]));
 
     // ---- T-Shirt(s) — a sponsor can order more than one, each its own
     // size (e.g. one for each of several employees). One <select> per shirt
@@ -5243,8 +5276,13 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       paymentTypeSelect
     ]));
 
+    // Defaults to this sponsor's own Donation (falling back to the flat
+    // per-type fee only if Donation is somehow unset — backfillSponsorDonations()
+    // means that's not expected in practice), not a hardcoded "$100 if
+    // Individual, otherwise blank" like before Donation existed.
     var defaultAmount = existingPayment ? existingPayment.amount
-      : (editing.sponsorType === "individual" ? "100" : "");
+      : (editing.donation != null && editing.donation !== "" ? editing.donation
+        : (editing.sponsorType === "individual" ? "100" : ""));
     var paymentAmountField = moneyInput({ value: defaultAmount });
     var paymentAmountInput = paymentAmountField.input;
     var amountRow = el("div", { class: "form-row" }, [
@@ -5285,6 +5323,10 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         paymentAmountInput.value = "100";
         syncPaymentRows();
       }
+      if (!donationTouched) {
+        var typeCfg = CONFIG.SPONSOR_TYPES.filter(function (t) { return t.key === typeSel.value; })[0];
+        donationInput.value = typeCfg ? String(typeCfg.fee) : "";
+      }
     });
 
     // Appended to the pinned actions bar below (not the body), so "Sponsor
@@ -5292,10 +5334,10 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     var errorMsg = el("div", { class: "form-error" });
 
     var autoSaveSponsor = debounce(function () {
-      var record = buildSponsorRecord(editing, fieldEls, typeSel, getShirtSizeValues());
+      var record = buildSponsorRecord(editing, fieldEls, typeSel, getShirtSizeValues(), donationInput);
       if (record) { upsertSponsor(record); renderSponsorsBody(); }
     }, 1500);
-    var fieldsToWatch = [fieldEls.name, fieldEls.contactPerson, fieldEls.phone, fieldEls.email, fieldEls.address, fieldEls.website, fieldEls.etccMemberName, fieldEls.individualSponsorshipText, typeSel];
+    var fieldsToWatch = [fieldEls.name, fieldEls.contactPerson, fieldEls.phone, fieldEls.email, fieldEls.address, fieldEls.website, fieldEls.etccMemberName, fieldEls.individualSponsorshipText, typeSel, donationInput];
     fieldsToWatch.forEach(function (field) {
       field.addEventListener("input", autoSaveSponsor);
       field.addEventListener("change", autoSaveSponsor);
@@ -5303,7 +5345,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
 
     var saveBtn = el("button", { class: "btn primary" }, ["Save"]);
     saveBtn.addEventListener("click", function () {
-      var record = buildSponsorRecord(editing, fieldEls, typeSel, getShirtSizeValues());
+      var record = buildSponsorRecord(editing, fieldEls, typeSel, getShirtSizeValues(), donationInput);
       if (!record) { errorMsg.textContent = "Sponsor Name is required."; return; }
       upsertSponsor(record);
 
@@ -5419,8 +5461,12 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     });
     body.appendChild(checkNumRow);
 
+    // Defaults to this sponsor's own Donation (what's actually pledged/owed —
+    // may have been overridden from the Sponsor Type's flat default when it
+    // was set), not a generic per-type fee.
     var typeCfg = CONFIG.SPONSOR_TYPES.filter(function (t) { return t.key === sponsor.sponsorType; })[0];
-    var amountField = moneyInput({ value: typeCfg ? String(typeCfg.fee) : "" });
+    var defaultAmount = sponsor.donation != null && sponsor.donation !== "" ? sponsor.donation : (typeCfg ? typeCfg.fee : "");
+    var amountField = moneyInput({ value: String(defaultAmount) });
     var amountInput = amountField.input;
     row("Payment Amount", amountField.wrap, true);
 
@@ -5482,6 +5528,27 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     if (sponsor.regDate) return String(sponsor.regDate);
     if (sponsor.submittedAt) return fmtDate(sponsor.submittedAt);
     return "";
+  }
+
+  // Fills in a missing Donation (SPONSOR_COLS' "donation") for any sponsor
+  // saved before that field existed — CSV-auto-synced sponsors and older
+  // submissions/manual adds alike — with that Sponsor Type's default fee
+  // (CONFIG.SPONSOR_TYPES' own `fee`: Premier $250, Corporate/Individual
+  // $100), the same default the Add/Edit Sponsor modal and the public
+  // sponsor forms use. Idempotent — only ever touches a sponsor whose
+  // donation is null/undefined/"", never overwrites one that's already set
+  // (including a deliberate $0), so this is safe to call unconditionally on
+  // every load/save, same pattern as backfillPaymentDefaults() below.
+  function backfillSponsorDonations() {
+    var changed = [];
+    state.sponsors.forEach(function (s) {
+      if (s.donation === undefined || s.donation === null || s.donation === "") {
+        var typeCfg = CONFIG.SPONSOR_TYPES.filter(function (t) { return t.key === s.sponsorType; })[0];
+        s.donation = typeCfg ? typeCfg.fee : 0;
+        changed.push(s);
+      }
+    });
+    changed.forEach(function (s) { pushSponsorToServer("upsert", { sponsor: s }); });
   }
 
   function backfillPaymentDefaults() {
@@ -9400,7 +9467,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     ]));
 
     var reasonSelect = el("select", {});
-    ["Walk-in", "Member", "Sponsor"].forEach(function (r) {
+    ["Walk-in", "Member"].forEach(function (r) {
       reasonSelect.appendChild(el("option", { value: r, text: r }));
     });
     reasonSelect.value = state.tshirtPurchaseReason || "Walk-in";
@@ -9618,6 +9685,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     },
     ingestSponsors: function (list) {
       state.sponsors = Array.isArray(list) ? list : [];
+      backfillSponsorDonations();
       renderViews();
     },
     // Called by index.php's boot script with the Walk-In registrations list

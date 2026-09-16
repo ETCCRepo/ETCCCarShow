@@ -2,7 +2,7 @@
 // T-Shirt purchase read/write API for tshirt-purchases.json — day-of-event
 // walk-up t-shirt sales recorded from the T-Shirts tab's "🛒 Order T-Shirt"
 // full-page screen. Each record is { id, purchasedAt (ISO string), name, cost,
-// reason (Walk-in/Member/Sponsor), size, paymentType, checkNum }.
+// reason (Walk-in/Member), size, paymentType, checkNum }.
 // index.php reads this fresh on every page load; the T-Shirts tab pushes
 // every add/delete here immediately, same pattern as walkin-registrations.php.
 //
