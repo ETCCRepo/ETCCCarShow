@@ -1,9 +1,152 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-16 (end of session, latest). **New Financials tab feature set —
-PDF-driven category import (now with per-transaction detail lines), Save/History,
-Print/Export — built from scratch across many rapid follow-up requests in one session.**
-One checkpoint (**`96abb61`**, v5.94), deployed and pushed; live site is **v5.94**.
+Last updated: 2026-09-16 (end of session, latest). **Financials tab redesigned around
+three modes — Import / View / Project — with a picker that spans EVERY car show year,
+not just the open one.** One checkpoint (**`e35ffd8`**, v5.106), deployed and pushed;
+live site is **v5.106**.
+
+## This session's work (2026-09-16, later session — Financials tab: Import/View/Project + cross-year picker)
+
+Continues directly from the v5.94 session below (same day, new session) — read that
+entry first if you haven't already; this one assumes the PDF-import/detail-line/
+merge-zero-lines/category-cleanup work described there is already in place. Everything
+here is still `App/src/app.js` (Financials tab functions) and `App/deploy/financials.php`,
+plus one Summary tab addition.
+
+**1. The Financials tab is no longer "open it and see one editable list" — it's a
+three-screen flow, driven by `state.financialsScreen` ("menu" | "picker" | "editor"):**
+  - **`buildFinancialsMenu()`** — the landing screen every time the tab is selected
+    (`buildTabs()`'s click handler resets `state.financialsScreen = "menu"` on every
+    click, so a half-finished editor from earlier never greets you on return). Three
+    choices: **📄 Import Financials** (opens the file picker immediately — no separate
+    "click here first" step), **📋 View Financials**, **📈 Project Financials** (the
+    latter two both call `openPicker(mode)`, which sets `state.financialsPickerMode`
+    and loads `buildFinancialsPicker()`).
+  - **`buildFinancialsPicker()`** — lists EVERY show year from the registry (see #2
+    below), each with its own live-financials entry plus its saved reports, newest
+    report first, sorted so the most recent SHOW year is on top. Clicking an entry
+    calls `openFinancialsEditor(source, items, projecting)`, which sets
+    `state.financialsSource` (`{kind:"live", year}` or `{kind:"report", id, label,
+    year}`), `state.financialsEditItems`, and `state.financialsProjecting`, then
+    switches to the editor screen.
+  - **`buildFinancialsEditor()`** — the actual line-item editor (mostly the same
+    two-column Income/Expense layout from the v5.94 session), now parameterized by
+    `state.financialsProjecting`: false = fully editable (same as before — Add
+    Income/Add Expense buttons split since there's no type dropdown, ▸ expand for
+    transaction details, ✕ to remove); true = **every field read-only** (category,
+    amount, and every expanded detail row all get `disabled`) with a new **Projected**
+    money input beside each amount instead. A blank Projected counts as the actual
+    amount for totals purposes. Saves go through `saveFinancialsEdits()`, which routes
+    to `saveFinancials()` (debounced, live source) or `saveFinancialsReportItems()`
+    (debounced, report source, hits the new `update_report` PHP action) based on
+    `state.financialsSource.kind`.
+  - **The old "🕒 History" modal is GONE** — folded into the View/Project picker, since
+    both were "which saved thing do you want" UIs. `renderFinancialsHistory()`,
+    `state.financialsHistoryOpen`, the `#financialsHistoryHost` DOM node, and its
+    Escape-key handler were all deleted, not just hidden.
+
+**2. Cross-year support — this was NOT true before this session.** Previously
+Financials only ever touched the OPEN show's `financials.json`. Now:
+  - New `financials.php` action **`list_all`** walks `carshow_read_shows()`'s registry
+    and returns `{year, name, items, reports}` for every show, in one request — this is
+    what populates the picker with (e.g.) both 2025 and 2026's financials side by side.
+    `loadFinancialsAll()` calls it; `state.financialsAll`/`financialsAllLoading`/
+    `financialsAllLoaded`/`financialsAllError` hold the result. The picker calls
+    `loadFinancialsAll()` on every open (not just once) since a save can change the
+    counts shown.
+  - **Every other action now takes `year` in the request body, and the body wins over
+    `?year=`** for this one endpoint specifically (`$year = carshow_valid_year($input['year']
+    ?? ($_GET['year'] ?? ''))` — note the order is reversed from every other per-show
+    endpoint in this app, which only ever trust the URL). This is deliberate and
+    documented in `financials.php`'s own comment: this tab edits OTHER years' data too,
+    while `index.php` has already pinned `?year=` to whichever show is currently open.
+    **If a future session copies this pattern to another endpoint, copy the comment
+    too** — every other endpoint's `?year=`-wins convention is correct for THEM (they
+    only ever touch the open show) and should not be "fixed" to match this one.
+  - `financialsCurrentYear()` returns the open show's year string; it's the fallback
+    whenever a source doesn't carry its own (imports, the initial tab-open load).
+    `state.financialsSource` always carries `year` once `openFinancialsEditor()` sets
+    it (defaults to the open year if the caller didn't pass one).
+  - Saving the LIVE list only mirrors into `state.financials` (the boot-time state used
+    elsewhere, e.g. by `refreshShowData()`) when the year being saved matches
+    `financialsCurrentYear()` — editing a PAST year's live financials must not silently
+    overwrite what the rest of the app thinks the open show's financials are. **Watch
+    this carefully if `state.financials` usage ever expands** — it's a subtly narrower
+    "the open show's saved list" now, not "whatever the Financials tab last touched".
+  - Removed the now-dead `list_reports`/`load_report` PHP actions (superseded by
+    `list_all`); added `update_report` (overwrite one saved report's items in place,
+    keeping its id/label/savedAt) since View/Project mode edit a chosen report directly
+    rather than only ever reading it.
+
+**3. Print and CSV Export now include transaction detail lines, not just category
+subtotals** (this was explicitly asked for after the redesign already shipped without
+it). `printFinancials()`'s per-category `<table>` rows are followed by one indented,
+smaller-font row per `item.details[]` entry; `exportFinancialsCsv()` gained a leading
+"Level" column (`Category` | `Detail` | `Total`) so the flat CSV stays filterable in a
+spreadsheet despite mixing two kinds of rows. Both carry the Projected column when
+`state.financialsProjecting` is true.
+
+**4. Project mode's totals are now a proper table, not four/six separate `<div>`
+lines** — `buildFinancialsTotalsTable(income, expense, projectedIncome,
+projectedExpense, projecting)` is shared by the on-screen editor AND the printed copy
+(same function, so they can't drift). Columns: Description | Actual | Projected | %
+Diff (Project mode only). Rows: Income, Expenses, Net Profit/Loss.
+`financialsPctDiff(actual, projected)` prints **"—"** rather than a nonsense
+percentage when `actual` is exactly 0 (division by zero would otherwise show
+Infinity/NaN).
+
+**5. Tab now chains between Projected fields in Project mode.** Every other field on a
+row is `disabled` (see #1), which would otherwise leave the still-enabled ▸ toggle
+button interrupting the natural Tab order between Projected inputs. A `keydown`
+listener on each `.financials-projected` input intercepts plain Tab / Shift+Tab and
+jumps straight to the next/previous one in the array built from
+`incomeWrap.querySelectorAll(...)` + `expenseWrap.querySelectorAll(...)` (income column
+top-to-bottom, then expense column) — Tab off the very first or last one is left alone
+so it can leave the table normally.
+
+**6. Summary tab gained a "Total Income by Category" line** (`buildSummaryView()`,
+right after the status/meta panel). Went through several rapid redesigns in direct
+response to the user's own screenshots — **the CURRENT shape is what's live, don't
+revert to an earlier one**:
+  - v1: a full `<table>` with one row per category — replaced for being too tall.
+  - v2: a wrapping grid of stat blocks (label above, value below) — replaced because
+    it still spread across multiple visual rows the user didn't want.
+  - **v3 (current): ONE inline line** — `Summary` on its own first line, then
+    `Registrations: 85 | Total Income: $X | Registration Fees: $X | Premier Sponsors:
+    $X | Corporate Sponsors: $X | Walk-In T-Shirts: $X | Individual Sponsors (included
+    in Registration Fees): $X` all on the second line (a `display:flex; flex-wrap:wrap`
+    row, wrapping only if the panel is genuinely too narrow). The old standalone
+    "Registrations"/"Total Income" `.cards` row above it was deleted entirely — those
+    two figures now live inline in this same row instead. The now-unused `card(k, v)`
+    helper function was deleted too (dead code, no remaining callers).
+  - Individual Sponsors' $ is deliberately NOT added into Total Income (it's already
+    inside Registration Fees — each individual sponsor's fee rides on their own
+    registration's Total Fee; adding it again would double-count, same reasoning
+    `totalIncome`'s own existing code comment gives). Its label says so directly now
+    ("included in Registration Fees") rather than relying only on a hover tooltip —
+    the tooltip (`title` attribute) still has the fuller sentence for anyone who
+    hovers.
+
+## Known follow-ups / things a new session might need to know (2026-09-16, later session)
+
+- **`/ETCCCarShowTest` was not run.** This session added a second PHP action
+  (`update_report`) and a cross-year data path (`list_all`) on top of an already
+  untested feature surface from the v5.94 session — the combined Financials tab has
+  zero regression coverage.
+- **Not verified in a real browser at all.** Every change this session was made from
+  screenshots and code reading, applied directly, and deployed — worth an explicit
+  pass through all three screens (Import → editor; View → picker → live editor; View →
+  picker → saved-report editor, confirm edits save back to THAT report and not the
+  live list; Project → picker → read-only editor with Projected column, confirm Tab
+  chains correctly and % Diff shows "—" for a $0 actual; Print and Export from both
+  View and Project, confirming detail lines appear) before trusting it unattended.
+- **`state.financials` is now narrower in meaning than its name suggests** — it's
+  specifically "the OPEN show's saved live financials list", not "whatever the
+  Financials tab most recently touched" (that's `state.financialsEditItems` +
+  `state.financialsSource` now). See point 2's last bullet above before touching
+  either.
+- Everything else from the v5.94 session's own follow-ups below (PDF parsing being
+  heuristic, "Reeder" hardcoded, PHP not locally lintable) still applies unchanged.
 
 ## This session's work (2026-09-16, Financials tab: PDF import + history + print/export)
 
