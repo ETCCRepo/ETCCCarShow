@@ -378,7 +378,8 @@ function carshow_show_files() {
         'import-history.json',
         'import-request.json',
         'import-schedule-state.json',
-        'import-run-status.json'
+        'import-run-status.json',
+        'financials.json'
     ];
 }
 

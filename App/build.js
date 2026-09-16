@@ -35,11 +35,25 @@ var logoDataUri = "data:image/png;base64," + fs.readFileSync(path.join(HERE, "as
 var reportsBannerDataUri = "data:image/jpeg;base64," + fs.readFileSync(path.join(HERE, "assets/reports-banner.jpg")).toString("base64");
 var reportsBannerScript = "window.__carshowReportsBanner = " + JSON.stringify(reportsBannerDataUri) + ";";
 
+// pdf.js (Financials tab > "Upload Report" — client-side PDF text extraction,
+// see app.js's handleFinancialsPdfUpload()). The library script sets window.pdfjsLib
+// when loaded as a plain <script> (confirmed: its UMD wrapper does
+// `t.pdfjsLib=e()` against globalThis). Its worker CANNOT be inlined as a
+// script tag the way the library itself can — pdf.js always fetches the
+// worker as a separate script via a URL — so instead the worker's full
+// source is embedded as a plain JS string (window.__pdfjsWorkerSrc); app.js
+// turns that into a Blob + object URL at runtime, the standard workaround for
+// giving a Worker-based library a "file" when everything has to ship as one
+// self-contained HTML document with no other files beside it.
+var pdfjsWorkerScript = "window.__pdfjsWorkerSrc = " + jsStringLiteral(read("vendor/pdfjs.worker.min.js")) + ";";
+
 var css = read("src/styles.css");
 var scripts = [
   read("vendor/papaparse.min.js"),
   read("vendor/exceljs.min.js"),
   read("vendor/pdf-lib.min.js"),
+  read("vendor/pdfjs.min.js"),
+  pdfjsWorkerScript,
   read("src/config.js"),
   read("src/logic.js"),
   read("src/excel.js"),

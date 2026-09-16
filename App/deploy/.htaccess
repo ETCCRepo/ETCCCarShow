@@ -10,7 +10,7 @@ DirectoryIndex index.php index.html
 # whole app is one self-contained HTML file, no external JS/CSS files),
 # data: URIs (the embedded logo), and api.github.com for the Change Log.
 <IfModule mod_headers.c>
-  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://api.github.com"
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://api.github.com; worker-src 'self' blob:"
 </IfModule>
 
 # Blanket deny for every .json under this directory, including the per-show

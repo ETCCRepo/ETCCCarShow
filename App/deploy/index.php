@@ -141,7 +141,8 @@ $perShowUrls = [
     'importScheduleApiUrl' => 'import-schedule.php',
     'logsApiUrl' => 'logs.php',
     'importHistoryApiUrl' => 'import-history.php',
-    'refreshApiUrl' => 'refresh.php'
+    'refreshApiUrl' => 'refresh.php',
+    'financialsApiUrl' => 'financials.php'
 ];
 $siteConfig = [];
 foreach ($perShowUrls as $key => $file) {

@@ -234,6 +234,40 @@
     importHistory: [],        // one entry per successful CSV import — filled by ingestImportHistory()
     historySelected: {},       // History tab row checkboxes: entry.timestamp -> true
     deleteHistoryConfirm: null, // "selected" | "all" | null — which confirm dialog is open
+    // Financials tab — { id, category, amount, notes }[] for the currently
+    // open show year, loaded once per session the first time that tab is
+    // opened (see buildTabs()'s "financials" case) rather than as part of
+    // the shared boot payload. Autosaves the whole list on every edit, no
+    // Save button — same convention as the Import Schedule/Backups sections.
+    financials: [],
+    financialsLoaded: false,
+    financialsLoading: false,
+    financialsSaving: false,
+    financialsSaved: false,
+    financialsError: null,
+    // Financials tab > "Upload Report" — client-side PDF parsing (see
+    // handleFinancialsPdfUpload()). Every category it finds is appended
+    // straight onto state.financials and saved — no separate review step;
+    // an unwanted category is just deleted afterward like any other row.
+    financialsUploadParsing: false,
+    financialsUploadError: null,
+    // Financials tab (main list) — which saved categories currently have
+    // their transaction-detail list expanded, keyed by item id. Kept outside
+    // state.financials itself since that array gets wholesale-replaced by
+    // whatever the server echoes back on every save.
+    financialsExpandedIds: {},
+    // Financials tab > "Save Report"/"History" — named, timestamped snapshots
+    // of the whole financials list, kept separately from the live-edited
+    // list itself (see financials.php's save_report/list_reports/load_report
+    // actions). financialsHistoryOpen is the modal's open/closed flag;
+    // financialsReports/financialsReportsLoaded are only populated once the
+    // History modal is actually opened.
+    financialsHistoryOpen: false,
+    financialsReports: [],
+    financialsReportsLoaded: false,
+    financialsReportsLoading: false,
+    financialsReportsError: null,
+    financialsSavingReport: false,
     // rowKey(r) -> integer Dash # (the judging-day placard number, e.g. 100,
     // 101, 200...) — assigned once per car by ensureDashNumbers() and then
     // never changed, since it's the number physically printed on that car's
@@ -663,6 +697,15 @@
       return;
     }
 
+    // Financials tab — a short, hand-entered expense summary for this show
+    // year (see financials.php's own header comment for why this is a
+    // summary, not a transaction ledger). Manually entered and independent
+    // of the loaded CSVs, same reasoning as Sponsors/T-Shirts above.
+    if (state.tab === "financials") {
+      app.appendChild(buildFinancialsView());
+      return;
+    }
+
     if (!state.result) {
       app.appendChild(el("div", { class: "empty-state" },
         ["No registration data loaded yet — use the Setup tab → Import Registrations to load the first CSV export."]));
@@ -701,10 +744,14 @@
         // Setup tab additionally needs the persisted "Last run" status,
         // which isn't part of the general show-data refresh above.
         if (id === "setup") { loadRunStatus(); loadBackupSchedule(); }
+        // Financials isn't part of carshow_boot_data()'s inlined payload
+        // (see financials.php's own comment on why it's a separate file) —
+        // load fresh, once, the first time this tab is opened this session.
+        if (id === "financials" && !state.financialsLoaded) loadFinancials();
       });
       return t;
     };
-    return el("div", { class: "tabs no-print" }, [mk("sum", "Summary"), mk("reg", "Registration"), mk("sponsors", "Sponsors"), mk("tsh", "T-Shirts"), mk("reports", "Reports"), mk("setup", "Setup"), mk("history", "History")]);
+    return el("div", { class: "tabs no-print" }, [mk("sum", "Summary"), mk("reg", "Registration"), mk("sponsors", "Sponsors"), mk("tsh", "T-Shirts"), mk("reports", "Reports"), mk("setup", "Setup"), mk("history", "History"), mk("financials", "Financials")]);
   }
 
   // ---------- Car Shows picker (the landing screen, shown before the tabs) ----------
@@ -6211,6 +6258,774 @@
     ]);
   }
 
+  // ---------- Financials tab ----------
+  // A short, hand-entered summary of this show year's expenses (Category,
+  // Amount, optional Notes) — see financials.php's own header comment for
+  // why this is a summary an officer types in from the club's real
+  // accounting report, not a live transaction feed pulled from anywhere.
+  // Suggested categories (a datalist, not a fixed enum — any text is
+  // accepted) match the categories that actually appear on the club's own
+  // "Account Transactions" report for the Car Show fund.
+  var FINANCIALS_SUGGESTED_CATEGORIES = [
+    "Show Expenses (food, supplies, misc.)",
+    "T-Shirts & Dash Plaques",
+    "Trophies & Awards",
+    "Charitable Donations",
+    "Prize Money"
+  ];
+
+  // ---- "Upload Report" PDF parsing ----
+  // Targets the club's own "Account Transactions" export (accounting
+  // software report, one PDF per year) — the exact shape confirmed against a
+  // real 2025 export. That report groups every transaction under a named
+  // category ("Car Show - Reeder:Sponsors", "Grants - Charities-
+  // Contributions", etc.), each ending in a "Total <category> <debit>
+  // <credit>" subtotal row, plus one final unlabeled "Total <debit>
+  // <credit>" grand-total row. This deliberately reads ONLY those subtotal
+  // rows — not each individual transaction line — since that's already
+  // exactly the category-level summary this tab wants; nothing here tries to
+  // reproduce the full transaction ledger.
+  //
+  // Lazily points pdf.js at its worker the first time it's actually needed —
+  // window.__pdfjsWorkerSrc is the worker's full source, embedded as a
+  // string by build.js (a Worker can't be constructed from inline script the
+  // way the main library can; a Blob + object URL is the standard
+  // workaround when everything has to ship as one self-contained HTML file
+  // with nothing else alongside it).
+  var pdfjsWorkerReady = false;
+  function ensurePdfjsWorker() {
+    if (pdfjsWorkerReady) return;
+    if (!window.pdfjsLib || !window.__pdfjsWorkerSrc) return;
+    var blob = new Blob([window.__pdfjsWorkerSrc], { type: "text/javascript" });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
+    pdfjsWorkerReady = true;
+  }
+
+  // Extracts the PDF's text as an array of visual LINES (not pdf.js's raw
+  // per-glyph-run items) — items are grouped by their rounded Y position
+  // (page coordinates, so larger Y = higher on the page) and read left to
+  // right within each group, which reconstructs each printed row of the
+  // report as one string, in top-to-bottom reading order, across every page.
+  function extractPdfLines(arrayBuffer) {
+    ensurePdfjsWorker();
+    return window.pdfjsLib.getDocument({ data: arrayBuffer }).promise.then(function (doc) {
+      var pageNums = [];
+      for (var p = 1; p <= doc.numPages; p++) pageNums.push(p);
+      var chain = Promise.resolve();
+      var lines = [];
+      pageNums.forEach(function (p) {
+        chain = chain.then(function () { return doc.getPage(p); })
+          .then(function (page) { return page.getTextContent(); })
+          .then(function (content) {
+            var byY = {};
+            content.items.forEach(function (it) {
+              var y = Math.round(it.transform[5]);
+              (byY[y] = byY[y] || []).push({ str: it.str, x: it.transform[4] });
+            });
+            Object.keys(byY).map(Number).sort(function (a, b) { return b - a; }).forEach(function (y) {
+              var line = byY[y].sort(function (a, b) { return a.x - b.x; })
+                .map(function (it) { return it.str; }).join(" ").replace(/\s+/g, " ").trim();
+              if (line) lines.push(line);
+            });
+          });
+      });
+      return chain.then(function () { return lines; });
+    });
+  }
+
+  // Every category in the club's report lives under the "Car Show" fund, so
+  // its name is repeated on every single row ("Car Show - Reeder:Sponsors",
+  // "Car Show-Reeder: T-Shirts", ...) — redundant once it's already sitting
+  // on the Financials tab's Car Show data, so it's stripped here, along with
+  // whatever separator punctuation is left dangling where it used to be.
+  function cleanFinancialsCategoryName(name) {
+    var cleaned = (name || "")
+      .replace(/car\s*show/gi, "")
+      .replace(/reeder/gi, "")
+      .replace(/^[\s:\-]+|[\s:\-]+$/g, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    return cleaned || (name || "").trim(); // fall back if nothing but noise words was left
+  }
+
+  var FINANCIALS_PDF_NUM = "([\\d,]+\\.\\d{2}|-)";
+  var FINANCIALS_PDF_GRAND_RE = new RegExp("^" + FINANCIALS_PDF_NUM + "\\s+" + FINANCIALS_PDF_NUM + "$");
+  var FINANCIALS_PDF_TWO_RE = new RegExp("^(.*?)\\s+" + FINANCIALS_PDF_NUM + "\\s+" + FINANCIALS_PDF_NUM + "$");
+  var FINANCIALS_PDF_ONE_RE = new RegExp("^(.*?)\\s+" + FINANCIALS_PDF_NUM + "$");
+  var FINANCIALS_PDF_NEXTLINE_RE = new RegExp("^" + FINANCIALS_PDF_NUM + "\\s+" + FINANCIALS_PDF_NUM + "$");
+  function financialsPdfAmount(tok) {
+    return (tok === "-" || tok == null) ? 0 : parseFloat(tok.replace(/,/g, ""));
+  }
+  // Splits one "Total ..." line's tail into category text + its Debit/Credit
+  // figures. A category whose own name happens to wrap across two printed
+  // lines (long enough to need it) lands its amounts on the NEXT line
+  // instead of this one — extractFinancialsCategories() below handles that
+  // by falling back to the following line when this one has no numbers at
+  // all, at the cost of only capturing that category's name up to the wrap
+  // (still identifiable; the officer can rename it in the review step).
+  function splitFinancialsTotalLine(text) {
+    var grand = text.match(FINANCIALS_PDF_GRAND_RE);
+    if (grand) return { grand: true, debit: financialsPdfAmount(grand[1]), credit: financialsPdfAmount(grand[2]) };
+    var two = text.match(FINANCIALS_PDF_TWO_RE);
+    if (two) return { category: two[1].trim(), debit: financialsPdfAmount(two[2]), credit: financialsPdfAmount(two[3]) };
+    var one = text.match(FINANCIALS_PDF_ONE_RE);
+    if (one) return { category: one[1].trim(), single: financialsPdfAmount(one[2]) };
+    return null;
+  }
+  // Turns the raw lines sitting between a category's header row and its
+  // "Total ..." row into per-transaction detail entries — the report prints
+  // one row per transaction there, each ending in its own amount (or a
+  // Debit/Credit pair). The category name itself is usually repeated as a
+  // header line right before its first transaction; that line is dropped
+  // since it carries no amount of its own and would otherwise show up as a
+  // bogus zero-amount "detail".
+  //
+  // Each real transaction's Date/Name/Memo/Split columns often wrap across
+  // more than one printed line (the report's columns are narrow), so a
+  // "transaction" and a "printed line" aren't the same thing here. Rather
+  // than guess which lines belong together (and risk silently merging two
+  // real line items into one, or dropping one), this keeps EVERY raw line
+  // that survives the category-header filter as its own detail entry,
+  // pulling a date and/or amount out of that single line when one is
+  // present and leaving it blank otherwise — nothing is ever combined or
+  // discarded, so the officer sees exactly what the PDF printed and can
+  // merge/edit/delete by hand in the review screen if a transaction's
+  // wrapped across more than one row.
+  var FINANCIALS_DETAIL_DATE_RE = /[A-Z][a-z]{2}\s+\d{1,2},\s+\d{4}/;
+  var FINANCIALS_DETAIL_MONEY_RE = /-?[\d,]+\.\d{2}/g;
+
+  // A wrapped transaction's fragment lines carry no amount of their own (or
+  // print as $0.00), with the real amount landing on just one of the lines —
+  // so those zero/blank fragments are folded into whichever ACTUAL-amount
+  // line is closest to them (their Name/Memo/Split text prepended or
+  // appended, in original printed order) rather than left as their own
+  // bogus $0.00 "transactions". A run of fragments with no non-zero line
+  // anywhere in the category (rare) is left as-is — nothing to merge into.
+  function mergeFinancialsZeroDetails(details) {
+    var nonzeroIdx = [];
+    details.forEach(function (d, i) { if (d.amount !== null && d.amount !== 0) nonzeroIdx.push(i); });
+    if (!nonzeroIdx.length) return details;
+    var groups = {};
+    nonzeroIdx.forEach(function (i) { groups[i] = { entry: details[i], before: [], after: [] }; });
+    details.forEach(function (d, i) {
+      if (d.amount !== null && d.amount !== 0) return;
+      var nearest = nonzeroIdx[0], bestDist = Math.abs(i - nonzeroIdx[0]);
+      nonzeroIdx.forEach(function (ni) {
+        var dist = Math.abs(i - ni);
+        if (dist < bestDist) { bestDist = dist; nearest = ni; }
+      });
+      (i < nearest ? groups[nearest].before : groups[nearest].after).push(d);
+    });
+    return nonzeroIdx.map(function (i) {
+      var g = groups[i];
+      var textParts = g.before.map(function (d) { return d.text; })
+        .concat([g.entry.text])
+        .concat(g.after.map(function (d) { return d.text; }))
+        .filter(Boolean);
+      var date = g.entry.date || g.before.concat(g.after).map(function (d) { return d.date; }).filter(Boolean)[0] || "";
+      return { date: date, text: textParts.join(" ").replace(/\s+/g, " ").trim(), amount: g.entry.amount };
+    });
+  }
+
+  function extractFinancialsDetailLines(rawLines, categoryName) {
+    var lines = rawLines.filter(function (l) { return l && l.trim() && l.trim() !== categoryName.trim(); });
+    var details = lines.map(function (l) {
+      var dateMatch = l.match(FINANCIALS_DETAIL_DATE_RE);
+      var moneyMatches = l.match(FINANCIALS_DETAIL_MONEY_RE);
+      var amount = null;
+      var text = l;
+      if (moneyMatches && moneyMatches.length) {
+        var amountTok = moneyMatches[moneyMatches.length - 1];
+        amount = financialsPdfAmount(amountTok);
+        text = text.replace(new RegExp("\\s*" + amountTok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*"), " ");
+      }
+      if (dateMatch) text = text.replace(dateMatch[0], " ");
+      text = text.replace(/\s+/g, " ").replace(/^[\s,-]+|[\s,-]+$/g, "").trim();
+      return { date: dateMatch ? dateMatch[0] : "", text: text, amount: amount };
+    });
+    return mergeFinancialsZeroDetails(details);
+  }
+
+  // Walks the extracted lines, returns { categories: [{category, debit,
+  // credit, details}], grandTotal: {debit, credit} | null }. "details" is
+  // every line printed between this category's header and its own "Total
+  // ..." row, for the review screen's per-category expand.
+  function extractFinancialsCategories(lines) {
+    var categories = [];
+    var grandTotal = null;
+    var sectionStart = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (line.indexOf("Total ") !== 0) continue;
+      var rest = line.slice(6).trim();
+      var parsed = splitFinancialsTotalLine(rest);
+      if (parsed) {
+        if (parsed.grand) {
+          grandTotal = { debit: parsed.debit, credit: parsed.credit };
+        } else if (parsed.single != null) {
+          categories.push({ category: parsed.category, debit: parsed.single, credit: 0, details: extractFinancialsDetailLines(lines.slice(sectionStart, i), parsed.category) });
+        } else {
+          categories.push({ category: parsed.category, debit: parsed.debit, credit: parsed.credit, details: extractFinancialsDetailLines(lines.slice(sectionStart, i), parsed.category) });
+        }
+        sectionStart = i + 1;
+        continue;
+      }
+      var next = lines[i + 1] || "";
+      var nextMatch = next.match(FINANCIALS_PDF_NEXTLINE_RE);
+      if (nextMatch) {
+        categories.push({ category: rest, debit: financialsPdfAmount(nextMatch[1]), credit: financialsPdfAmount(nextMatch[2]), details: extractFinancialsDetailLines(lines.slice(sectionStart, i), rest) });
+        i++; // consume the line the numbers came from
+        sectionStart = i + 1;
+      }
+      // else: an unparseable "Total ..." line is silently skipped — the
+      // review step below still shows the grand total for a sanity check
+      // against whatever categories WERE found.
+    }
+    return { categories: categories, grandTotal: grandTotal };
+  }
+
+  // Reads the uploaded File, extracts + parses it, and appends every category
+  // it found straight onto the Financials tab's list (no separate review
+  // step — this lands directly back on the tab, already saved, where every
+  // field is editable and any category can just be deleted if unwanted).
+  // Each category becomes one line item: net = debit - credit; net > 0 is an
+  // expense of that amount, net < 0 is income of the (positive) difference —
+  // the same "what actually happened financially" framing this tab's own
+  // Income/Expense split uses elsewhere, since a category can legitimately
+  // carry both a debit and a credit (e.g. cash pulled for a change fund,
+  // then redeposited after the show).
+  //
+  // REPLACES the whole list rather than adding to it — re-uploading the same
+  // (or a corrected) report shouldn't double every category. Anyone who
+  // wants the current list kept around first should use "Save Report".
+  function handleFinancialsPdfUpload(file) {
+    if (!file) return;
+    if (state.financials.length && !window.confirm(
+      "This will REPLACE the " + state.financials.length + " line item" + (state.financials.length === 1 ? "" : "s") +
+      " currently on this tab with what's found in the PDF. Use \"Save Report\" first if you want to keep a copy of the current list. Continue?"
+    )) return;
+    state.financialsUploadParsing = true;
+    state.financialsUploadError = null;
+    renderViews();
+    file.arrayBuffer().then(function (buf) {
+      return extractPdfLines(buf);
+    }).then(function (lines) {
+      var parsed = extractFinancialsCategories(lines);
+      if (!parsed.categories.length) {
+        state.financialsUploadParsing = false;
+        state.financialsUploadError = "Could not find any category totals in that PDF — it may not be in the expected \"Account Transactions\" report format.";
+        renderViews();
+        return;
+      }
+      var toAdd = parsed.categories.map(function (c, idx) {
+        var net = Math.round((c.debit - c.credit) * 100) / 100;
+        return {
+          id: "fin" + Date.now().toString(36) + idx + Math.random().toString(36).slice(2, 6),
+          category: cleanFinancialsCategoryName(c.category),
+          type: net >= 0 ? "expense" : "income",
+          amount: Math.abs(net),
+          notes: "",
+          details: c.details || []
+        };
+      });
+      state.financialsUploadParsing = false;
+      state.financials = toAdd;
+      saveFinancialsImmediate(toAdd);
+    }).catch(function (err) {
+      state.financialsUploadParsing = false;
+      state.financialsUploadError = "Could not read that PDF: " + (err && err.message ? err.message : err);
+      renderViews();
+    });
+  }
+
+  function loadFinancials() {
+    if (!SITE_CONFIG.financialsApiUrl) return;
+    state.financialsLoading = true;
+    state.financialsError = null;
+    renderViews();
+    fetch(SITE_CONFIG.financialsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.financialsLoading = false;
+        state.financialsLoaded = true;
+        if (r.ok && r.data && r.data.ok) {
+          state.financials = r.data.items || [];
+        } else {
+          state.financialsError = "Could not load financials.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.financialsLoading = false;
+        state.financialsLoaded = true;
+        state.financialsError = "Could not load financials — check your connection.";
+        renderViews();
+      });
+  }
+
+  // Saves the WHOLE current list immediately (no debounce) — used by "Import
+  // Selected" (one deliberate click, not typing) and wrapped by the debounced
+  // saveFinancials() below (used by the row inputs' own blur/change, where
+  // fast typing shouldn't fire a request per keystroke). Re-renders on
+  // completion to drop any blank row the server discarded (see
+  // financials.php's own "blank category isn't saved" rule) and to refresh
+  // the Total.
+  function saveFinancialsImmediate(items) {
+    if (!SITE_CONFIG.financialsApiUrl) return;
+    state.financialsSaving = true;
+    state.financialsSaved = false;
+    state.financialsError = null;
+    renderViews();
+    fetch(SITE_CONFIG.financialsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", items: items })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.financialsSaving = false;
+        if (r.ok && r.data && r.data.ok) {
+          state.financials = r.data.items || [];
+          state.financialsSaved = true;
+        } else {
+          state.financialsError = "Could not save — please try again.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.financialsSaving = false;
+        state.financialsError = "Could not save — check your connection.";
+        renderViews();
+      });
+  }
+  // Read straight off the DOM (every row's current input values) rather than
+  // kept in sync in state.financials on every keystroke, same "read at save
+  // time" pattern the Sponsor Type/shirt-size rows use elsewhere.
+  var saveFinancials = debounce(saveFinancialsImmediate, 1200);
+
+  // ---- Saved report history ("Save Report" / "History") ----
+  // A named, timestamped snapshot of the CURRENT financials list — separate
+  // from the live-edited list itself, so saving one doesn't touch what's on
+  // screen and loading one back replaces the live list the same way an
+  // "Import Selected" would (immediate save, not debounced).
+  function saveFinancialsReport() {
+    if (!SITE_CONFIG.financialsApiUrl || state.financialsSavingReport) return;
+    if (!state.financials.length) return;
+    var label = window.prompt("Name this saved report (e.g. \"After ClubExpress import\"):", "");
+    if (label === null) return; // cancelled
+    label = label.trim() || ("Report — " + new Date().toLocaleString());
+    state.financialsSavingReport = true;
+    renderViews();
+    fetch(SITE_CONFIG.financialsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save_report", items: state.financials, label: label })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.financialsSavingReport = false;
+        if (r.ok && r.data && r.data.ok) {
+          state.financialsReports = r.data.reports || [];
+          state.financialsReportsLoaded = true;
+        } else {
+          state.financialsError = (r.data && r.data.error) || "Could not save report.";
+        }
+        renderViews();
+        renderFinancialsHistory();
+      }).catch(function () {
+        state.financialsSavingReport = false;
+        state.financialsError = "Could not save report — check your connection.";
+        renderViews();
+      });
+  }
+
+  function loadFinancialsReports() {
+    if (!SITE_CONFIG.financialsApiUrl) return;
+    state.financialsReportsLoading = true;
+    state.financialsReportsError = null;
+    renderFinancialsHistory();
+    fetch(SITE_CONFIG.financialsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list_reports" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.financialsReportsLoading = false;
+        state.financialsReportsLoaded = true;
+        if (r.ok && r.data && r.data.ok) {
+          state.financialsReports = r.data.reports || [];
+        } else {
+          state.financialsReportsError = "Could not load saved reports.";
+        }
+        renderFinancialsHistory();
+      }).catch(function () {
+        state.financialsReportsLoading = false;
+        state.financialsReportsLoaded = true;
+        state.financialsReportsError = "Could not load saved reports — check your connection.";
+        renderFinancialsHistory();
+      });
+  }
+
+  function openFinancialsHistory() {
+    state.financialsHistoryOpen = true;
+    if (!state.financialsReportsLoaded) loadFinancialsReports();
+    else renderFinancialsHistory();
+  }
+  function closeFinancialsHistory() {
+    state.financialsHistoryOpen = false;
+    renderFinancialsHistory();
+  }
+
+  // Replaces the LIVE list with a saved report's snapshot and saves
+  // immediately — same "recall = restore" behavior as reverting to an old
+  // version, not a merge.
+  function recallFinancialsReport(id) {
+    if (!SITE_CONFIG.financialsApiUrl) return;
+    if (!window.confirm("Load this saved report? It will replace what's currently on the Financials tab.")) return;
+    fetch(SITE_CONFIG.financialsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "load_report", id: id })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok && r.data.report) {
+          var items = r.data.report.items || [];
+          state.financials = items;
+          state.financialsHistoryOpen = false;
+          renderFinancialsHistory();
+          saveFinancialsImmediate(items);
+        } else {
+          state.financialsError = (r.data && r.data.error) || "Could not load that report.";
+          renderFinancialsHistory();
+        }
+      }).catch(function () {
+        state.financialsError = "Could not load that report — check your connection.";
+        renderFinancialsHistory();
+      });
+  }
+
+  function deleteFinancialsReport(id) {
+    if (!SITE_CONFIG.financialsApiUrl) return;
+    if (!window.confirm("Delete this saved report? This cannot be undone.")) return;
+    fetch(SITE_CONFIG.financialsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "delete_report", id: id })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok) {
+          state.financialsReports = r.data.reports || [];
+        } else {
+          state.financialsReportsError = (r.data && r.data.error) || "Could not delete that report.";
+        }
+        renderFinancialsHistory();
+      }).catch(function () {
+        state.financialsReportsError = "Could not delete that report — check your connection.";
+        renderFinancialsHistory();
+      });
+  }
+
+  // ---- Print / Export ----
+  // Same "clone what's on screen into #printHost" pattern printSummaryReport()
+  // uses — a plain read-only Income/Expense table, since the live editable
+  // rows (inputs, ✕ buttons) have no business on a printed page.
+  function printFinancials() {
+    var totalIncome = 0, totalExpense = 0;
+    state.financials.forEach(function (item) {
+      if (item.type === "income") totalIncome += Number(item.amount) || 0;
+      else totalExpense += Number(item.amount) || 0;
+    });
+    function table(title, items) {
+      var rows = items.map(function (item) {
+        return el("tr", {}, [
+          el("td", { text: item.category }),
+          el("td", { style: "text-align:right", text: fmtMoney(Number(item.amount) || 0) }),
+          el("td", { text: item.notes || "" })
+        ]);
+      });
+      return el("div", { style: "flex:1 1 320px" }, [
+        el("h4", { text: title }),
+        el("table", { style: "width:100%; border-collapse:collapse" }, [
+          el("tbody", {}, rows.length ? rows : [el("tr", {}, [el("td", { text: "None" })])])
+        ])
+      ]);
+    }
+    var host = $("#printHost");
+    host.innerHTML = "";
+    host.appendChild(buildPrintHeader("Car Show Financials Report"));
+    host.appendChild(el("div", { class: "panel" }, [
+      el("div", { style: "display:flex; gap:24px; flex-wrap:wrap" }, [
+        table("Income", state.financials.filter(function (i) { return i.type === "income"; })),
+        table("Expenses", state.financials.filter(function (i) { return i.type !== "income"; }))
+      ]),
+      el("div", { style: "margin-top:14px; padding-top:14px; border-top:1px solid var(--line)" }, [
+        el("div", { style: "font-weight:700", text: "Total Income: " + fmtMoney(totalIncome) }),
+        el("div", { style: "font-weight:700", text: "Total Expenses: " + fmtMoney(totalExpense) }),
+        el("div", { style: "font-weight:700", text: "Net Profit/Loss: " + fmtMoney(totalIncome - totalExpense) })
+      ])
+    ]));
+    host.appendChild(buildPrintFooter());
+    window.print();
+  }
+
+  function exportFinancialsCsv() {
+    if (!state.financials.length) return;
+    var lines = [["Category", "Type", "Amount", "Notes"].map(csvField).join(",")];
+    var totalIncome = 0, totalExpense = 0;
+    state.financials.forEach(function (item) {
+      var amount = Number(item.amount) || 0;
+      if (item.type === "income") totalIncome += amount; else totalExpense += amount;
+      lines.push([item.category, item.type === "income" ? "Income" : "Expense", fmtMoney(amount), item.notes || ""].map(csvField).join(","));
+    });
+    lines.push("");
+    lines.push(["Total Income", "", fmtMoney(totalIncome), ""].map(csvField).join(","));
+    lines.push(["Total Expenses", "", fmtMoney(totalExpense), ""].map(csvField).join(","));
+    lines.push(["Net Profit/Loss", "", fmtMoney(totalIncome - totalExpense), ""].map(csvField).join(","));
+    downloadTextFile("car-show-financials.csv", lines.join("\n"), "text/csv");
+  }
+
+  function buildFinancialsView() {
+    if (state.financialsLoading && !state.financialsLoaded) {
+      return el("div", { class: "view" }, [el("div", { class: "panel" }, [el("div", { class: "hint" }, ["Loading…"])])]);
+    }
+    var datalist = el("datalist", { id: "financialsCategoryList" },
+      FINANCIALS_SUGGESTED_CATEGORIES.map(function (c) { return el("option", { value: c }); }));
+
+    // Two-column income-statement layout: a category's row lives in whichever
+    // column matches its CURRENT type, decided when the row is (re)built —
+    // switching the Income/Expense dropdown moves it to the other column on
+    // the next render (after the save that change triggers), same lag as the
+    // Total figures below already have.
+    var incomeWrap = el("div", {});
+    var expenseWrap = el("div", {});
+    var totalIncome = 0, totalExpense = 0;
+
+    // Reads every row currently in the DOM (in display order, income column
+    // then expense column) and saves — shared by every field's blur/change
+    // and by the ✕ remove button, so "remove a row" and "edit a row" go
+    // through the exact same save path.
+    function collectAndSave() {
+      var rows = Array.prototype.slice.call(incomeWrap.querySelectorAll(".financials-row"))
+        .concat(Array.prototype.slice.call(expenseWrap.querySelectorAll(".financials-row")));
+      var items = rows.map(function (row) {
+        return {
+          id: row.getAttribute("data-id") || "",
+          category: row.querySelector(".financials-category").value.trim(),
+          type: row.getAttribute("data-type") === "income" ? "income" : "expense",
+          amount: Number(row.querySelector(".financials-amount").value) || 0,
+          notes: row._notes || "",
+          details: row._details || []
+        };
+      }).filter(function (item) { return item.category !== ""; });
+      saveFinancials(items);
+    }
+
+    function addRow(item) {
+      item = item || { id: "", category: "", type: "expense", amount: "", notes: "", details: [] };
+      var hasId = !!item.id;
+      var expanded = hasId && !!state.financialsExpandedIds[item.id];
+
+      var toggleBtn = el("button", { type: "button", class: "btn", style: "padding:4px 8px; flex:0 0 auto; font-size:12px" },
+        [expanded ? "▾" : "▸"]);
+      if (!hasId) toggleBtn.setAttribute("disabled", "disabled");
+      toggleBtn.addEventListener("click", function () {
+        state.financialsExpandedIds[item.id] = !state.financialsExpandedIds[item.id];
+        renderViews();
+      });
+
+      // flex-basis 0 with a big flex-grow (rather than a fixed width) so this
+      // field claims whatever room the row has instead of clipping long
+      // category names; the title attribute mirrors the value so a name
+      // still too long for the field is readable on hover.
+      var categoryInput = el("input", { type: "text", value: item.category || "", title: item.category || "", list: "financialsCategoryList", placeholder: "Category", style: "flex:3 1 0; min-width:0" });
+      categoryInput.addEventListener("input", function () { categoryInput.title = categoryInput.value; });
+      var amountField = moneyInput({ value: item.amount === "" ? "" : String(item.amount) });
+      amountField.wrap.style.flex = "0 0 130px";
+      categoryInput.className = "financials-category";
+      amountField.input.className = "financials-amount";
+      // Type is fixed by which column (Income/Expense) a row sits in — no
+      // dropdown, no move button; a category that's really the other type
+      // gets deleted and re-added with "+ Add Line" in that column.
+      var removeBtn = el("button", { type: "button", class: "btn", title: "Remove this line", style: "padding:4px 10px; flex:0 0 auto" }, ["✕"]);
+      var row = el("div", {
+        class: "financials-row", style: "display:flex; gap:6px; align-items:center; margin-bottom:6px",
+        "data-type": item.type === "income" ? "income" : "expense"
+      }, [toggleBtn, categoryInput, amountField.wrap, removeBtn]);
+      if (item.id) row.setAttribute("data-id", item.id);
+      // Notes has no input of its own anymore (dropped from the row), but
+      // whatever was already saved there is kept round-tripping through
+      // collectAndSave rather than being silently wiped on the next save.
+      row._notes = item.notes || "";
+      // Working copy of this category's transaction details — mutated in
+      // place by the expand panel below and read back by collectAndSave, so
+      // editing/adding/deleting a detail line saves through the same path as
+      // every other field on this row.
+      row._details = (item.details || []).map(function (d) { return { date: d.date || "", text: d.text || "", amount: d.amount }; });
+      [categoryInput, amountField.input].forEach(function (input) {
+        input.addEventListener("blur", collectAndSave);
+        input.addEventListener("change", collectAndSave);
+      });
+      removeBtn.addEventListener("click", function () {
+        row.parentNode.removeChild(row);
+        if (row._detailsWrap && row._detailsWrap.parentNode) row._detailsWrap.parentNode.removeChild(row._detailsWrap);
+        collectAndSave();
+      });
+      var targetWrap = item.type === "income" ? incomeWrap : expenseWrap;
+      targetWrap.appendChild(row);
+
+      if (expanded) {
+        var detailsWrap = el("div", { style: "margin:0 0 10px 34px; padding:6px 10px; background:var(--panel-alt, #f7f7f7); border-radius:4px" });
+        row._detailsWrap = detailsWrap;
+        function renderDetailRows() {
+          detailsWrap.innerHTML = "";
+          row._details.forEach(function (d, dIdx) {
+            var dateInput = el("input", { type: "text", value: d.date || "", placeholder: "Date", style: "flex:0 0 100px; font-size:12px" });
+            dateInput.addEventListener("input", function () { d.date = dateInput.value; });
+            dateInput.addEventListener("blur", collectAndSave);
+            var textInput = el("input", { type: "text", value: d.text || "", title: d.text || "", placeholder: "Description", style: "flex:1 1 0; min-width:0; font-size:12px" });
+            textInput.addEventListener("input", function () { d.text = textInput.value; textInput.title = textInput.value; });
+            textInput.addEventListener("blur", collectAndSave);
+            var amtField = moneyInput({ value: d.amount != null ? String(d.amount) : "" });
+            amtField.wrap.style.flex = "0 0 110px";
+            amtField.input.addEventListener("input", function () { d.amount = amtField.input.value === "" ? null : (Number(amtField.input.value) || 0); });
+            amtField.input.addEventListener("blur", collectAndSave);
+            var delDetailBtn = el("button", { type: "button", class: "btn", title: "Remove this transaction line", style: "padding:2px 8px; flex:0 0 auto" }, ["✕"]);
+            delDetailBtn.addEventListener("click", function () { row._details.splice(dIdx, 1); renderDetailRows(); collectAndSave(); });
+            detailsWrap.appendChild(el("div", { style: "display:flex; gap:6px; align-items:center; padding:2px 0" }, [dateInput, textInput, amtField.wrap, delDetailBtn]));
+          });
+          var addDetailBtn = el("button", { type: "button", class: "btn", style: "font-size:11px; padding:2px 8px; margin-top:4px" }, ["+ Add Line Item"]);
+          addDetailBtn.addEventListener("click", function () { row._details.push({ date: "", text: "", amount: null }); renderDetailRows(); });
+          detailsWrap.appendChild(addDetailBtn);
+        }
+        renderDetailRows();
+        targetWrap.appendChild(detailsWrap);
+      }
+    }
+    (state.financials.length ? state.financials : []).forEach(addRow);
+    state.financials.forEach(function (item) {
+      if (item.type === "income") totalIncome += Number(item.amount) || 0;
+      else totalExpense += Number(item.amount) || 0;
+    });
+
+    var addBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["+ Add Line"]);
+    addBtn.addEventListener("click", function () { addRow(); });
+
+    var uploadInput = el("input", { type: "file", accept: "application/pdf,.pdf", style: "display:none" });
+    uploadInput.addEventListener("change", function () {
+      if (uploadInput.files && uploadInput.files[0]) handleFinancialsPdfUpload(uploadInput.files[0]);
+      uploadInput.value = ""; // so re-selecting the same file still fires "change"
+    });
+    var uploadBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" },
+      [state.financialsUploadParsing ? "Reading…" : "📄 Upload Report"]);
+    if (state.financialsUploadParsing) uploadBtn.setAttribute("disabled", "disabled");
+    uploadBtn.addEventListener("click", function () { uploadInput.click(); });
+
+    var saveReportBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" },
+      [state.financialsSavingReport ? "Saving…" : "💾 Save Report"]);
+    if (state.financialsSavingReport || !state.financials.length) saveReportBtn.setAttribute("disabled", "disabled");
+    saveReportBtn.addEventListener("click", saveFinancialsReport);
+
+    var historyBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["🕒 History"]);
+    historyBtn.addEventListener("click", openFinancialsHistory);
+
+    var printBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["🖨 Print"]);
+    if (!state.financials.length) printBtn.setAttribute("disabled", "disabled");
+    printBtn.addEventListener("click", printFinancials);
+
+    var exportBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["⬇ Export"]);
+    if (!state.financials.length) exportBtn.setAttribute("disabled", "disabled");
+    exportBtn.addEventListener("click", exportFinancialsCsv);
+
+    var saveStatus = [];
+    if (state.financialsSaving) saveStatus.push(el("span", { class: "count" }, ["Saving…"]));
+    else if (state.financialsSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
+    if (state.financialsError) saveStatus.push(el("div", { class: "form-error" }, [state.financialsError]));
+    if (state.financialsUploadError) saveStatus.push(el("div", { class: "form-error" }, [state.financialsUploadError]));
+
+    var kids = [
+      el("h3", { text: "Financials" }),
+      el("div", { class: "hint", style: "margin-bottom:12px" }, [
+        "A short income/expense summary for this show year — enter each category by hand, or click " +
+        "\"Upload Report\" to pull categories and totals straight out of the club's \"Account Transactions\" " +
+        "PDF export (this REPLACES whatever's currently listed below — use \"Save Report\" first if you want " +
+        "to keep a copy). Changes save automatically as you type."
+      ]),
+      datalist
+    ];
+    if (!state.financials.length) {
+      kids.push(el("div", { class: "hint", style: "margin-bottom:10px" }, ["No financial line items yet."]));
+    }
+    if (!incomeWrap.children.length) incomeWrap.appendChild(el("div", { class: "hint" }, ["None yet."]));
+    if (!expenseWrap.children.length) expenseWrap.appendChild(el("div", { class: "hint" }, ["None yet."]));
+    kids.push(el("div", { style: "display:flex; gap:24px; flex-wrap:wrap" }, [
+      el("div", { style: "flex:1 1 320px; min-width:280px" }, [
+        el("h4", { style: "margin:0 0 8px; color:var(--good)", text: "Income (" + fmtMoney(totalIncome) + ")" }),
+        incomeWrap
+      ]),
+      el("div", { style: "flex:1 1 320px; min-width:280px" }, [
+        el("h4", { style: "margin:0 0 8px; color:var(--warn)", text: "Expenses (" + fmtMoney(totalExpense) + ")" }),
+        expenseWrap
+      ])
+    ]));
+    kids.push(el("div", { class: "settings-actions" }, [addBtn, uploadBtn, uploadInput, saveReportBtn, historyBtn, printBtn, exportBtn].concat(saveStatus)));
+    kids.push(el("div", { class: "financials-total", style: "margin-top:14px; padding-top:14px; border-top:1px solid var(--line)" }, [
+      el("div", { style: "font-weight:700; font-size:15px" }, ["Total Income: " + fmtMoney(totalIncome)]),
+      el("div", { style: "font-weight:700; font-size:15px" }, ["Total Expenses: " + fmtMoney(totalExpense)]),
+      el("div", { style: "font-weight:700; font-size:15px; color:" + (totalIncome - totalExpense >= 0 ? "var(--good)" : "var(--warn)") },
+        ["Net Profit/Loss: " + fmtMoney(totalIncome - totalExpense)])
+    ]));
+
+    return el("div", { class: "view financials-view" }, [el("div", { class: "panel" }, kids)]);
+  }
+
+  // "🕒 History" modal — every saved report (name + timestamp) with a Load
+  // button, newest first. Same modal-backdrop pattern as renderImportHelp().
+  function renderFinancialsHistory() {
+    var host = $("#financialsHistoryHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.financialsHistoryOpen) return;
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", closeFinancialsHistory);
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: "Saved Reports" }),
+      el("span", { class: "spacer" }), closeBtn
+    ]);
+
+    var bodyKids = [];
+    if (state.financialsReportsLoading) {
+      bodyKids.push(el("div", { class: "hint" }, ["Loading…"]));
+    } else if (state.financialsReportsError) {
+      bodyKids.push(el("div", { class: "form-error" }, [state.financialsReportsError]));
+    } else if (!state.financialsReports.length) {
+      bodyKids.push(el("div", { class: "hint" }, ["No saved reports yet — use \"Save Report\" on the Financials tab to snapshot the current list."]));
+    } else {
+      var sorted = state.financialsReports.slice().sort(function (a, b) {
+        return (b.savedAt || "").localeCompare(a.savedAt || "");
+      });
+      sorted.forEach(function (r) {
+        var when = r.savedAt ? new Date(r.savedAt).toLocaleString() : "";
+        var loadBtn = el("button", { type: "button", class: "btn primary", style: "font-size:12px; padding:4px 10px" }, ["Load"]);
+        loadBtn.addEventListener("click", function () { recallFinancialsReport(r.id); });
+        var deleteBtn = el("button", { type: "button", class: "btn", title: "Delete this saved report", style: "font-size:12px; padding:4px 10px" }, ["✕"]);
+        deleteBtn.addEventListener("click", function () { deleteFinancialsReport(r.id); });
+        bodyKids.push(el("div", { style: "display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--line)" }, [
+          el("div", {}, [
+            el("div", { style: "font-weight:600", text: r.label || "Report" }),
+            el("div", { class: "hint", text: when + " — " + ((r.items || []).length) + " line item" + ((r.items || []).length === 1 ? "" : "s") })
+          ]),
+          el("div", { style: "display:flex; gap:6px; flex:0 0 auto" }, [loadBtn, deleteBtn])
+        ]));
+      });
+    }
+
+    var modal = el("div", { class: "modal" }, [head, el("div", { class: "modal-body" }, bodyKids)]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", closeFinancialsHistory);
+    host.appendChild(backdrop);
+  }
+
   // "❓ Instructions" next to an import button on the Setup tab — a static,
   // no-data modal documenting the exact ClubExpress steps to produce the CSV
   // that button expects, since those export paths are buried a few screens
@@ -7413,6 +8228,7 @@
     document.body.appendChild(el("div", { id: "addRegHost" }));
     document.body.appendChild(el("div", { id: "confirmHost" }));
     document.body.appendChild(el("div", { id: "importHelpHost" }));
+    document.body.appendChild(el("div", { id: "financialsHistoryHost" }));
     document.body.appendChild(el("div", { id: "testsHost" }));
     document.body.appendChild(el("div", { id: "developerLoginHost" }));
     // window.__carshowSite is set (by index.php, before this script runs) —
@@ -7445,6 +8261,7 @@
       if (e.key === "Escape" && state.showPendingDelete) { cancelDeleteShow(); return; }
       if (e.key === "Escape" && state.clearSponsorsOpen) { closeClearSponsorsConfirm(); return; }
       if (e.key === "Escape" && state.importHelp) { closeImportHelp(); return; }
+      if (e.key === "Escape" && state.financialsHistoryOpen) { closeFinancialsHistory(); return; }
       if (e.key === "Escape" && state.deleteSelectedOpen) { closeDeleteSelectedConfirm(); return; }
       if (e.key === "Escape" && state.deleteRegSelectedOpen) { closeDeleteRegSelectedConfirm(); return; }
       if (e.key === "Escape" && state.menuOpen) { closeMenu(); return; }
