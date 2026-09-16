@@ -594,7 +594,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-credit">v5.66 &middot; Deployed 09/15/2026 07:29 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
+  <div class="footer-credit">v5.72 &middot; Deployed 09/15/2026 08:43 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
 <script>
 /* @license
@@ -2383,7 +2383,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     emailSendError: null,
     emailSent: false,         // brief "Sent!" confirmation after a successful send
     tshirtOrderPageOpen: false, // T-Shirts tab > "T-Shirt Order Email" full-page screen
-    tshirtPurchasePageOpen: false, // T-Shirts tab > "Buy T-Shirt" full-page screen
+    tshirtPurchasePageOpen: false, // T-Shirts tab > "Order T-Shirt" full-page screen
     // Reports tab > "Sponsor Report" full-page screen — a live print preview
     // (left) beside a column/sort builder (right). The layout itself lives in
     // appSettings (persisted per show, see sponsorReportColumns()); only the
@@ -2409,11 +2409,12 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     // window card. Filled by ingestDashNumbers(); see App/deploy/dash-numbers.php.
     dashNumbers: {},
     dashNumberSyncError: null,
-    tshirtPurchaseName: "",    // Buy T-Shirt form's in-progress Name field
-    tshirtPurchaseCost: "",    // Buy T-Shirt form's in-progress Cost field (defaults from settings when opened)
-    tshirtPurchaseSize: "",    // Buy T-Shirt form's in-progress T-Shirt Size field (e.g. "Men's Large")
-    tshirtPurchasePaymentType: "Cash", // Buy T-Shirt form's in-progress Payment Type field
-    tshirtPurchaseCheckNum: "", // Buy T-Shirt form's in-progress Check # field (only used when Payment Type is Check)
+    tshirtPurchaseName: "",    // Order T-Shirt form's in-progress Name field
+    tshirtPurchaseCost: "",    // Order T-Shirt form's in-progress Cost field (defaults from settings when opened)
+    tshirtPurchaseReason: "Walk-in", // Order T-Shirt form's in-progress Reason field (Walk-in/Member/Sponsor)
+    tshirtPurchaseSize: "",    // Order T-Shirt form's in-progress T-Shirt Size field (e.g. "Men's Large")
+    tshirtPurchasePaymentType: "Cash", // Order T-Shirt form's in-progress Payment Type field
+    tshirtPurchaseCheckNum: "", // Order T-Shirt form's in-progress Check # field (only used when Payment Type is Check)
     tshirtPurchaseSyncError: null, // set when persisting an add/delete fails
     deletedCsvKeys: {},       // csvRegKey(rec) -> true, for CSV-derived rows removed via the
                                // Registration tab's checkbox/bulk-delete — filled by
@@ -2504,11 +2505,17 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
 
   // ---------- shirts: 24 sparse columns collapsed into one summary column ----------
   var SHIRTS_COL = "__shirts";
-  var GROUP_SHORT = null; // lazy-built from CONFIG.GROUPS: "Men's Free" -> "M Free", etc.
+  var GROUP_SHORT = null; // lazy-built from CONFIG.GROUPS: "Men's Free" -> "M Free", "Men's Xtra" -> "M Purchased", etc.
   function groupShort(groupKey) {
     if (!GROUP_SHORT) {
       GROUP_SHORT = {};
-      CONFIG.GROUPS.forEach(function (g) { GROUP_SHORT[g.key] = g.label.replace("Men's", "M").replace("Women's", "W"); });
+      // "Xtra" reads as "Purchased" here too (same rename as shirtMatrix()'s
+      // column headers) — g.label itself stays "Men's Xtra"/etc., since it's
+      // also the literal CSV column-name prefix (config.js's SHIRT_BUCKETS)
+      // used for import matching well beyond this display.
+      CONFIG.GROUPS.forEach(function (g) {
+        GROUP_SHORT[g.key] = g.label.replace("Men's", "M").replace("Women's", "W").replace("Xtra", "Purchased");
+      });
     }
     return GROUP_SHORT[groupKey];
   }
@@ -2556,7 +2563,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
 
   // A money input always shown with a "$" prefix, so every dollar figure an
   // officer types looks like currency, not a bare number (this used to only
-  // exist on the Buy T-Shirt Cost field — every other money input lacked it).
+  // exist on the Order T-Shirt Cost field — every other money input lacked it).
   // Returns { input, wrap } — append wrap, read/write input as usual.
   function moneyInput(attrs) {
     attrs = attrs || {};
@@ -3135,6 +3142,9 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     var printCardsBtn = el("button", { class: "btn", id: "regPrintCardsBtn", disabled: "disabled" }, ["🪟 Print Window Cards"]);
     printCardsBtn.addEventListener("click", printSelectedWindowCards);
 
+    var exportBtn = el("button", { class: "btn", title: "Export exactly what's shown — current search/filters, collapsed Shirts column" }, ["⬇ Export"]);
+    exportBtn.addEventListener("click", exportRegistrationCsv);
+
     var addBtn = el("button", { class: "btn primary" }, ["+ Add Registration"]);
     addBtn.addEventListener("click", openAddRegistration);
 
@@ -3156,11 +3166,79 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       el("span", { class: "spacer" }),
       zoomGroup
     ];
-    kids.push(printCardsBtn, delBtn);
+    kids.push(exportBtn, printCardsBtn, delBtn);
     return el("div", { class: "toolbar no-print" }, kids);
   }
   function buildSummaryToolbar() {
-    return el("div", { class: "toolbar no-print" }, [el("span", { class: "spacer" })]);
+    var exportBtn = el("button", { class: "btn" }, ["⬇ Export"]);
+    exportBtn.addEventListener("click", exportSummaryCsv);
+    return el("div", { class: "toolbar no-print" }, [el("span", { class: "spacer" }), exportBtn]);
+  }
+  // Summary tab's "⬇ Export" — the dashboard is several unrelated
+  // panels (overview, sponsors, two shirt matrices, walk-in purchases, car
+  // show generations, clubs), not one table, so this is one CSV with a
+  // blank-line-separated section per panel rather than exportGenReportCsv()'s
+  // single-table shape. Pulls straight from the same data functions
+  // buildSummaryView()'s panels call (LOGIC.summarizeRecords(),
+  // sponsorStatsByType(), paidRegShirtTotals(), etc.) rather than reading the
+  // rendered DOM, so it stays correct even if that view's layout changes.
+  function exportSummaryCsv() {
+    var s = LOGIC.summarizeRecords(allRegistrations(), CONFIG);
+    var sponsorFunds = sponsorStatsByType("premier").total + sponsorStatsByType("corporate").total;
+    var tshirtPurchaseTotal = state.tshirtPurchases.reduce(function (sum, p) { return sum + (Number(p.cost) || 0); }, 0);
+    var totalIncome = Number(s.funds) + sponsorFunds + tshirtPurchaseTotal;
+    var lines = [];
+    function section(title) { if (lines.length) lines.push(""); lines.push(csvField(title)); }
+    function row(cells) { lines.push(cells.map(csvField).join(",")); }
+
+    section("Overview");
+    row(["Registrations", s.registrations]);
+    row(["Total Income", fmtMoney(totalIncome)]);
+
+    section("Sponsors by Type");
+    row(["Type", "Count", "Total"]);
+    ["individual", "corporate", "premier"].forEach(function (t) {
+      var stats = sponsorStatsByType(t);
+      row([stats.label, stats.count, fmtMoney(stats.total)]);
+    });
+
+    // "Xtra" -> "Purchased" in this header row too, same rename as
+    // shirtMatrix()'s on-screen column headers (g.label itself is untouched).
+    section("Registration Shirts");
+    row(["Size"].concat(CONFIG.GROUPS.map(function (g) { return g.label.replace("Xtra", "Purchased"); })));
+    CONFIG.SIZES.forEach(function (sz) {
+      row([sz.label].concat(CONFIG.GROUPS.map(function (g) { return s.shirtTotals[g.key + sz.key] || 0; })));
+    });
+
+    section("Total Shirts Needed For Event (paid registrations + all sponsors)");
+    var totals = paidRegShirtTotals();
+    var sponsorCounts = allSponsorShirtCounts();
+    row(["Size", "Men's", "Women's"]);
+    CONFIG.SIZES.forEach(function (sz) {
+      var regMens = 0, regWomens = 0;
+      CONFIG.GROUPS.forEach(function (g) {
+        var val = totals[g.key + sz.key] || 0;
+        if (g.gender === "Men's") regMens += val; else regWomens += val;
+      });
+      row([sz.label, regMens + sponsorCounts[sz.key].mens, regWomens + sponsorCounts[sz.key].womens]);
+    });
+
+    section("Walk-In T-Shirt Purchases");
+    row(["Purchases", state.tshirtPurchases.length]);
+    row(["Total", fmtMoney(tshirtPurchaseTotal)]);
+    var purchCounts = tshirtPurchaseShirtCounts();
+    row(["Size", "Men's", "Women's"]);
+    CONFIG.SIZES.forEach(function (sz) { row([sz.label, purchCounts[sz.key].mens, purchCounts[sz.key].womens]); });
+
+    section("Car Show (Judges: " + s.judges + ")");
+    row(["Generation", "Years", "At Event", "In Car Show"]);
+    s.gens.forEach(function (g) { row([g.gen, g.from + "–" + g.to, g.atEvent, g.inCarShow]); });
+
+    section("Clubs");
+    row(["Club", "Attendees"]);
+    s.clubs.forEach(function (c) { row([c.name, c.attendees]); });
+
+    downloadTextFile("Summary-" + dateInputValue(new Date()) + ".csv", "﻿" + lines.join("\r\n"), "text/csv;charset=utf-8");
   }
 
   // ---------- print (Registration tab: print every column, not just what's on screen) ----------
@@ -3206,6 +3284,35 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     });
     base.push(SHIRTS_COL);
     return base;
+  }
+  // Plain-text value for one column of one row, same formatting renderRegBody()
+  // applies per column (Shirts summary, money, CSV dates, phone) — used by
+  // exportRegistrationCsv() so the export matches the on-screen table exactly
+  // (minus the Email column's mailto: link, which CSV has no use for).
+  function regCellText(r, c) {
+    if (c === SHIRTS_COL) return shirtSummaryText(r);
+    if (CURRENCY_COLS[c]) return fmtMoney(r[c]);
+    if (DATE_COLS[c]) return fmtCsvDate(r[c]);
+    if (c === "Phone") return fmtPhone(r[c]);
+    var v = r[c];
+    return v == null ? "" : String(v);
+  }
+  // Registration tab's "⬇ Export" — exactly what's currently on screen:
+  // visibleRows() already applies the search box and Status/In Car Show
+  // filters, and visibleColumns() is the same collapsed-shirts column set
+  // the table itself renders (the Reports tab's own "Registration Report",
+  // REG_REPORT_SPEC, is the separate full-detail/user-configurable export;
+  // this one is deliberately just "what I'm looking at right now").
+  function exportRegistrationCsv() {
+    var rows = visibleRows();
+    if (!rows.length) return;
+    var cols = visibleColumns();
+    var lines = [cols.map(function (c) { return csvField(c === SHIRTS_COL ? "Shirts" : c); }).join(",")];
+    rows.forEach(function (r) {
+      lines.push(cols.map(function (c) { return csvField(regCellText(r, c)); }).join(","));
+    });
+    downloadTextFile("Registrations-" + dateInputValue(new Date()) + ".csv",
+      "﻿" + lines.join("\r\n"), "text/csv;charset=utf-8");
   }
 
   function buildRegView() {
@@ -4174,7 +4281,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     });
     return counts;
   }
-  // Purchase-size counts for Walk-In T-Shirt sales (Buy T-Shirt screen) —
+  // Purchase-size counts for Walk-In T-Shirt sales (Order T-Shirt screen) —
   // each purchase's size is one of CONFIG.SPONSOR_SHIRT_SIZES's "Men's/
   // Women's <size>" strings (same set used by the Sponsors tab's T-Shirt
   // field), so CONFIG.SPONSOR_SIZE_INDEX maps it straight to { gender,
@@ -4617,7 +4724,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     });
   }
 
-  // ---------- t-shirt purchases (T-Shirts tab's "🛒 Buy T-Shirt") ----------
+  // ---------- t-shirt purchases (T-Shirts tab's "🛒 Order T-Shirt") ----------
   // Same optimistic-local-update-then-server-push pattern as sponsors/walkins
   // above — see upsertSponsor/pushSponsorToServer's comments.
   function upsertTshirtPurchase(record) {
@@ -5627,7 +5734,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     row("Total Fee", feeField.wrap);
 
     // Same Payment Type (Cash/Check/Credit Card) + conditional Check # pattern
-    // as Buy T-Shirt and the Sponsors tab's payment forms. "Unpaid" is the
+    // as Order T-Shirt and the Sponsors tab's payment forms. "Unpaid" is the
     // same escape hatch used by the Sponsors payment forms (see
     // renderSponsorForm()) — it isn't a real payment method, it just means
     // no payment has been collected yet; Status is derived from it below
@@ -7427,12 +7534,10 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     // is only on the Reports tab now (see TSHIRT_REPORT_SPEC / openGenReportPage()).
     var orderBtn = el("button", { class: "btn primary" }, ["📧 T-Shirt Order Email"]);
     orderBtn.addEventListener("click", openTshirtOrderPage);
-    var purchaseBtn = el("button", { class: "btn" }, ["🛒 Buy T-Shirt"]);
+    var purchaseBtn = el("button", { class: "btn" }, ["🛒 Order T-Shirt"]);
     purchaseBtn.addEventListener("click", openTshirtPurchasePage);
-    var purchaseDetailsBtn = el("button", { class: "btn" }, ["📋 Walk-In Purchase Details"]);
-    purchaseDetailsBtn.addEventListener("click", openTshirtPurchasePage);
     wrap.appendChild(el("div", { class: "panel" }, [
-      el("div", { class: "settings-actions" }, [orderBtn, purchaseBtn, purchaseDetailsBtn])
+      el("div", { class: "settings-actions" }, [orderBtn, purchaseBtn])
     ]));
 
     return wrap;
@@ -7446,8 +7551,9 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // printCallback is optional — when given, a "🖨 Print" button appears in
   // the banner's upper-right corner (same position on every full-page report
   // screen that has one), instead of each screen placing its own print
-  // button somewhere in its body.
-  function buildPageBanner(closeCallback, pageTitle, printCallback) {
+  // button somewhere in its body. exportCallback is likewise optional — when
+  // given, a "⬇ Export" button appears immediately to Print's LEFT.
+  function buildPageBanner(closeCallback, pageTitle, printCallback, exportCallback) {
     var headerLogo = $("header.app img.hdr-logo");
     var logoImg = headerLogo ? el("img", { src: headerLogo.src, style: "height:40px" }) : null;
     var leftKids = [];
@@ -7460,6 +7566,11 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     var centerKids = [el("h2", { text: "Car Show Manager", style: "margin: 0" })];
     if (pageTitle) centerKids.push(el("h3", { text: pageTitle, style: "margin: 4px 0 0; color: var(--muted); font-weight: 600" }));
     var rightKids = [];
+    if (exportCallback) {
+      var exportBtn = el("button", { class: "btn" }, ["⬇ Export"]);
+      exportBtn.addEventListener("click", exportCallback);
+      rightKids.push(exportBtn);
+    }
     if (printCallback) {
       var printBtn = el("button", { class: "btn" }, ["🖨 Print"]);
       printBtn.addEventListener("click", printCallback);
@@ -7468,7 +7579,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     return el("div", { class: "api-page-head", style: "display: grid; grid-template-columns: 1fr auto 1fr; align-items: center" }, [
       el("div", { style: "display: flex; align-items: center; gap: 10px; justify-self: start" }, leftKids),
       el("div", { style: "justify-self: center; text-align: center" }, centerKids),
-      el("div", { style: "justify-self: end" }, rightKids)
+      el("div", { style: "display: flex; align-items: center; gap: 8px; justify-self: end" }, rightKids)
     ]);
   }
 
@@ -8649,6 +8760,43 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     host.appendChild(buildPrintFooter());
     window.print();
   }
+  // Quotes a CSV field only when it needs it (contains a comma, quote, or
+  // newline) — doubling any embedded quote, the standard CSV escaping rule.
+  function csvField(v) {
+    var s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  // Downloads a text blob under `filename` via a throwaway <a download> —
+  // the standard no-library approach for a client-generated file; nothing is
+  // ever sent to the server for this. revokeObjectURL is deferred a tick so
+  // the click has time to actually start the save before the URL dies.
+  function downloadTextFile(filename, text, mimeType) {
+    var blob = new Blob([text], { type: mimeType || "text/plain" });
+    var url = URL.createObjectURL(blob);
+    var a = el("a", { href: url, download: filename });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+  // Registration/Car Show/T-Shirt/Member reports' "⬇ Export" button — the
+  // same columns, order, and sort the preview/print already use, as a CSV
+  // (universally importable, and simpler than wiring up excel.js/ExcelJS —
+  // vendored in this app only for logic.js's own generate() workbook, and
+  // for the regression suite — for one more, unrelated export path).
+  function exportGenReportCsv(spec) {
+    var rows = genReportSorted(spec);
+    if (!rows.length) return;
+    var cols = genReportColumns(spec);
+    var lines = [cols.map(function (c) { return csvField(c.label); }).join(",")];
+    rows.forEach(function (r) {
+      lines.push(cols.map(function (c) { return csvField(spec.cellText(r, c.key)); }).join(","));
+    });
+    // Byte-order mark first so Excel (which otherwise guesses ANSI and can
+    // mangle a non-ASCII sponsor/member name) opens this as UTF-8.
+    downloadTextFile(spec.title.replace(/[^A-Za-z0-9]+/g, "") + "-" + dateInputValue(new Date()) + ".csv",
+      "﻿" + lines.join("\r\n"), "text/csv;charset=utf-8");
+  }
   function buildGenReportPreview(spec) {
     var cols = genReportColumns(spec);
     var rows = genReportSorted(spec);
@@ -8761,7 +8909,8 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     host.innerHTML = "";
     if (!state[spec.id + "ReportPageOpen"]) return;
     var page = el("div", { class: "api-page" }, [
-      buildPageBanner(function () { closeGenReportPage(spec); }, spec.title, function () { printGenReport(spec); }),
+      buildPageBanner(function () { closeGenReportPage(spec); }, spec.title,
+        function () { printGenReport(spec); }, function () { exportGenReportCsv(spec); }),
       el("div", { class: "api-page-body report-builder-body" }, [
         buildGenReportPreview(spec),
         buildGenReportBuilder(spec)
@@ -8963,6 +9112,19 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     host.appendChild(buildPrintFooter());
     window.print();
   }
+  // Sponsor Report's own "⬇ Export" — same CSV shape as
+  // exportGenReportCsv() (this report predates, and isn't wired into, the
+  // generic report-builder screens that helper serves).
+  function exportSponsorReportCsv() {
+    if (!visibleSponsors().length) return;
+    var cols = sponsorReportColumns();
+    var lines = [cols.map(function (c) { return csvField(c.label); }).join(",")];
+    sponsorReportSorted().forEach(function (s) {
+      lines.push(cols.map(function (c) { return csvField(sponsorFieldText(s, c.key)); }).join(","));
+    });
+    downloadTextFile("SponsorReport-" + dateInputValue(new Date()) + ".csv",
+      "﻿" + lines.join("\r\n"), "text/csv;charset=utf-8");
+  }
 
   // The left pane — a WYSIWYG mimic of what printSponsorReport() will put on
   // paper (same header/table/footer elements), not the browser's own print
@@ -9137,7 +9299,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     if (!state.sponsorReportPageOpen) return;
 
     var page = el("div", { class: "api-page" }, [
-      buildPageBanner(closeSponsorReportPage, "Sponsor Report", printSponsorReport),
+      buildPageBanner(closeSponsorReportPage, "Sponsor Report", printSponsorReport, exportSponsorReportCsv),
       el("div", { class: "api-page-body report-builder-body" }, [
         buildSponsorReportPreview(),
         buildSponsorReportBuilder()
@@ -9193,12 +9355,14 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       purchasedAt: new Date().toISOString(),
       name: name,
       cost: cost,
+      reason: state.tshirtPurchaseReason || "Walk-in",
       size: state.tshirtPurchaseSize || "",
       paymentType: paymentType,
       checkNum: paymentType === "Check" ? checkNum : ""
     });
     state.tshirtPurchaseName = "";
     state.tshirtPurchaseCost = String(state.appSettings.tshirtEventPurchaseCost || 0);
+    state.tshirtPurchaseReason = "Walk-in";
     state.tshirtPurchaseSize = "";
     state.tshirtPurchasePaymentType = "Cash";
     state.tshirtPurchaseCheckNum = "";
@@ -9218,7 +9382,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     host.innerHTML = "";
     if (!state.tshirtPurchasePageOpen) return;
 
-    var head = buildPageBanner(closeTshirtPurchasePage, "Buy T-Shirt");
+    var head = buildPageBanner(closeTshirtPurchasePage, "Order T-Shirt");
 
     var body = el("div", { class: "api-page-inner" });
 
@@ -9233,6 +9397,16 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     costInput.addEventListener("input", function () { state.tshirtPurchaseCost = costInput.value; });
     body.appendChild(el("div", { class: "form-row" }, [
       el("span", { class: "form-label", text: "Cost" }), costField.wrap
+    ]));
+
+    var reasonSelect = el("select", {});
+    ["Walk-in", "Member", "Sponsor"].forEach(function (r) {
+      reasonSelect.appendChild(el("option", { value: r, text: r }));
+    });
+    reasonSelect.value = state.tshirtPurchaseReason || "Walk-in";
+    reasonSelect.addEventListener("change", function () { state.tshirtPurchaseReason = reasonSelect.value; });
+    body.appendChild(el("div", { class: "form-row" }, [
+      el("span", { class: "form-label", text: "Reason" }), reasonSelect
     ]));
 
     var sizeSelect = el("select", {});
@@ -9286,6 +9460,10 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
           el("td", { text: fmtPurchaseTime(p.purchasedAt) }),
           el("td", { text: p.name || "—" }),
           el("td", { text: fmtMoney(p.cost) }),
+          // Older purchases recorded before this field existed have no
+          // `reason` — fall back to "Walk-in" (the ORIGINAL default/only
+          // reason this screen ever supported), not a blank cell.
+          el("td", { text: p.reason || "Walk-in" }),
           el("td", { text: p.size || "—" }),
           el("td", { text: p.paymentType || "—" }),
           el("td", { text: p.paymentType === "Check" ? (p.checkNum || "—") : "" }),
@@ -9296,13 +9474,14 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       var totalRow = el("tr", {}, [
         el("td", { colspan: "2", style: "text-align:right; font-weight:600", text: purchases.length + " purchase" + (purchases.length === 1 ? "" : "s") + " — Total" }),
         el("td", { style: "font-weight:600", text: fmtMoney(total) }),
-        el("td", {}), el("td", {}), el("td", {}), el("td", {})
+        el("td", {}), el("td", {}), el("td", {}), el("td", {}), el("td", {})
       ]);
       body.appendChild(el("table", { class: "matrix" }, [
         el("thead", {}, [el("tr", {}, [
           el("th", { text: "Date/Time" }),
           el("th", { text: "Name" }),
           el("th", { text: "Cost" }),
+          el("th", { text: "Reason" }),
           el("th", { text: "Size" }),
           el("th", { text: "Payment Type" }),
           el("th", { text: "Check #" }),

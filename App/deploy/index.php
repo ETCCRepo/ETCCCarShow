@@ -209,7 +209,7 @@ if ($year !== null) {
     // ingestion order relative to it doesn't matter, unlike sponsors above.
     $bootParts[] = "    window.__carshow.ingestWalkins(" . carshow_safe_inline_json($boot['walkins']) . ");\n";
 
-    // Day-of-event t-shirt purchases (T-Shirts tab's Buy T-Shirt) —
+    // Day-of-event t-shirt purchases (T-Shirts tab's Order T-Shirt) —
     // independent of everything else, just read fresh on every page load.
     $bootParts[] = "    window.__carshow.ingestTshirtPurchases(" . carshow_safe_inline_json($boot['tshirtPurchases']) . ");\n";
 
