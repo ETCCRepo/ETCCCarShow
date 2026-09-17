@@ -177,6 +177,14 @@ if ($action === 'check') {
     $state['lastPollAt'] = gmdate('c');
     carshow_write_json($stateFile, $state);
 
+    // Proactive notification (2026-09-17, explicit request) — a red banner
+    // in the Setup tab only helps if someone happens to look at it. Pinging
+    // an external dead-man's-switch monitor here means a missed check-in
+    // (task not running at all, not just this one call failing) gets
+    // reported to the officer automatically instead of silently. See
+    // app-settings.php's healthcheckPingUrl comment; no-op when unset.
+    carshow_healthcheck_ping($settings['healthcheckPingUrl'] ?? '');
+
     // Piggyback the auto-backup schedule on this same poll — see that
     // function's own comment in lib.php for why. Unrelated to imports and
     // not year-scoped (backups span every show), so this runs regardless of

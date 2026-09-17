@@ -53,6 +53,14 @@
 //    'check' action (polled every 15 minutes by deploy/sync-registrations.js
 //    via Windows Task Scheduler on an officer's machine) is what actually
 //    decides whether to run.
+//  - healthcheckPingUrl: optional dead-man's-switch URL (e.g. from
+//    healthchecks.io) pinged by import-schedule.php's 'check' action every
+//    time the scheduled task successfully checks in (Setup tab > Import
+//    Schedule) — explicit request (2026-09-17) for a way to be actively
+//    notified when the automation goes stale, instead of only finding out
+//    by noticing the Setup tab's own red warning. Empty string disables it
+//    (no ping is sent). Not itself a secret — it's a webhook a monitoring
+//    service gave you, not a credential to this app.
 //  - externalApiKey: credential for the EXTERNAL Paid Registrations API
 //    (paid-registrations-api.php) — a separate, narrower credential than
 //    this app's own site password, meant to be handed to another website's
@@ -128,6 +136,7 @@ $defaults = [
     'autoImportIntervalHours' => 0,
     'autoImportStartDate' => '',
     'autoImportEndDate' => '',
+    'healthcheckPingUrl' => '',
     // Reports tab > Sponsor Report builder (app.js's openSponsorReportPage()).
     // An empty column list means "never customized" — app.js falls back to its
     // own SPONSOR_REPORT_DEFAULT_KEYS rather than printing a column-less

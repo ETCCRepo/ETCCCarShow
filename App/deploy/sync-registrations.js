@@ -27,6 +27,16 @@
 //   CARSHOW_YEAR           (optional) defaults to the current calendar year.
 //   CARSHOW_EXPORTS_DIR    (optional) same override upload-registrations.js reads.
 //   CARSHOW_EVENT_URL      (optional) only used when the Setup tab has none.
+//   CARSHOW_HEARTBEAT_TOKEN (optional, but recommended) a SEPARATE credential
+//                          from CARSHOW_SITE_PASSWORD (matches secrets.php's
+//                          $HEARTBEAT_TOKEN on the server) — used only so a
+//                          run that can't even authenticate with the site
+//                          password still gets a failure line onto the Setup
+//                          tab's View Logs list, instead of silently vanishing
+//                          into this machine's own local log file. Without
+//                          it, that one failure mode stays invisible remotely
+//                          (which is exactly what happened the last time
+//                          CARSHOW_SITE_PASSWORD itself got out of sync).
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
@@ -47,6 +57,7 @@ const FORCE = process.argv.includes("--force");
 const HEADED = process.argv.includes("--headed");
 
 const password = process.env.CARSHOW_SITE_PASSWORD;
+const heartbeatToken = process.env.CARSHOW_HEARTBEAT_TOKEN;
 const year = process.env.CARSHOW_YEAR || String(new Date().getFullYear());
 
 // ---------------------------------------------------------------- log buffer
@@ -153,14 +164,38 @@ function recordFailure(reason) {
   console.error("Car Show import FAILED -- " + reason);
 }
 
+// For the specific failures that happen BEFORE (or without) a successful
+// CARSHOW_SITE_PASSWORD auth -- those never reach storeLog()/markRun() below,
+// so without this they're invisible anywhere but this machine's own
+// LOCAL_LOG. Uses logs.php's separate report_failure action (a fixed
+// CARSHOW_HEARTBEAT_TOKEN, unrelated to the site password) so a broken site
+// password can't also silently break this. Always call recordFailure()
+// alongside this, not instead of it -- this is best-effort and may itself
+// fail to reach the server (e.g. no network).
+async function reportStartupFailure(reason) {
+  if (!heartbeatToken) return;
+  try {
+    const res = await postJson(BASE_URL + "/logs.php?year=" + year, {
+      action: "report_failure", token: heartbeatToken, reason,
+    });
+    if (res.status !== 200) console.error("Heartbeat report failed (" + res.status + "): " + res.text);
+  } catch (e) {
+    console.error("Heartbeat report failed: " + e.message);
+  }
+}
+
 // ----------------------------------------------------------------------- main
 (async () => {
   if (!password) {
-    recordFailure("CARSHOW_SITE_PASSWORD is not set on this machine.");
+    const reason = "CARSHOW_SITE_PASSWORD is not set on this machine.";
+    recordFailure(reason);
+    await reportStartupFailure(reason);
     process.exit(1);
   }
   if (!/^[0-9]{4}$/.test(year)) {
-    recordFailure("CARSHOW_YEAR must be a four-digit year (got: " + year + ").");
+    const reason = "CARSHOW_YEAR must be a four-digit year (got: " + year + ").";
+    recordFailure(reason);
+    await reportStartupFailure(reason);
     process.exit(1);
   }
 
@@ -178,14 +213,18 @@ function recordFailure(reason) {
     status: 0, json: null, text: e.message,
   }));
   if (check.status === 401) {
-    recordFailure("Site password rejected by import-schedule.php.");
+    const failReason = "Site password rejected by import-schedule.php.";
+    recordFailure(failReason);
+    await reportStartupFailure(failReason);
     process.exit(1);
   }
   if (check.status !== 200 || !check.json || !check.json.ok) {
     // Under --force a hand-set env var can still carry the run; unattended it
     // cannot, so that stays a hard failure.
     if (!FORCE || !process.env.CARSHOW_EVENT_URL) {
-      recordFailure("Schedule check failed (" + check.status + "): " + check.text);
+      const failReason = "Schedule check failed (" + check.status + "): " + check.text;
+      recordFailure(failReason);
+      await reportStartupFailure(failReason);
       process.exit(1);
     }
     log("Schedule check failed but --force was given; using CARSHOW_EVENT_URL.");
@@ -269,7 +308,13 @@ function recordFailure(reason) {
     process.exit(1);
   }
   process.exit(0);
-})().catch((err) => {
-  recordFailure("Unexpected error: " + err.message);
+})().catch(async (err) => {
+  const failReason = "Unexpected error: " + err.message;
+  recordFailure(failReason);
+  // This catch-all can fire before OR after a successful storeLog() above,
+  // so this may end up a harmless duplicate of an already-archived failure
+  // -- acceptable, since the alternative is a truly unexpected crash going
+  // unreported when it happens to land before auth.
+  await reportStartupFailure(failReason);
   process.exit(1);
 });

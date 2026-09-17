@@ -42,6 +42,33 @@ function carshow_write_json($file, $value) {
     return true;
 }
 
+// Best-effort "I'm alive" ping to an external dead-man's-switch monitor
+// (e.g. healthchecks.io) — see app-settings.php's healthcheckPingUrl
+// comment. Fire-and-forget: a short timeout and a suppressed error either
+// way, since a monitoring ping failing must never break the actual
+// heartbeat/import logic that calls this. Blank/invalid URLs are silently
+// skipped rather than treated as configuration errors, since leaving it
+// blank ("don't ping anything") is the supported default.
+function carshow_healthcheck_ping($url) {
+    $url = trim((string)$url);
+    if ($url === '' || !preg_match('#^https?://#i', $url)) return;
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_CONNECTTIMEOUT => 3,
+        ]);
+        @curl_exec($ch);
+        curl_close($ch);
+        return;
+    }
+    // curl isn't available on every PHP install — fall back to a short-timeout
+    // stream context rather than the default (much longer) one.
+    $context = stream_context_create(['http' => ['timeout' => 5, 'ignore_errors' => true]]);
+    @file_get_contents($url, false, $context);
+}
+
 // Counts data rows in a CSV string (excludes the header line and any blank
 // trailing lines). Shared by registrations-upload.php (CLI path, has the CSV
 // as an in-memory string) and registrations-import.php (browser path, reads
