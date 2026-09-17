@@ -7607,6 +7607,12 @@
   // though the Free/Purchased distinction is no longer visible in the text —
   // the report LOOKED unsorted because the same label appeared in two
   // different places.
+  // Includes both paid registrants' shirts AND sponsors' shirts (one row per
+  // shirt a sponsor ordered — see LOGIC.sponsorShirtSizes, a sponsor can pick
+  // more than one), same "who actually needs a shirt" scope
+  // combinedShirtMatrix() on the Summary tab already uses: sponsors aren't
+  // filtered by any paid/unpaid status (there's no registration-style Status
+  // for a sponsor), matching allSponsorShirtCounts()'s own precedent.
   function tshirtReportRows() {
     var out = [];
     var sizeIndex = {};
@@ -7620,7 +7626,16 @@
         var gender = group ? group.gender : "";
         var label = gender + " " + sizeLabel(b.sizeKey);
         var rank = (genderRank[gender] || 0) * CONFIG.SIZES.length + (sizeIndex[b.sizeKey] || 0);
-        out.push({ row: r, size: label, qty: qty, rank: rank });
+        out.push({ kind: "reg", row: r, size: label, qty: qty, rank: rank });
+      });
+    });
+    state.sponsors.forEach(function (sp) {
+      LOGIC.sponsorShirtSizes(sp).forEach(function (size) {
+        var info = CONFIG.SPONSOR_SIZE_INDEX[size];
+        if (!info) return;
+        var label = info.gender + " " + sizeLabel(info.sizeKey);
+        var rank = (genderRank[info.gender] || 0) * CONFIG.SIZES.length + (sizeIndex[info.sizeKey] || 0);
+        out.push({ kind: "sponsor", row: sp, size: label, qty: 1, rank: rank });
       });
     });
     return out;
@@ -7628,11 +7643,21 @@
   function tshirtReportCellText(pr, key) {
     if (key === "size") return pr.size;
     if (key === "qty") return String(pr.qty);
+    if (pr.kind === "sponsor") {
+      if (key === "Last Name") return pr.row.name || "";
+      if (key === "Status") return "Sponsor";
+      return ""; // First Name, Reg # — no registrant-shaped equivalent
+    }
     return regRowFieldText(pr.row, key);
   }
   function tshirtReportSortValue(pr, key) {
     if (key === "size") return pr.rank;
     if (key === "qty") return pr.qty;
+    if (pr.kind === "sponsor") {
+      if (key === "Last Name") return (pr.row.name || "").toLowerCase();
+      if (key === "Status") return "sponsor";
+      return "";
+    }
     return regRowSortValue(pr.row, key);
   }
   var TSHIRT_REPORT_SPEC = {
