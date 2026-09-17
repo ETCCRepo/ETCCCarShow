@@ -1,10 +1,52 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-17 (later session). **Fixed the Car Show Sponsors print/share
-page clipping long business names and URLs off the card**, plus an explanation (no code
-change) of why the ClubExpress import has to run as a local Windows scheduled task
-rather than server-side. One checkpoint (**`2e50b44`**, v5.114), deployed and pushed;
-live site is **v5.114** at https://etccapps.com/apps/carshow.
+Last updated: 2026-09-17 (yet another later session). **The T-Shirt Report never
+included sponsors' own shirt orders — fixed.** One checkpoint (**`cd86eb9`**, v5.116),
+deployed and pushed; live site is **v5.116** at https://etccapps.com/apps/carshow.
+
+## This session's work (2026-09-17, latest session — T-Shirt Report gains sponsors)
+
+Short, targeted session. The user reported "when a t-shirt size is changed on the
+sponsor or registration pages, the tshirt report needs to be updated."
+
+**Root cause: not a staleness bug — the Reports tab's dedicated "👕 T-Shirt Report"
+(`TSHIRT_REPORT_SPEC` / `tshirtReportRows()` in `app.js`) NEVER included sponsors at
+all**, only paid registrations. So a sponsor's shirt size had nothing to "update" — it
+was never in that report to begin with. (Registration-side edits, by contrast, already
+worked fine: the report recomputes fresh from live state every time it's opened —
+`genReportSorted()` calls `spec.getRows()` with no caching — so there was nothing to fix
+on that side.)
+
+**Fix**: `tshirtReportRows()` now also walks `state.sponsors` via
+`LOGIC.sponsorShirtSizes()` — the same helper `combinedShirtMatrix()` (Summary tab) and
+`tshirtOrderShirtCounts()` (the T-Shirt Order Email) already use — producing one report
+row per shirt a sponsor ordered (a sponsor can pick more than one). Unfiltered by any
+paid/unpaid status, since sponsors have no registration-style Status field — matching
+`allSponsorShirtCounts()`'s existing precedent. Each row is tagged `kind: "sponsor"` vs
+`kind: "reg"` so `tshirtReportCellText()`/`tshirtReportSortValue()` can render sensibly
+for both shapes: a sponsor row shows the sponsor's name under "Last Name" and the literal
+string "Sponsor" under "Status"; "First Name" and "Reg #" are blank (no registrant-shaped
+equivalent). Built, deployed, committed as `cd86eb9`, pushed — v5.116 is live.
+
+**While investigating, explicitly confirmed the T-Shirt Order Email (`app.js`'s
+`tshirtOrderShirtCounts()`) already correctly combined both sources** (paid
+registrations' totals + `allSponsorShirtCounts()`, same combination as the fix above) —
+the user asked for this confirmation directly, no code change was needed there.
+
+**A false alarm along the way, worth noting for pattern-matching next time**: right
+after this fix went live, the user reported it still wasn't working. Investigation
+confirmed the code was correct and the deployed bundle actually contained the fix (byte
+size matched exactly between the local build and the uploaded file) — the user then
+confirmed it was in fact working, most likely an unrefreshed/cached page on their end.
+**When a just-deployed fix "isn't working," verify the deploy actually shipped
+(`grep` the built bundle for a unique string from the change) before assuming the fix
+itself is wrong** — that's exactly what resolved this one.
+
+## Known follow-ups / things a new session might need to know (2026-09-17, latest session)
+
+- None new. Everything from the earlier 2026-09-17 sessions' own follow-ups (below)
+  still applies — most importantly the still-unconfirmed `$ADMIN_PASSWORD_HASH` auth fix
+  and the FTP password that needed rotating after being exposed in a transcript.
 
 ## This session's work (2026-09-17, later session — sponsor list page layout fix)
 
