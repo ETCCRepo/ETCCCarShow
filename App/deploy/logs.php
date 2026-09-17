@@ -92,9 +92,9 @@ if ($action === 'report_failure') {
     $reason = trim((string)($input['reason'] ?? ''));
     if ($reason === '') $reason = 'Unknown startup failure.';
     if (strlen($reason) > 500) $reason = substr($reason, 0, 500) . '...(truncated)';
-    $name = 'sync-' . gmdate('Ymd-His') . '.log';
-    $line = gmdate('c') . '  FAILED (could not authenticate/start): ' . $reason . "\n";
-    $line .= gmdate('c') . '  RESULT: FAILED: ' . $reason . "\n";
+    $name = 'sync-' . date('Ymd-His') . '.log';
+    $line = date('Y-m-d\TH:i:s') . '  FAILED (could not authenticate/start): ' . $reason . "\n";
+    $line .= date('Y-m-d\TH:i:s') . '  RESULT: FAILED: ' . $reason . "\n";
     if (@file_put_contents($logsDir . '/' . $name, $line) === false) {
         http_response_code(500);
         header('Content-Type: application/json');

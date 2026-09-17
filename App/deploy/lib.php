@@ -5,6 +5,14 @@
 // check, lock-guarded JSON read/write, and safe-inline-script-embedding
 // logic that would otherwise be copy-pasted across four files.
 
+// Every endpoint here runs in the club's own local time, not the server's
+// default (usually UTC) -- affects every bare date()/time() call anywhere
+// in the app (including this error_log's own timestamps below), not just
+// the handful of files that redundantly set this themselves already
+// (backup.php, import-schedule.php, members-import.php -- harmless to set
+// twice, left as-is there rather than removed).
+date_default_timezone_set('America/New_York');
+
 // Every endpoint that requires this file gets PHP error logging pointed at
 // one known, app-controlled file rather than left at Hostinger's own
 // per-account default (which varies, and isn't guaranteed to even be
@@ -28,10 +36,27 @@ if ($__carshowErrorLog !== null) {
 // supplied a password matching secrets.php's hash (the normal case for
 // calls with no shared session, e.g. the offline tool's cross-origin
 // "Import from Server").
+//
+// Accepts the hidden second admin password ($ADMIN_PASSWORD_HASH) as well as
+// the main one, exactly like the login form does (index.php's action=login)
+// — until 2026-09-17 this function checked ONLY $PASSWORD_HASH, so the admin
+// password logged into the site fine but was rejected by every endpoint,
+// which is a confusing failure to diagnose (it cost a real debugging session:
+// CARSHOW_SITE_PASSWORD held the admin password, so the scheduled task ran
+// happily while import-schedule.php alone answered 401). This grants no
+// privilege that password didn't already have — it can log in through the
+// form and then do everything via the session anyway. $DEV_PASSWORD_HASH is
+// deliberately NOT accepted here: that one is scoped to the Developer menu,
+// not general API access.
 function carshow_authed($passwordHash, $providedPassword) {
     if (!empty($_SESSION['carshow_authenticated'])) return true;
     $pw = (string)$providedPassword;
-    return $pw !== '' && hash_equals($passwordHash, crypt($pw, $passwordHash));
+    if ($pw === '') return false;
+    if (hash_equals($passwordHash, crypt($pw, $passwordHash))) return true;
+    // Empty/unset disables it rather than matching everything, since crypt()
+    // against an empty hash is unsafe — same guard index.php's login uses.
+    $adminHash = $GLOBALS['ADMIN_PASSWORD_HASH'] ?? '';
+    return !empty($adminHash) && hash_equals($adminHash, crypt($pw, $adminHash));
 }
 
 function carshow_read_json_list($file) {

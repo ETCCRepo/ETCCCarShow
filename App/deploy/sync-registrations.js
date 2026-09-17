@@ -64,14 +64,27 @@ const year = process.env.CARSHOW_YEAR || String(new Date().getFullYear());
 // Built up in memory and shipped to logs.php at the end of the run, under the
 // filename decided up front so the name the History tab's log icon links to
 // always matches the name the log is stored under.
+//
+// Timestamps in the log TEXT itself use this machine's local time (not
+// toISOString()'s UTC) -- explicit request, so an officer reading the raw
+// log doesn't have to mentally convert from UTC. logFileName() already used
+// local getters, so this just brings the in-file timestamps in line with
+// what the filename already implied.
+function localTimestamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, "0");
+  return (
+    d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+    "T" + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds())
+  );
+}
 const logLines = [];
 function log(msg) {
-  const line = new Date().toISOString() + "  " + msg;
+  const line = localTimestamp() + "  " + msg;
   logLines.push(line);
   console.log(line);
 }
 function logText(result) {
-  return [new Date().toISOString() + "  START", ...logLines, result].join("\n") + "\n";
+  return [localTimestamp() + "  START", ...logLines, result].join("\n") + "\n";
 }
 // Must stay inside logs.php's filename allowlist: sync-YYYYMMDD-HHMMSS.log.
 function logFileName(d = new Date()) {
@@ -159,7 +172,7 @@ function runUpload(eventUrl, file) {
 // non-zero exit code as the task's "Last Run Result", and the Setup tab's
 // "Last run" line plus the History tab already carry the human-readable story.
 function recordFailure(reason) {
-  const line = new Date().toISOString() + "  FAILED: " + reason + "\n";
+  const line = localTimestamp() + "  FAILED: " + reason + "\n";
   try { fs.appendFileSync(LOCAL_LOG, line); } catch (_) { /* best effort */ }
   console.error("Car Show import FAILED -- " + reason);
 }
@@ -294,7 +307,7 @@ async function reportStartupFailure(reason) {
 
   // --- Step 6: archive the log, on success AND failure.
   await storeLog(file, logText(
-    new Date().toISOString() + "  RESULT: " + (status === "success" ? "SUCCESS" : "FAILED: " + errorLine)
+    localTimestamp() + "  RESULT: " + (status === "success" ? "SUCCESS" : "FAILED: " + errorLine)
   )).catch((e) => console.error("Log archive failed: " + e.message));
 
   // --- Step 7: mark handled either way, so a persistent failure does not

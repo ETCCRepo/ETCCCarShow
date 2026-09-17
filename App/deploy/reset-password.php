@@ -36,13 +36,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
         // rewrite with only $PASSWORD_HASH and silently broke reset-email
         // delivery the first time someone completed a reset. Also preserve
         // $DEV_PASSWORD_HASH (the separate Developer-menu password, see
-        // dev-reset-password.php) and $ADMIN_PASSWORD_HASH (the hidden
-        // second login password index.php also accepts) for the same
-        // reason — this reset flow only touches the main login password,
-        // not either of those.
+        // dev-reset-password.php), $ADMIN_PASSWORD_HASH (the hidden
+        // second login password index.php also accepts) and
+        // $HEARTBEAT_TOKEN (logs.php's report_failure credential) for the
+        // same reason — this reset flow only touches the main login
+        // password, none of those. EVERY new secrets.php variable has to be
+        // added here too, or completing a reset silently deletes it.
         $SMTP_HOST = $SMTP_PORT = $SMTP_USER = $SMTP_PASS = $SMTP_FROM = null;
         $DEV_PASSWORD_HASH = null;
         $ADMIN_PASSWORD_HASH = null;
+        $HEARTBEAT_TOKEN = null;
         if (is_file($SECRETS_FILE)) require $SECRETS_FILE;
 
         $newHash = crypt($pw1, '$6$' . bin2hex(random_bytes(8)) . '$');
@@ -60,6 +63,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
             $lines[] = '';
             $lines[] = '// Separate Developer password (hamburger > \xf0\x9f\x9b\xa0 Developer).';
             $lines[] = '$DEV_PASSWORD_HASH = ' . var_export($DEV_PASSWORD_HASH, true) . ';';
+        }
+        if ($HEARTBEAT_TOKEN !== null) {
+            $lines[] = '';
+            $lines[] = '// Import failure-reporting token (see logs.php\'s report_failure action).';
+            $lines[] = '$HEARTBEAT_TOKEN = ' . var_export($HEARTBEAT_TOKEN, true) . ';';
         }
         if ($SMTP_HOST !== null) {
             $lines[] = '';

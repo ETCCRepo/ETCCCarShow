@@ -28,8 +28,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
     } elseif ($pw1 !== $pw2) {
         $errors[] = 'Passwords do not match.';
     } else {
+        // EVERY new secrets.php variable has to be preserved here too, or
+        // completing a Developer-password reset silently deletes it.
         $PASSWORD_HASH = null;
         $ADMIN_PASSWORD_HASH = null;
+        $HEARTBEAT_TOKEN = null;
         $SMTP_HOST = $SMTP_PORT = $SMTP_USER = $SMTP_PASS = $SMTP_FROM = null;
         if (is_file($SECRETS_FILE)) require $SECRETS_FILE;
 
@@ -47,6 +50,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
         $lines[] = '';
         $lines[] = '// Separate Developer password (hamburger > \xf0\x9f\x9b\xa0 Developer).';
         $lines[] = '$DEV_PASSWORD_HASH = ' . var_export($newHash, true) . ';';
+        if ($HEARTBEAT_TOKEN !== null) {
+            $lines[] = '';
+            $lines[] = '// Import failure-reporting token (see logs.php\'s report_failure action).';
+            $lines[] = '$HEARTBEAT_TOKEN = ' . var_export($HEARTBEAT_TOKEN, true) . ';';
+        }
         if ($SMTP_HOST !== null) {
             $lines[] = '';
             $lines[] = '// SMTP credentials for forgot-password.php\'s reset emails (see lib.php\'s carshow_send_mail()).';
