@@ -1,10 +1,69 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-17. **A diagnostic session that started from "the import
-automation has been silently dead since yesterday afternoon" and ended up fixing three
-real defects plus building two new visibility features.** Three checkpoints
-(**`388a7a1`**, **`7c15bbd`**, **`d39ead4`**), all deployed and pushed; live site is
-**v5.112** at https://etccapps.com/apps/carshow.
+Last updated: 2026-09-17 (later session). **Fixed the Car Show Sponsors print/share
+page clipping long business names and URLs off the card**, plus an explanation (no code
+change) of why the ClubExpress import has to run as a local Windows scheduled task
+rather than server-side. One checkpoint (**`2e50b44`**, v5.114), deployed and pushed;
+live site is **v5.114** at https://etccapps.com/apps/carshow.
+
+## This session's work (2026-09-17, later session — sponsor list page layout fix)
+
+Short, self-contained session, separate from the import-automation work earlier the same
+day (below). Two unrelated things happened:
+
+**1. Fixed `App/deploy/sponsor-list.php` clipping content off the card.** The user
+shared a screenshot of the public "Car Show Sponsors" page (opened from the app, e.g. for
+printing/sharing) where long rows ran off the right edge. Root cause: three CSS rules
+fighting each other — `.card { max-width: 700px }`, `td { white-space: nowrap }` forcing
+every cell onto one line regardless of content length, and `.table-wrap { overflow-x:
+auto }` hiding the overflow behind a scrollbar on screen (and doing nothing in print,
+which explicitly sets `overflow-x: visible`, so print output was clipped outright at the
+page edge).
+
+Fix: widened the card to 1000px; changed `td` from `white-space: nowrap` to `overflow-wrap:
+anywhere` (specifically `anywhere`, not `break-word` — a URL has no spaces to break at,
+so `break-word` alone wouldn't have helped); added a `<colgroup>` with fixed percentage
+widths (Name 27% / Type 14% / T-Shirt Text 27% / Website 32%) plus `table-layout: fixed`
+so one long URL can't stretch its own column at the others' expense; kept `white-space:
+nowrap` on just the Sponsor Type column (`td.type`) since values there are short and
+fixed ("Premier ($250)") and look better on one line. Built, deployed
+(`sponsor-list.php` + rebuilt `app-bundle.html`), committed as `2e50b44`, pushed — v5.114
+is live. **Not verified in a browser** — worth checking both the on-screen and printed
+(landscape) output with a real long business name/URL from production data.
+
+**2. Explained (no code change) why the ClubExpress CSV import can't move server-side.**
+The user asked why it has to run as a Windows scheduled task instead of "the preferable
+way of running on the server." Three concrete blockers, from `App/deploy/clubexpress.js`'s
+own comments: (a) the export is Playwright browser automation, not an HTTP call — needs
+Node + a Chromium binary, and the site is on Hostinger shared PHP hosting with neither;
+(b) the auth model is deliberate — the automation NEVER logs in itself, it reuses a
+persistent Chrome profile an officer signed into ClubExpress by hand exactly once (via
+`clubexpress-login.js`), specifically so ClubExpress admin credentials never touch the
+server at all; (c) ClubExpress's session is a non-persistent ASP.NET cookie that only
+survives if "Remember Me" was ticked at that one manual login, and that cookie lives in
+local browser-profile state a stateless PHP request has no way to hold. Also corrected
+an assumption in the user's own question: the task polls every **15 minutes**, not
+hourly — `import-schedule.php`'s `check` action is cheap and almost always a silent
+no-op, so frequent polling costs nothing. Offered next steps if the user wants to
+eliminate the local machine: check whether ClubExpress supports a scheduled
+email/FTP export (would allow a pure server-side PHP parser, no browser at all), move to
+a VPS (Node + Playwright + cron, but still needs the one-time manual login step solved),
+or use a real ClubExpress API if the membership tier has one. **Not investigated
+further — the user didn't ask for follow-up on this yet.**
+
+## Known follow-ups / things a new session might need to know (2026-09-17, later session)
+
+- **Sponsor list page fix (#1 above) not verified in a browser** — worth a real check
+  with a long business name and a long URL, both on-screen and in print.
+- **ClubExpress-API/scheduled-export question (#2) is open** — nobody has checked
+  whether ClubExpress actually offers a scheduled export or an API for this membership
+  tier. If the user wants to pursue eliminating the local machine, that's the first thing
+  to check.
+- Everything from the earlier 2026-09-17 session's own follow-ups (below) still applies
+  unchanged — most importantly: **the `$ADMIN_PASSWORD_HASH` auth fix is still
+  unconfirmed** (check whether the scheduled task's next poll actually succeeds), and
+  **the FTP password exposed earlier that same day still needs rotating** if it hasn't
+  been.
 
 ## This session's work (2026-09-17 — import automation visibility + an auth asymmetry)
 
