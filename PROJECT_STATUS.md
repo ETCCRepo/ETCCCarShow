@@ -1,9 +1,169 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-16 (end of session, latest). **Small, isolated fix: the sponsor
-forms' "Done" button is now labeled "Cancel"** — a short, separate session from the
-Financials tab work below. One checkpoint (**`d5b0575`**, v5.107), deployed and pushed;
-live site is **v5.107**.
+Last updated: 2026-09-17. **A diagnostic session that started from "the import
+automation has been silently dead since yesterday afternoon" and ended up fixing three
+real defects plus building two new visibility features.** Three checkpoints
+(**`388a7a1`**, **`7c15bbd`**, **`d39ead4`**), all deployed and pushed; live site is
+**v5.112** at https://etccapps.com/apps/carshow.
+
+## This session's work (2026-09-17 — import automation visibility + an auth asymmetry)
+
+The whole session traces back to one symptom the user spotted on the Setup tab: the
+Import Schedule panel's Automation line said the scheduled task hadn't checked in for
+~19 hours, and "View Logs" showed **no logs at all** since the previous afternoon. Read
+in order — the root cause turned out to be two separate problems stacked on top of each
+other, and the second one wasn't found until the end.
+
+**1. Why a broken import was completely invisible (the reporting gap).**
+`deploy/sync-registrations.js` archives a log to the server on both success AND failure
+(`storeLog()`, its Step 6) — so ClubExpress login failures, export failures and upload
+failures all DO show up in View Logs. But the handful of failures that happen *before*
+it can authenticate never reach the server at all: missing/wrong
+`CARSHOW_SITE_PASSWORD`, an invalid `CARSHOW_YEAR`, a 401 from
+`import-schedule.php`'s `check`, or that check failing outright. Those only called
+`recordFailure()`, which writes one line to a LOCAL file
+(`deploy/sync-registrations.local.log`) on the officer's own machine — invisible from
+the website. That's exactly the state the user was in.
+
+The catch: `logs.php` (and everything else) is gated by the same site password, so a
+script that can't authenticate can't report that it can't authenticate. Fix (the user
+explicitly chose this option over two narrower ones):
+  - **`logs.php` gained a `report_failure` action** authenticated by a **separate, fixed
+    `$HEARTBEAT_TOKEN`** in `secrets.php` — deliberately NOT the site password, so a
+    broken site password can't also break the reporting path. It writes a normal
+    archived log file (same directory, same `sync-YYYYMMDD-HHMMSS.log` naming pattern),
+    so it appears in the existing View Logs list with no UI changes at all.
+  - **`sync-registrations.js` gained `reportStartupFailure()`**, called (awaited, before
+    `process.exit`) at each early failure point plus the top-level catch-all, reading a
+    new **`CARSHOW_HEARTBEAT_TOKEN`** env var. Best-effort by design — it also logs
+    locally via `recordFailure()` regardless.
+  - `secrets.example.php` documents `$HEARTBEAT_TOKEN` (generate with
+    `openssl rand -hex 24`).
+  - **Two manual steps were required and the user completed both**: adding
+    `$HEARTBEAT_TOKEN` to the LIVE `secrets.php` (never auto-deployed — `ftp-deploy.sh`
+    deliberately skips it) and setting the matching env var on the import machine.
+  - **Verified working end-to-end** — the user's own screenshot showed a real
+    `report_failure` log in View Logs reading "Site password rejected by
+    import-schedule.php."
+
+**2. Why the password was being rejected (the actual root cause — an auth asymmetry).**
+The user confirmed the value in `CARSHOW_SITE_PASSWORD` *did* log into the website
+successfully, while `import-schedule.php` alone kept answering 401. Cause:
+
+| | accepts `$PASSWORD_HASH` | accepts `$ADMIN_PASSWORD_HASH` |
+|---|---|---|
+| login form (`index.php`'s `action=login`) | yes | **yes** |
+| `carshow_authed()` (`lib.php`) — used by EVERY endpoint | yes | **no** |
+
+`secrets.php` holds a hidden second login password (`$ADMIN_PASSWORD_HASH`) that the
+login form accepts alongside the normal one, but `carshow_authed()` only ever checked
+`$PASSWORD_HASH`. So the admin password logged in fine, the scheduled task ran without
+Task Scheduler errors, and `import-schedule.php` rejected it — a genuinely miserable
+failure to diagnose. **`carshow_authed()` now accepts both**, matching the form. This
+grants no privilege that password didn't already have (it could log in via the form and
+act through the session anyway). **`$DEV_PASSWORD_HASH` is deliberately still NOT
+accepted** there — that credential is scoped to the Developer menu, not general API
+access. **Watch for this asymmetry pattern**: the login form and `carshow_authed()` are
+two separate checks that must be kept in sync by hand.
+
+**3. A latent bug caught while verifying #2: password resets silently delete secrets.**
+Both `reset-password.php` and `dev-reset-password.php` rebuild `secrets.php` from
+scratch off a **fixed allowlist** of variables (a deliberate design — an earlier version
+naively wrote only `$PASSWORD_HASH` and broke reset-email delivery). `$HEARTBEAT_TOKEN`
+wasn't on that list, so **the first completed "Forgot password?" would have silently
+erased the token added earlier the same day**, quietly killing the new failure
+reporting. Both files now preserve it, each with an explicit comment warning that EVERY
+future `secrets.php` variable has to be added there too. **This trap is permanent — any
+new `secrets.php` variable needs adding to both reset flows or it evaporates on the next
+reset.** (Likely applies to the sibling Vette Fest app's copies too; not checked.)
+
+**4. New: Setup tab > "View Error Log"** (`deploy/error-log.php`, new). The app had no
+PHP error logging wiring at all — errors went wherever Hostinger's per-account default
+put them, unreadable from the app. Now `lib.php` (required by every endpoint) points
+`log_errors`/`error_log` at `data/php-error.log` via `carshow_error_log_path()` — under
+`carshow_data_root()`, so it inherits that directory's existing deny-all `.htaccess`.
+`error-log.php` serves the file's **tail** (capped at 500 KB, seeks from the end and
+drops the partial first line) behind the normal session-or-password auth. Wired into
+`SITE_CONFIG` as `errorLogApiUrl`, surfaced by `buildErrorLogField()` in `app.js` as a
+new "Error Log" row beneath "Log Directory", opening in a new tab. Not per-show-year — a
+PHP fatal has nothing to do with any one car show.
+
+**5. Log timestamps are now local time, not UTC** (explicit request). The log *filenames*
+were already local (`logFileName()` used local `Date` getters), but the text inside was
+UTC, which reads badly next to a local filename:
+  - `sync-registrations.js` — new `localTimestamp()` helper replaces every
+    `new Date().toISOString()` used for log content (`log()`, `logText()`'s START,
+    `recordFailure()`, the RESULT line).
+  - `logs.php`'s `report_failure` — `gmdate()` → `date()` for both the filename and the
+    in-file timestamps.
+  - `lib.php` now calls `date_default_timezone_set('America/New_York')` **centrally**, so
+    PHP's own `error_log` timestamps and every bare `date()` anywhere match. Three files
+    (`backup.php`, `import-schedule.php`, `members-import.php`) still set it themselves
+    too — harmless duplication, left alone.
+  - **No display-side change was needed**: `fmtDate()` in `app.js` already uses local
+    `Date` getters, so the View Logs file list and the "Last run"/"Automation" lines were
+    already showing local time.
+
+**6. Also deployed/committed this session (from a different session's work).** A
+healthcheck dead-man's-switch feature appeared as uncommitted local changes mid-session
+(`healthcheckPingUrl` in `app-settings.php`, `carshow_healthcheck_ping()` in `lib.php`,
+pinged from `import-schedule.php`'s `check`). Since `ftp-deploy.sh` uploads everything
+together it was already live, so it was committed alongside (`388a7a1`) rather than left
+with git out of sync with the server. Reviewed and coherent, but **not written in this
+session** — its own author should confirm intent.
+
+**7. VERSION NUMBERING TRAP — read this before reporting any version.**
+`build.js` stamps the HTML footer/`deploy/version-check.json` with the version it
+**reads** from `App/version.json`, then writes `version.json` back **pre-incremented for
+the next build**. So **`App/version.json` is always ONE AHEAD of what is actually live**.
+The authoritative live version is **`App/deploy/version-check.json`** (identical to the
+page footer). Several reports earlier in this session — including the commit messages
+for `388a7a1` ("v5.108") and `7c15bbd` ("v5.110") — read `version.json` and are
+therefore off by one; those commits actually shipped 5.107 and 5.109. Not rewritten
+(already pushed).
+
+**8. New standing instruction from the user (recorded in memory):** *"always deploy
+after making a change and identify the url and version."* Run `node build.js` first even
+for PHP-only `deploy/*` changes (otherwise the live version string doesn't move and
+there's no version to name), then `ftp-deploy.sh`, then state the URL
+(https://etccapps.com/apps/carshow) and the live version from `version-check.json`.
+
+**9. SECURITY — the FTP password was exposed in plaintext this session.** While
+debugging why standalone `curl` FTP listings were failing, a `curl -v` run printed the
+`PASS` command — meaning the FTP password from `deploy/.ftp-credentials` appeared in
+cleartext in the session transcript. **The user was told to rotate it; as of session end
+that rotation was not confirmed done.** Never use verbose/`-v` curl on a credentialed
+command. Separately: standalone `curl` FTP *listings* kept failing `530 Access denied`
+for the whole session even though `ftp-deploy.sh`'s own uploads and final listing worked
+fine every time — unexplained, and not worth burning login attempts on.
+
+## Known follow-ups / things a new session might need to know (2026-09-17)
+
+- **The 401 fix is unconfirmed.** The `$ADMIN_PASSWORD_HASH` change (#2) is a
+  hypothesis-driven fix: it makes the app accept either password, which resolves the
+  symptom *if* the env var holds the admin password. **Check whether the scheduled task's
+  next ~15-minute poll actually succeeds** (Setup tab's Automation line should go green /
+  "last checked in" should drop to minutes). If it's still 401, the remaining suspects
+  are hidden whitespace/quotes in how the Windows env var was set, special characters
+  being mis-escaped, or the env var being set for a different Windows account than the
+  one Task Scheduler runs the job as.
+- **Rotate the FTP password** (see #9) if it hasn't been done — it's in this session's
+  transcript in cleartext.
+- **`$HEARTBEAT_TOKEN` and the reset flows** — if any new `secrets.php` variable is added
+  in future, it MUST be added to the preserve-lists in BOTH `reset-password.php` and
+  `dev-reset-password.php` (#3). Worth checking whether Vette Fest's copies have the same
+  gap, since that app also has a heartbeat token.
+- **`/ETCCCarShowTest` was not run** this session either. Still no regression coverage for
+  the Financials tab work from 2026-09-16, and now also none for `report_failure`,
+  `error-log.php`, or the `carshow_authed()` change (that last one is security-relevant
+  and would be worth a test).
+- **The healthcheck ping feature (#6) came from another session** and was committed here
+  sight-unseen-by-its-author; `healthcheckPingUrl` is an empty string by default (no ping
+  sent) until someone sets it in app settings.
+- Everything from the 2026-09-16 sessions' own follow-ups below still applies (Financials
+  tab unverified in a browser, PDF parsing heuristic, "Reeder" hardcoded, PHP not locally
+  lintable — no `php` binary in this dev environment, so `error-log.php`/`logs.php` were
+  reviewed by eye only).
 
 ## This session's work (2026-09-16, later session — sponsor form button label)
 
