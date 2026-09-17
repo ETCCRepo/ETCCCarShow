@@ -42,13 +42,27 @@ usort($sponsors, function ($a, $b) {
 <link rel="apple-touch-icon" href="ETCClogoWhiteBackground.png">
 <style>
   body { font-family: system-ui, sans-serif; margin: 0; color: #1d1d1f; background: #e5e5ea; min-height: 100vh; padding: 32px 16px; box-sizing: border-box; }
-  .card { max-width: 700px; margin: 0 auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.12); padding: 28px 32px; }
+  /* 700px couldn't hold four columns of real data — combined with the
+     nowrap on td below, long business names and URLs ran straight past the
+     card's edge, hidden behind .table-wrap's scrollbar on screen and simply
+     clipped at the page edge in print. Wider card + cells that wrap instead
+     of overflowing fixes both. */
+  .card { max-width: 1000px; margin: 0 auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.12); padding: 28px 32px; }
   h2 { margin: 0 0 4px; }
   .sub { font-size: 13px; color: #555; margin-bottom: 16px; }
   .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
   th { background: #dbeafe; padding: 6px 8px; text-align: left; border: 1px solid #000; font-weight: 600; white-space: nowrap; }
-  td { padding: 4px 8px; border: 1px solid #ccc; white-space: nowrap; }
+  /* anywhere (not break-word) so a long URL, which has no spaces to break
+     at, still wraps rather than forcing the column wider than its share. */
+  td { padding: 4px 8px; border: 1px solid #ccc; overflow-wrap: anywhere; }
+  /* Sponsor Type is short and fixed ("Premier ($250)") — keep it on one
+     line and give the two free-text columns and the URL the rest. */
+  col.c-name { width: 27%; }
+  col.c-type { width: 14%; }
+  col.c-shirt { width: 27%; }
+  col.c-site { width: 32%; }
+  td.type { white-space: nowrap; }
   tr:nth-child(even) td { background: #f0f7ff; }
   @media print {
     button { display: none; }
@@ -74,6 +88,7 @@ usort($sponsors, function ($a, $b) {
   </div>
   <div class="table-wrap">
   <table>
+    <colgroup><col class="c-name"><col class="c-type"><col class="c-shirt"><col class="c-site"></colgroup>
     <thead><tr><th>Sponsor Name</th><th>Sponsor Type</th><th>T-Shirt Text</th><th>Website</th></tr></thead>
     <tbody>
 <?php foreach ($sponsors as $sponsor):
@@ -87,7 +102,7 @@ usort($sponsors, function ($a, $b) {
 ?>
     <tr>
       <td><?= htmlspecialchars($name) ?></td>
-      <td><?= htmlspecialchars($typeLabel) ?></td>
+      <td class="type"><?= htmlspecialchars($typeLabel) ?></td>
       <td><?= htmlspecialchars($shirtText) ?></td>
       <td><?php if ($website !== ''): ?><a href="<?= htmlspecialchars($websiteHref) ?>" target="_blank" rel="noopener"><?= htmlspecialchars($website) ?></a><?php endif; ?></td>
     </tr>
