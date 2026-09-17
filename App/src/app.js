@@ -5986,6 +5986,26 @@
     return el("div", {}, kids);
   }
 
+  // Setup tab > Import Schedule > "Error Log" — the whole website's own PHP
+  // error log (error-log.php), not a per-run import log like the field
+  // above. App-wide, not per-show-year, so it just opens in a new tab —
+  // no list/panel needed, there's only ever one file. Same session-cookie
+  // auth as the Log Directory links (no password needed once you're already
+  // logged into the app).
+  function buildErrorLogField() {
+    var link = el("a", {
+      class: "btn", style: "font-size:12px; padding:4px 10px",
+      href: SITE_CONFIG.errorLogApiUrl + "&action=get",
+      target: "_blank", rel: "noopener"
+    }, ["🐞 View Error Log"]);
+    return el("div", {}, [
+      el("div", {}, [link]),
+      el("div", { class: "setup-hint" }, [
+        "PHP errors from anywhere in the app (not import-specific) — opens in a new tab."
+      ])
+    ]);
+  }
+
   // Setup tab > Import Schedule > persisted "Last run" line — reads
   // state.runStatus (fetched by loadRunStatus(), see buildTabs()'s Setup-tab
   // select handler). Distinct from the Import Now button's own ephemeral
@@ -6193,6 +6213,10 @@
       el("div", { class: "form-row" }, [
         el("span", { class: "form-label", text: "Log Directory" }),
         buildLogDirectoryField()
+      ]),
+      el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "Error Log" }),
+        buildErrorLogField()
       ]),
       el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "" }), importNowRow]),
       el("div", { class: "form-row" }, [

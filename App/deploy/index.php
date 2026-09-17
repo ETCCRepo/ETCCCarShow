@@ -140,6 +140,7 @@ $perShowUrls = [
     'dashNumbersApiUrl' => 'dash-numbers.php',
     'importScheduleApiUrl' => 'import-schedule.php',
     'logsApiUrl' => 'logs.php',
+    'errorLogApiUrl' => 'error-log.php',
     'importHistoryApiUrl' => 'import-history.php',
     'refreshApiUrl' => 'refresh.php',
     'financialsApiUrl' => 'financials.php'

@@ -5,6 +5,23 @@
 // check, lock-guarded JSON read/write, and safe-inline-script-embedding
 // logic that would otherwise be copy-pasted across four files.
 
+// Every endpoint that requires this file gets PHP error logging pointed at
+// one known, app-controlled file rather than left at Hostinger's own
+// per-account default (which varies, and isn't guaranteed to even be
+// readable by this account) — see error-log.php (Setup tab's "View Error
+// Log" link) for what reads it back. Lives under carshow_data_root() so it
+// gets that directory's existing deny-all .htaccess for free, same
+// protection every other data/ file already has.
+function carshow_error_log_path() {
+    $root = carshow_data_root();
+    return $root === null ? null : $root . '/php-error.log';
+}
+$__carshowErrorLog = carshow_error_log_path();
+if ($__carshowErrorLog !== null) {
+    @ini_set('log_errors', '1');
+    @ini_set('error_log', $__carshowErrorLog);
+}
+
 // True if either the current PHP session is already authenticated (the
 // normal case for same-origin calls made from the hosted page itself, e.g.
 // sponsor edits from the Sponsors tab while logged in) or the request
