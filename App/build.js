@@ -78,15 +78,18 @@ fs.writeFileSync(VERSION_PATH, JSON.stringify({
   major: version.major, minor: version.minor + 1, lastBuilt: deployedAt.toISOString()
 }, null, 2) + "\n");
 
-// A small, separately-deployed copy of just the version string, as a plain
-// static JSON file. version.json above never leaves this machine (no build
-// tooling runs server-side) — this is the one piece of version info that
-// actually reaches the live site, for the client-side "a newer version is
-// available" banner (app.js's checkForNewVersion()) to compare itself
+// A small, separately-deployed copy of just the version string (plus the
+// build timestamp — added so the standalone sponsor-form pages, which
+// aren't part of this bundle and never see `deployedAt` any other way, can
+// show the same "vX.Y · Deployed ..." footer line the main app does), as a
+// plain static JSON file. version.json above never leaves this machine (no
+// build tooling runs server-side) — this is the one piece of version info
+// that actually reaches the live site, for the client-side "a newer version
+// is available" banner (app.js's checkForNewVersion()) to compare itself
 // against. Fetched with a cache-busting query string every time, so it works
 // as a real version check even though it's a static file a CDN might
 // otherwise cache. Written fresh every build, deployed by ftp-deploy.sh.
-fs.writeFileSync(path.join(HERE, "deploy", "version-check.json"), JSON.stringify({ version: versionString }) + "\n");
+fs.writeFileSync(path.join(HERE, "deploy", "version-check.json"), JSON.stringify({ version: versionString, deployedAt: deployedAt.toISOString() }) + "\n");
 
 function fmtDateTime(d) {
   function p(n) { return (n < 10 ? "0" : "") + n; }

@@ -1077,3 +1077,24 @@ function carshow_rotate_api_key() {
     carshow_write_json($root . '/api-key.json', ['externalApiKey' => $key]);
     return $key;
 }
+
+// The standalone sponsor-form pages (member-sponsor-form.php,
+// public-sponsor-form.php) aren't part of build.js's bundle, so they never
+// get the "vX.Y · Deployed ..." stamp the main app's own footer bakes in at
+// build time — this reads the same deploy/version-check.json build.js
+// writes (now including deployedAt alongside version) and formats it to
+// match, so both footers read the same. Returns '' if that file is missing
+// or malformed (an old deploy predating the deployedAt field, or a fresh
+// checkout with no build yet) — callers should just omit the line then,
+// not show a broken one.
+function carshow_version_footer_line() {
+    $raw = @file_get_contents(__DIR__ . '/version-check.json');
+    $data = $raw ? json_decode($raw, true) : null;
+    if (!is_array($data) || empty($data['version'])) return '';
+    $line = 'v' . $data['version'];
+    if (!empty($data['deployedAt'])) {
+        $ts = strtotime($data['deployedAt']);
+        if ($ts !== false) $line .= ' &middot; Deployed ' . date('m/d/Y h:i A', $ts);
+    }
+    return $line;
+}

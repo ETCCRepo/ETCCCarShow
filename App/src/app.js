@@ -7689,13 +7689,20 @@
         push("reg", "Registration", r, gender, b.sizeKey, qty);
       });
     });
-    // Premier/Corporate only — an Individual sponsor's shirt is already
-    // covered above, straight from the registration row's own Individual
-    // Sponsorship data (that sponsor's `shirtSize` is itself just backfilled
-    // from that same field by syncSponsorsFromRegistrations(), so it's not
-    // an independent source); iterating it here too would double-count.
+    // Skip only CSV-synced Individual sponsors (id = csvSponsorId(rec) =
+    // "csvind_" + csvRegKey(rec), set by syncSponsorsFromRegistrations()) —
+    // THEIR shirt is already covered above, straight from the matching
+    // registration row's own Individual Sponsorship data (that sponsor's
+    // `shirtSize` is itself just backfilled from that same field, not an
+    // independent source), so counting it again here would double-count.
+    // An Individual sponsor added directly through the sponsor form (no
+    // registration row at all — member-sponsor-form.php still offers
+    // "Individual" as a Sponsor Type) has no such row to be covered by, so
+    // it must still come through here or it vanishes from the report
+    // entirely. Checking the id prefix (not sp.sponsorType) is what tells
+    // the two apart.
     state.sponsors.forEach(function (sp) {
-      if (sp.sponsorType === "individual") return;
+      if (sp.sponsorType === "individual" && String(sp.id || "").indexOf("csvind_") === 0) return;
       LOGIC.sponsorShirtSizes(sp).forEach(function (size) {
         var info = CONFIG.SPONSOR_SIZE_INDEX[size];
         if (!info) return;
