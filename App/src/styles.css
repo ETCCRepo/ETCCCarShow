@@ -76,6 +76,15 @@ header.app h1 { font-size: 19px; margin: 0; font-weight: 700; letter-spacing: .2
 .wrap { max-width: 1500px; margin: 0 auto; padding: 16px 20px 60px; }
 
 footer.app-footer {
+  /* Fixed, not in normal flow — every full-page overlay (.api-page, e.g.
+     Reports, Order T-Shirt, Developer screens) is position:fixed/inset:0 at
+     z-index 300 and was covering the footer entirely, since a static-flow
+     footer only ever appears after #app's own content, which those overlays
+     sit on top of. z-index above .api-page's puts it in front of every
+     screen instead of behind some of them. .wrap and .api-page-body both
+     reserve 60px of bottom padding so their own content never sits under it. */
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 400;
+  background: var(--bg);
   text-align: center; color: var(--muted); font-size: 12px; padding: 14px 20px 20px; border-top: 1px solid var(--line);
 }
 /* One long single line (version + credit + copyright). Scale the text with the
@@ -307,7 +316,7 @@ table.grid tr.backup-row-fail td { color: var(--warn); background: #fff5f5; }
 .changelog-page { position: fixed; inset: 0; background: #fff; z-index: 300; display: flex; flex-direction: column; }
 .changelog-page-head { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .changelog-page-head h2 { margin: 0; font-size: 18px; flex: 1; }
-.changelog-page-body { flex: 1; overflow: auto; padding: 20px; }
+.changelog-page-body { flex: 1; overflow: auto; padding: 20px 20px 60px; }
 .changelog-page-inner { max-width: 1100px; margin: 0 auto; }
 /* Same two-card shape as SAM's Change Log screen: one bordered card holding
    an unboxed stat grid (SAM's #changelog-meta/.stat-box, which has no CSS
@@ -332,7 +341,7 @@ table.grid tr.backup-row-fail td { color: var(--warn); background: #fff5f5; }
 .api-page { position: fixed; inset: 0; background: #fff; z-index: 300; display: flex; flex-direction: column; }
 .api-page-head { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .api-page-head h2 { margin: 0; font-size: 18px; flex: 1; }
-.api-page-body { flex: 1; overflow: auto; padding: 20px; }
+.api-page-body { flex: 1; overflow: auto; padding: 20px 20px 60px; }
 .api-page-inner { max-width: 900px; margin: 0 auto; }
 .api-card { background: #fff; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 16px; padding: 14px 16px; }
 .api-card h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
@@ -437,6 +446,10 @@ table.matrix th, table.matrix td { border: 1px solid var(--line); padding: 6px 1
 table.matrix th { background: #f3f5f8; }
 table.matrix td.lbl, table.matrix th.lbl { text-align: left; font-weight: 600; background: #fafbfc; }
 table.matrix td.z { color: #c2c8d0; }
+/* Order T-Shirt purchases table — Date/Time and Name were wrapping to two
+   lines by default (table.matrix has no white-space rule), making every row
+   twice as tall as it needed to be. */
+table.tshirt-purchases-table th, table.tshirt-purchases-table td { white-space: nowrap; }
 .meta-list { list-style: none; padding: 0; margin: 0; }
 .meta-list li { padding: 3px 0; color: var(--ink); }
 .meta-list .k { color: var(--muted); display: inline-block; min-width: 190px; }

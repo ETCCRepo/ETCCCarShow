@@ -85,6 +85,15 @@ header.app h1 { font-size: 19px; margin: 0; font-weight: 700; letter-spacing: .2
 .wrap { max-width: 1500px; margin: 0 auto; padding: 16px 20px 60px; }
 
 footer.app-footer {
+  /* Fixed, not in normal flow — every full-page overlay (.api-page, e.g.
+     Reports, Order T-Shirt, Developer screens) is position:fixed/inset:0 at
+     z-index 300 and was covering the footer entirely, since a static-flow
+     footer only ever appears after #app's own content, which those overlays
+     sit on top of. z-index above .api-page's puts it in front of every
+     screen instead of behind some of them. .wrap and .api-page-body both
+     reserve 60px of bottom padding so their own content never sits under it. */
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 400;
+  background: var(--bg);
   text-align: center; color: var(--muted); font-size: 12px; padding: 14px 20px 20px; border-top: 1px solid var(--line);
 }
 /* One long single line (version + credit + copyright). Scale the text with the
@@ -316,7 +325,7 @@ table.grid tr.backup-row-fail td { color: var(--warn); background: #fff5f5; }
 .changelog-page { position: fixed; inset: 0; background: #fff; z-index: 300; display: flex; flex-direction: column; }
 .changelog-page-head { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .changelog-page-head h2 { margin: 0; font-size: 18px; flex: 1; }
-.changelog-page-body { flex: 1; overflow: auto; padding: 20px; }
+.changelog-page-body { flex: 1; overflow: auto; padding: 20px 20px 60px; }
 .changelog-page-inner { max-width: 1100px; margin: 0 auto; }
 /* Same two-card shape as SAM's Change Log screen: one bordered card holding
    an unboxed stat grid (SAM's #changelog-meta/.stat-box, which has no CSS
@@ -341,7 +350,7 @@ table.grid tr.backup-row-fail td { color: var(--warn); background: #fff5f5; }
 .api-page { position: fixed; inset: 0; background: #fff; z-index: 300; display: flex; flex-direction: column; }
 .api-page-head { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .api-page-head h2 { margin: 0; font-size: 18px; flex: 1; }
-.api-page-body { flex: 1; overflow: auto; padding: 20px; }
+.api-page-body { flex: 1; overflow: auto; padding: 20px 20px 60px; }
 .api-page-inner { max-width: 900px; margin: 0 auto; }
 .api-card { background: #fff; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 16px; padding: 14px 16px; }
 .api-card h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
@@ -446,6 +455,10 @@ table.matrix th, table.matrix td { border: 1px solid var(--line); padding: 6px 1
 table.matrix th { background: #f3f5f8; }
 table.matrix td.lbl, table.matrix th.lbl { text-align: left; font-weight: 600; background: #fafbfc; }
 table.matrix td.z { color: #c2c8d0; }
+/* Order T-Shirt purchases table — Date/Time and Name were wrapping to two
+   lines by default (table.matrix has no white-space rule), making every row
+   twice as tall as it needed to be. */
+table.tshirt-purchases-table th, table.tshirt-purchases-table td { white-space: nowrap; }
 .meta-list { list-style: none; padding: 0; margin: 0; }
 .meta-list li { padding: 3px 0; color: var(--ink); }
 .meta-list .k { color: var(--muted); display: inline-block; min-width: 190px; }
@@ -594,7 +607,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-credit">v5.116 &middot; Deployed 09/17/2026 06:39 PM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
+  <div class="footer-credit">v5.129 &middot; Deployed 09/18/2026 06:22 AM &middot; Website by <a href="https://businesswebexpress.com" target="_blank" rel="noopener">Business Web Express</a> &middot; &copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
 <script>
 /* @license
@@ -2493,10 +2506,13 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     dashNumberSyncError: null,
     tshirtPurchaseName: "",    // Order T-Shirt form's in-progress Name field
     tshirtPurchaseCost: "",    // Order T-Shirt form's in-progress Cost field (defaults from settings when opened)
-    tshirtPurchaseReason: "Walk-in", // Order T-Shirt form's in-progress Reason field (Walk-in/Member)
+    tshirtPurchaseReason: "Walk-in", // Order T-Shirt form's in-progress Reason field (Walk-in/Member/Complimentary)
     tshirtPurchaseSize: "",    // Order T-Shirt form's in-progress T-Shirt Size field (e.g. "Men's Large")
+    tshirtPurchaseCount: "1",  // Order T-Shirt form's in-progress Count field — how many of that size this purchase covers
     tshirtPurchasePaymentType: "Cash", // Order T-Shirt form's in-progress Payment Type field
     tshirtPurchaseCheckNum: "", // Order T-Shirt form's in-progress Check # field (only used when Payment Type is Check)
+    tshirtPurchaseNote: "",    // Order T-Shirt form's in-progress Note field (free text)
+    tshirtPurchaseEditId: null, // id of the purchase being edited (Edit button), or null when the form is for a new one
     tshirtPurchaseSyncError: null, // set when persisting an add/delete fails
     deletedCsvKeys: {},       // csvRegKey(rec) -> true, for CSV-derived rows removed via the
                                // Registration tab's checkbox/bulk-delete — filled by
@@ -3313,9 +3329,10 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       row([sz.label].concat(CONFIG.GROUPS.map(function (g) { return s.shirtTotals[g.key + sz.key] || 0; })));
     });
 
-    section("Total Shirts Needed For Event (paid registrations + all sponsors)");
+    section("Total Shirts Needed For Event (paid registrations + all sponsors + non-Walk-in Order T-Shirt purchases)");
     var totals = paidRegShirtTotals();
     var sponsorCounts = allSponsorShirtCounts();
+    var compCounts = tshirtPurchaseShirtCounts(function (p) { return p.reason !== "Walk-in"; });
     row(["Size", "Men's", "Women's"]);
     CONFIG.SIZES.forEach(function (sz) {
       var regMens = 0, regWomens = 0;
@@ -3323,11 +3340,12 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         var val = totals[g.key + sz.key] || 0;
         if (g.gender === "Men's") regMens += val; else regWomens += val;
       });
-      row([sz.label, regMens + sponsorCounts[sz.key].mens, regWomens + sponsorCounts[sz.key].womens]);
+      row([sz.label, regMens + sponsorCounts[sz.key].mens + compCounts[sz.key].mens, regWomens + sponsorCounts[sz.key].womens + compCounts[sz.key].womens]);
     });
 
-    section("Walk-In T-Shirt Purchases");
+    section("Additional T-Shirt Purchases");
     row(["Purchases", state.tshirtPurchases.length]);
+    row(["Shirts", tshirtPurchaseShirtTotal()]);
     row(["Total", fmtMoney(tshirtPurchaseTotal)]);
     var purchCounts = tshirtPurchaseShirtCounts();
     row(["Size", "Men's", "Women's"]);
@@ -4296,7 +4314,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         el("div", { class: "sponsor-card" }, [el("div", { class: "sponsor-card-head", text: "Registration Shirts" }), shirtMatrix(s)]),
         el("div", { class: "sponsor-card" }, [
           el("div", { class: "sponsor-card-head", text: "Total Shirts Needed For Event" }),
-          el("div", { style: "font-size:11px; color:var(--muted); margin:-6px 0 8px", text: "Paid registrations + all sponsors (excludes Walk-In T-Shirt purchases)" }),
+          el("div", { style: "font-size:11px; color:var(--muted); margin:-6px 0 8px", text: "Paid registrations + all sponsors + non-Walk-in Order T-Shirt purchases" }),
           combinedShirtMatrix()
         ])
       ])
@@ -4314,9 +4332,13 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     container.appendChild(el("div", { class: "panel" }, [
       el("div", { class: "cards sponsor-cards" }, [
         el("div", { class: "sponsor-card" }, [
-          el("div", { class: "sponsor-card-head", text: "Walk-In T-Shirt Purchases" }),
+          el("div", { class: "sponsor-card-head", text: "Additional T-Shirt Purchases" }),
           el("div", { class: "sponsor-card-stats" }, [
             el("div", {}, [el("div", { class: "stat-v", text: String(state.tshirtPurchases.length) }), el("div", { class: "stat-k", text: "Purchases" })]),
+            // Distinct from "Purchases" (transaction count) now that one
+            // purchase can cover more than one shirt (the Order T-Shirt
+            // form's Count field) — this is the actual shirt total.
+            el("div", {}, [el("div", { class: "stat-v", text: String(tshirtPurchaseShirtTotal()) }), el("div", { class: "stat-k", text: "Shirts" })]),
             el("div", {}, [el("div", { class: "stat-v", text: fmtMoney(tshirtPurchaseTotal) }), el("div", { class: "stat-k", text: "Total" })])
           ]),
           tshirtPurchaseSizeMatrix()
@@ -4423,16 +4445,30 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // Women's <size>" strings (same set used by the Sponsors tab's T-Shirt
   // field), so CONFIG.SPONSOR_SIZE_INDEX maps it straight to { gender,
   // sizeKey }. Shared by combinedShirtMatrix() and tshirtPurchaseSizeMatrix().
-  function tshirtPurchaseShirtCounts() {
+  // `filterFn(purchase)`, if given, restricts which purchases count — e.g.
+  // combinedShirtMatrix() only wants Complimentary ones (those genuinely
+  // need to be ordered ahead of time; other Walk-In purchases are day-of
+  // sales already fulfilled on the spot).
+  function tshirtPurchaseShirtCounts(filterFn) {
     var C = CONFIG;
     var counts = {};
     C.SIZES.forEach(function (sz) { counts[sz.key] = { mens: 0, womens: 0 }; });
     state.tshirtPurchases.forEach(function (p) {
+      if (filterFn && !filterFn(p)) return;
       var info = p.size && C.SPONSOR_SIZE_INDEX[p.size];
       if (!info || !counts[info.sizeKey]) return;
-      if (info.gender === "Men's") counts[info.sizeKey].mens++; else counts[info.sizeKey].womens++;
+      // Pre-Count purchases have no `count` — treat as 1, same fallback the
+      // Order T-Shirt table itself uses.
+      var qty = Number(p.count) || 1;
+      if (info.gender === "Men's") counts[info.sizeKey].mens += qty; else counts[info.sizeKey].womens += qty;
     });
     return counts;
+  }
+  // Total shirt quantity across every Walk-In T-Shirt purchase, summing each
+  // purchase's Count (not just the number of purchase transactions) — same
+  // pre-Count-field fallback (treat as 1) as tshirtPurchaseShirtCounts().
+  function tshirtPurchaseShirtTotal() {
+    return state.tshirtPurchases.reduce(function (sum, p) { return sum + (Number(p.count) || 1); }, 0);
   }
 
   // Appends a "Grand Total" column (Men's + Women's, per row) and a bottom
@@ -4466,14 +4502,17 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     return LOGIC.summarizeRecords(paidRows, CONFIG).shirtTotals;
   }
   // Paid-registration shirts (Free+Xtra collapsed to just gender) plus
-  // sponsor shirts, per size — deliberately excludes Walk-In T-Shirt
-  // purchases (those are day-of-event sales already fulfilled on the spot,
-  // not part of what needs to be ordered ahead of time) — as opposed to the
-  // registration-only breakdown in shirtMatrix() (which is unfiltered).
+  // sponsor shirts plus every non-Walk-in-reason Order T-Shirt purchase
+  // (Member, Complimentary, and any future reason), per size — deliberately
+  // excludes only the "Walk-in" reason (a plain walk-up sale, fulfilled on
+  // the spot from stock, not part of what needs to be ordered ahead of
+  // time) — as opposed to the registration-only breakdown in shirtMatrix()
+  // (which is unfiltered).
   function combinedShirtMatrix() {
     var C = CONFIG;
     var totals = paidRegShirtTotals();
     var sponsorCounts = allSponsorShirtCounts();
+    var compCounts = tshirtPurchaseShirtCounts(function (p) { return p.reason !== "Walk-in"; });
     var head = el("tr", {}, [el("th", { class: "lbl", text: "Size" }), el("th", { text: "Men's" }), el("th", { text: "Women's" })]);
     var rows = C.SIZES.map(function (sz) {
       var regMens = 0, regWomens = 0;
@@ -4481,8 +4520,8 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         var val = totals[g.key + sz.key] || 0;
         if (g.gender === "Men's") regMens += val; else regWomens += val;
       });
-      var mens = regMens + sponsorCounts[sz.key].mens;
-      var womens = regWomens + sponsorCounts[sz.key].womens;
+      var mens = regMens + sponsorCounts[sz.key].mens + compCounts[sz.key].mens;
+      var womens = regWomens + sponsorCounts[sz.key].womens + compCounts[sz.key].womens;
       var cells = [
         el("td", { class: "lbl", text: sz.label }),
         el("td", { class: mens ? "" : "z", text: String(mens) }),
@@ -7726,7 +7765,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
         el("div", { class: "cards sponsor-cards" }, [
           el("div", { class: "sponsor-card" }, [
             el("div", { class: "sponsor-card-head", text: "Total Shirts Needed For Event" }),
-            el("div", { style: "font-size:11px; color:var(--muted); margin:-6px 0 8px", text: "Paid registrations + all sponsors (excludes Walk-In T-Shirt purchases)" }),
+            el("div", { style: "font-size:11px; color:var(--muted); margin:-6px 0 8px", text: "Paid registrations + all sponsors + non-Walk-in Order T-Shirt purchases" }),
             combinedShirtMatrix()
           ])
         ])
@@ -9778,6 +9817,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   var TSHIRT_REPORT_ALL_COLS = [
     { key: "Last Name", label: "Last Name" },
     { key: "First Name", label: "First Name" },
+    { key: "source", label: "Source" },
     { key: "size", label: "Size", cls: "shirtsum" },
     { key: "qty", label: "Qty" },
     { key: "Reg #", label: "Reg #" },
@@ -9803,45 +9843,60 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   // though the Free/Purchased distinction is no longer visible in the text —
   // the report LOOKED unsorted because the same label appeared in two
   // different places.
-  // Includes both paid registrants' shirts AND sponsors' shirts (one row per
-  // shirt a sponsor ordered — see LOGIC.sponsorShirtSizes, a sponsor can pick
-  // more than one), same "who actually needs a shirt" scope
-  // combinedShirtMatrix() on the Summary tab already uses: sponsors aren't
-  // filtered by any paid/unpaid status (there's no registration-style Status
-  // for a sponsor), matching allSponsorShirtCounts()'s own precedent.
+  // Includes paid registrants' shirts, sponsors' shirts (one row per shirt a
+  // sponsor ordered — see LOGIC.sponsorShirtSizes, a sponsor can pick more
+  // than one), AND Order T-Shirt (Walk-In) purchases — every place a shirt
+  // gets handed out in this app, in one report. Sponsors aren't filtered by
+  // any paid/unpaid status (there's no registration-style Status for a
+  // sponsor), matching allSponsorShirtCounts()'s own precedent. `source`
+  // (Registration/Sponsor/Walkin/Member/Complimentary) is what distinguishes
+  // them in the report — see the "Source" column in TSHIRT_REPORT_ALL_COLS.
+  var TSHIRT_PURCHASE_SOURCE_BY_REASON = { "Walk-in": "Walkin", "Member": "Member", "Complimentary": "Complimentary" };
   function tshirtReportRows() {
     var out = [];
     var sizeIndex = {};
     CONFIG.SIZES.forEach(function (sz, i) { sizeIndex[sz.key] = i; });
     var genderRank = { "Men's": 0, "Women's": 1 };
+    function push(kind, source, row, gender, sizeKey, qty) {
+      var label = gender + " " + sizeLabel(sizeKey);
+      var rank = (genderRank[gender] || 0) * CONFIG.SIZES.length + (sizeIndex[sizeKey] || 0);
+      out.push({ kind: kind, source: source, row: row, size: label, qty: qty, rank: rank });
+    }
     allRegistrations().filter(function (r) { return classifyStatus(r["Status"]) === "paid"; }).forEach(function (r) {
       CONFIG.SHIRT_BUCKETS.forEach(function (b) {
         var qty = Number(r[b.col]) || 0;
         if (qty <= 0) return;
         var group = CONFIG.GROUPS.filter(function (g) { return g.key === b.groupKey; })[0];
-        var gender = group ? group.gender : "";
-        var label = gender + " " + sizeLabel(b.sizeKey);
-        var rank = (genderRank[gender] || 0) * CONFIG.SIZES.length + (sizeIndex[b.sizeKey] || 0);
-        out.push({ kind: "reg", row: r, size: label, qty: qty, rank: rank });
+        push("reg", "Registration", r, group ? group.gender : "", b.sizeKey, qty);
       });
     });
     state.sponsors.forEach(function (sp) {
       LOGIC.sponsorShirtSizes(sp).forEach(function (size) {
         var info = CONFIG.SPONSOR_SIZE_INDEX[size];
         if (!info) return;
-        var label = info.gender + " " + sizeLabel(info.sizeKey);
-        var rank = (genderRank[info.gender] || 0) * CONFIG.SIZES.length + (sizeIndex[info.sizeKey] || 0);
-        out.push({ kind: "sponsor", row: sp, size: label, qty: 1, rank: rank });
+        push("sponsor", "Sponsor", sp, info.gender, info.sizeKey, 1);
       });
+    });
+    state.tshirtPurchases.forEach(function (p) {
+      var info = p.size && CONFIG.SPONSOR_SIZE_INDEX[p.size];
+      if (!info) return;
+      var source = TSHIRT_PURCHASE_SOURCE_BY_REASON[p.reason] || "Walkin";
+      push("purchase", source, p, info.gender, info.sizeKey, Number(p.count) || 1);
     });
     return out;
   }
   function tshirtReportCellText(pr, key) {
     if (key === "size") return pr.size;
     if (key === "qty") return String(pr.qty);
+    if (key === "source") return pr.source;
     if (pr.kind === "sponsor") {
       if (key === "Last Name") return pr.row.name || "";
       if (key === "Status") return "Sponsor";
+      return ""; // First Name, Reg # — no registrant-shaped equivalent
+    }
+    if (pr.kind === "purchase") {
+      if (key === "Last Name") return pr.row.name || "";
+      if (key === "Status") return pr.source;
       return ""; // First Name, Reg # — no registrant-shaped equivalent
     }
     return regRowFieldText(pr.row, key);
@@ -9849,9 +9904,15 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
   function tshirtReportSortValue(pr, key) {
     if (key === "size") return pr.rank;
     if (key === "qty") return pr.qty;
+    if (key === "source") return pr.source.toLowerCase();
     if (pr.kind === "sponsor") {
       if (key === "Last Name") return (pr.row.name || "").toLowerCase();
       if (key === "Status") return "sponsor";
+      return "";
+    }
+    if (pr.kind === "purchase") {
+      if (key === "Last Name") return (pr.row.name || "").toLowerCase();
+      if (key === "Status") return pr.source.toLowerCase();
       return "";
     }
     return regRowSortValue(pr.row, key);
@@ -9860,7 +9921,7 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     id: "tshirt",
     title: "T-Shirt Report",
     allCols: TSHIRT_REPORT_ALL_COLS,
-    defaultKeys: ["Last Name", "First Name", "size", "qty"],
+    defaultKeys: ["Last Name", "First Name", "source", "size", "qty"],
     defaultSortKey: "size",
     emptyText: "No paid registrations to report yet.",
     getRows: tshirtReportRows,
@@ -10668,9 +10729,43 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     renderViews();
   }
 
+  // Loads an existing purchase's fields into the form (same fields
+  // addTshirtPurchase() reads) and switches it into edit mode — the Add
+  // button becomes Save Changes, a Cancel button appears next to it (see
+  // renderTshirtPurchasePage()), and saving updates that purchase in place
+  // (same id, original purchasedAt preserved) instead of creating a new one.
+  function editTshirtPurchase(id) {
+    var p = state.tshirtPurchases.filter(function (x) { return x.id === id; })[0];
+    if (!p) return;
+    state.tshirtPurchaseEditId = id;
+    state.tshirtPurchaseName = p.name || "";
+    state.tshirtPurchaseCost = String(p.cost != null ? p.cost : 0);
+    state.tshirtPurchaseReason = p.reason || "Walk-in";
+    state.tshirtPurchaseSize = p.size || "";
+    state.tshirtPurchaseCount = String(p.count || 1);
+    state.tshirtPurchasePaymentType = p.paymentType || "Cash";
+    state.tshirtPurchaseCheckNum = p.checkNum || "";
+    state.tshirtPurchaseNote = p.note || "";
+    state.tshirtPurchaseSyncError = null;
+    renderTshirtPurchasePage();
+  }
+  function cancelEditTshirtPurchase() {
+    state.tshirtPurchaseEditId = null;
+    state.tshirtPurchaseName = "";
+    state.tshirtPurchaseCost = String(state.appSettings.tshirtEventPurchaseCost || 0);
+    state.tshirtPurchaseReason = "Walk-in";
+    state.tshirtPurchaseSize = "";
+    state.tshirtPurchaseCount = "1";
+    state.tshirtPurchasePaymentType = "Cash";
+    state.tshirtPurchaseCheckNum = "";
+    state.tshirtPurchaseNote = "";
+    state.tshirtPurchaseSyncError = null;
+    renderTshirtPurchasePage();
+  }
   function addTshirtPurchase() {
     var name = (state.tshirtPurchaseName || "").trim();
     var cost = Number(state.tshirtPurchaseCost);
+    var count = Number(state.tshirtPurchaseCount);
     var paymentType = state.tshirtPurchasePaymentType || "Cash";
     var checkNum = (state.tshirtPurchaseCheckNum || "").trim();
     if (!name) {
@@ -10683,29 +10778,34 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       renderTshirtPurchasePage();
       return;
     }
+    if (!Number.isInteger(count) || count < 1) {
+      state.tshirtPurchaseSyncError = "Count must be a whole number (1 or more).";
+      renderTshirtPurchasePage();
+      return;
+    }
     if (paymentType === "Check" && !checkNum) {
       state.tshirtPurchaseSyncError = "Check # is required for a Check payment.";
       renderTshirtPurchasePage();
       return;
     }
+    // Editing reuses the original id and purchasedAt (so it keeps its place
+    // in the date-sorted table and doesn't look like a brand-new purchase);
+    // adding generates both fresh.
+    var editId = state.tshirtPurchaseEditId;
+    var existing = editId ? state.tshirtPurchases.filter(function (p) { return p.id === editId; })[0] : null;
     upsertTshirtPurchase({
-      id: "ts" + Date.now() + Math.random().toString(36).slice(2),
-      purchasedAt: new Date().toISOString(),
+      id: existing ? existing.id : ("ts" + Date.now() + Math.random().toString(36).slice(2)),
+      purchasedAt: existing ? existing.purchasedAt : new Date().toISOString(),
       name: name,
       cost: cost,
       reason: state.tshirtPurchaseReason || "Walk-in",
       size: state.tshirtPurchaseSize || "",
+      count: count,
       paymentType: paymentType,
-      checkNum: paymentType === "Check" ? checkNum : ""
+      checkNum: paymentType === "Check" ? checkNum : "",
+      note: (state.tshirtPurchaseNote || "").trim()
     });
-    state.tshirtPurchaseName = "";
-    state.tshirtPurchaseCost = String(state.appSettings.tshirtEventPurchaseCost || 0);
-    state.tshirtPurchaseReason = "Walk-in";
-    state.tshirtPurchaseSize = "";
-    state.tshirtPurchasePaymentType = "Cash";
-    state.tshirtPurchaseCheckNum = "";
-    state.tshirtPurchaseSyncError = null;
-    renderTshirtPurchasePage();
+    cancelEditTshirtPurchase(); // also resets the form fields and re-renders
   }
 
   function fmtPurchaseTime(iso) {
@@ -10730,19 +10830,23 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       el("span", { class: "form-label", text: "Name" }), nameInput
     ]));
 
-    var costField = moneyInput({ value: state.tshirtPurchaseCost });
-    var costInput = costField.input;
-    costInput.addEventListener("input", function () { state.tshirtPurchaseCost = costInput.value; });
-    body.appendChild(el("div", { class: "form-row" }, [
-      el("span", { class: "form-label", text: "Cost" }), costField.wrap
-    ]));
-
     var reasonSelect = el("select", {});
-    ["Walk-in", "Member"].forEach(function (r) {
+    ["Walk-in", "Member", "Complimentary"].forEach(function (r) {
       reasonSelect.appendChild(el("option", { value: r, text: r }));
     });
     reasonSelect.value = state.tshirtPurchaseReason || "Walk-in";
-    reasonSelect.addEventListener("change", function () { state.tshirtPurchaseReason = reasonSelect.value; });
+    reasonSelect.addEventListener("change", function () {
+      state.tshirtPurchaseReason = reasonSelect.value;
+      // Complimentary shirts aren't sold — default (not force; an officer can
+      // still override) Cost to $0 and Payment Type to Gratis so the common
+      // case needs no extra clicks. Full re-render (not just an in-place
+      // field update) since both fields' displayed values change together.
+      if (reasonSelect.value === "Complimentary") {
+        state.tshirtPurchaseCost = "0";
+        state.tshirtPurchasePaymentType = "Gratis";
+      }
+      renderTshirtPurchasePage();
+    });
     body.appendChild(el("div", { class: "form-row" }, [
       el("span", { class: "form-label", text: "Reason" }), reasonSelect
     ]));
@@ -10758,8 +10862,24 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       el("span", { class: "form-label", text: "T-Shirt Size" }), sizeSelect
     ]));
 
+    // How many of that size this one purchase covers — e.g. a parent buying
+    // shirts for the whole family in one transaction, instead of adding a
+    // separate row per shirt.
+    var countInput = el("input", { type: "number", min: "1", step: "1", value: state.tshirtPurchaseCount || "1", style: "width:100%" });
+    countInput.addEventListener("input", function () { state.tshirtPurchaseCount = countInput.value; });
+    body.appendChild(el("div", { class: "form-row" }, [
+      el("span", { class: "form-label", text: "Count" }), countInput
+    ]));
+
+    var costField = moneyInput({ value: state.tshirtPurchaseCost });
+    var costInput = costField.input;
+    costInput.addEventListener("input", function () { state.tshirtPurchaseCost = costInput.value; });
+    body.appendChild(el("div", { class: "form-row" }, [
+      el("span", { class: "form-label", text: "Cost" }), costField.wrap
+    ]));
+
     var paymentTypeSelect = el("select", {});
-    ["Cash", "Check", "Credit Card"].forEach(function (t) {
+    ["Cash", "Check", "Credit Card", "Gratis"].forEach(function (t) {
       paymentTypeSelect.appendChild(el("option", { value: t, text: t }));
     });
     paymentTypeSelect.value = state.tshirtPurchasePaymentType || "Cash";
@@ -10771,6 +10891,12 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       el("span", { class: "form-label", text: "Payment Type" }), paymentTypeSelect
     ]));
 
+    var noteInput = el("input", { type: "text", placeholder: "Optional note", value: state.tshirtPurchaseNote || "" });
+    noteInput.addEventListener("input", function () { state.tshirtPurchaseNote = noteInput.value; });
+    body.appendChild(el("div", { class: "form-row" }, [
+      el("span", { class: "form-label", text: "Note" }), noteInput
+    ]));
+
     var checkNumInput = el("input", { type: "text", placeholder: "Check #", value: state.tshirtPurchaseCheckNum || "" });
     checkNumInput.addEventListener("input", function () { state.tshirtPurchaseCheckNum = checkNumInput.value; });
     var checkNumRow = el("div", { class: "form-row", style: "display:" + (paymentTypeSelect.value === "Check" ? "" : "none") }, [
@@ -10778,9 +10904,16 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
     ]);
     body.appendChild(checkNumRow);
 
-    var addBtn = el("button", { class: "btn primary" }, ["Add Purchase"]);
+    var editing = !!state.tshirtPurchaseEditId;
+    var addBtn = el("button", { class: "btn primary" }, [editing ? "Save Changes" : "Add T-Shirt Order"]);
     addBtn.addEventListener("click", addTshirtPurchase);
-    var actionRow = el("div", { class: "settings-actions" }, [addBtn]);
+    var actionRowKids = [addBtn];
+    if (editing) {
+      var cancelEditBtn = el("button", { class: "btn" }, ["Cancel"]);
+      cancelEditBtn.addEventListener("click", cancelEditTshirtPurchase);
+      actionRowKids.push(cancelEditBtn);
+    }
+    var actionRow = el("div", { class: "settings-actions" }, actionRowKids);
     if (state.tshirtPurchaseSyncError) actionRow.appendChild(el("div", { class: "form-error", text: state.tshirtPurchaseSyncError }));
     body.appendChild(actionRow);
 
@@ -10792,37 +10925,45 @@ window.__carshowReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB
       body.appendChild(el("div", { class: "hint", style: "text-align:center; padding:20px" }, ["No purchases recorded yet."]));
     } else {
       var rows = purchases.map(function (p) {
+        var editBtn = el("button", { class: "btn", style: "padding:2px 8px; font-size:12px" }, ["Edit"]);
+        editBtn.addEventListener("click", function () { editTshirtPurchase(p.id); });
         var delBtn = el("button", { class: "btn", style: "padding:2px 8px; font-size:12px" }, ["Delete"]);
         delBtn.addEventListener("click", function () { removeTshirtPurchase(p.id); });
         return el("tr", {}, [
           el("td", { text: fmtPurchaseTime(p.purchasedAt) }),
           el("td", { text: p.name || "—" }),
-          el("td", { text: fmtMoney(p.cost) }),
           // Older purchases recorded before this field existed have no
           // `reason` — fall back to "Walk-in" (the ORIGINAL default/only
           // reason this screen ever supported), not a blank cell.
           el("td", { text: p.reason || "Walk-in" }),
           el("td", { text: p.size || "—" }),
+          // Same fallback reasoning as `reason` above — purchases recorded
+          // before Count existed have no `count`, so those were always 1.
+          el("td", { text: String(p.count || 1) }),
+          el("td", { text: fmtMoney(p.cost) }),
           el("td", { text: p.paymentType || "—" }),
           el("td", { text: p.paymentType === "Check" ? (p.checkNum || "—") : "" }),
-          el("td", {}, [delBtn])
+          el("td", { text: p.note || "" }),
+          el("td", { style: "display:flex; gap:4px" }, [editBtn, delBtn])
         ]);
       });
       var total = purchases.reduce(function (sum, p) { return sum + (Number(p.cost) || 0); }, 0);
       var totalRow = el("tr", {}, [
-        el("td", { colspan: "2", style: "text-align:right; font-weight:600", text: purchases.length + " purchase" + (purchases.length === 1 ? "" : "s") + " — Total" }),
+        el("td", { colspan: "5", style: "text-align:right; font-weight:600", text: purchases.length + " purchase" + (purchases.length === 1 ? "" : "s") + " — Total" }),
         el("td", { style: "font-weight:600", text: fmtMoney(total) }),
-        el("td", {}), el("td", {}), el("td", {}), el("td", {}), el("td", {})
+        el("td", {}), el("td", {}), el("td", {}), el("td", {})
       ]);
-      body.appendChild(el("table", { class: "matrix" }, [
+      body.appendChild(el("table", { class: "matrix tshirt-purchases-table" }, [
         el("thead", {}, [el("tr", {}, [
           el("th", { text: "Date/Time" }),
           el("th", { text: "Name" }),
-          el("th", { text: "Cost" }),
           el("th", { text: "Reason" }),
           el("th", { text: "Size" }),
+          el("th", { text: "Count" }),
+          el("th", { text: "Cost" }),
           el("th", { text: "Payment Type" }),
           el("th", { text: "Check #" }),
+          el("th", { text: "Note" }),
           el("th", { text: "" })
         ])]),
         el("tbody", {}, rows),
