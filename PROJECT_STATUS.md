@@ -1,14 +1,93 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-18 (end of session, latest). **Live-tested the Order T-Shirt Edit
-flow on production; fixed a real T-Shirt Report double-counting bug for Individual
-Sponsorship shirts (found via a user screenshot, not speculation); Registration/
-Sponsors tables now default to 80% zoom with a real horizontal scrollbar instead of
-auto-shrinking to avoid one; and a Sponsors tab "Source" column was added, then removed
-again same session at the user's request.** One checkpoint: **`ff79890`** (v5.137),
-deployed and pushed; live site is **v5.137** at https://etccapps.com/apps/carshow.
+Last updated: 2026-09-18 (end of session, latest). **"Individual" was re-added to the
+member sponsor form (reversing the previous session's removal), which surfaced — and
+fixed — a real second-order bug in the T-Shirt Report's Individual Sponsorship handling;
+both standalone sponsor-form pages now show the same "vX.Y · Deployed ..." footer line
+the main app does.** One checkpoint: **`b573c04`** (v5.140), deployed and pushed; live
+site is **v5.140** at https://etccapps.com/apps/carshow.
 
-## This session's work (2026-09-18, continued — live testing, table defaults, T-Shirt Report sourcing fix)
+## This session's work (2026-09-18, continued again — Individual sponsor re-add, T-Shirt Report fix #2, sponsor-form version footer)
+
+Picks up right after the previous same-day session (live testing, table defaults,
+T-Shirt Report sourcing fix — v5.137, see that section below). Three requests, the
+first two tightly linked:
+
+**1. "Individual" restored as a Sponsor Type on the member sponsor form.** User: "add
+individual sponsor to sponsor type" — a straight reversal of the *previous* session's
+"remove individual from sponsor type" change. `member-sponsor-form.php`'s
+`$SPONSOR_TYPES`/`$SPONSOR_DEFAULT_DONATION` PHP arrays and the matching inline-JS
+`defaults` object all got `'individual' => 'Individual ($100)'` (and its `100` default
+donation) back. PHP-only change, deployed without a `node build.js` first — and this
+time, unlike the mid-session deploy mishap two sessions ago, nothing else was sitting
+half-built, so only this one file went out. **This reversal is the reason item 2 below
+exists** — it re-opened a code path the previous session's T-Shirt Report fix hadn't
+accounted for.
+
+**2. Real T-Shirt Report bug #2, found from a live screenshot: Bert Burgett's shirt
+had vanished from the report entirely.** User: "burgett purchased mens medium but it
+does not show up in report" — with a screenshot of Burgett as an "Individual ($100)"
+sponsor with a real T-Shirt size set, absent from the T-Shirt Report's alphabetical
+list. Root cause: the *previous* session's fix for double-counted Individual
+Sponsorship shirts (`tshirtReportRows()`, `App/src/app.js`) made the sponsor loop skip
+**every** sponsor with `sponsorType === "individual"`, on the assumption that an
+Individual sponsor always has a matching CSV registration row to source their shirt
+from instead. That assumption broke the moment item 1 restored "Individual" as a
+sponsor-form option — a sponsor added directly through the form has NO registration row
+at all, so it has no `_sponsorShirtSize` for the registration-row loop to pick up
+either, and the sponsor loop now skipped it too. Result: silently dropped from the
+report, not merely mis-tagged. **Fix**: the skip condition now also checks the
+sponsor's id prefix — `sp.sponsorType === "individual" && String(sp.id||"").indexOf("csvind_") === 0`
+— so only CSV-synced Individual sponsors (id = `csvSponsorId(rec)` =
+`"csvind_" + csvRegKey(rec)`, set by `syncSponsorsFromRegistrations()`) are skipped;
+an Individual sponsor added directly via the form (no such prefix) now comes through
+the sponsor loop exactly like a Premier/Corporate one. **Pattern worth remembering for
+future sessions**: `sponsorType` alone is not a reliable signal for "this sponsor has a
+CSV-backing registration row" — only the id prefix is. Any future logic branching on
+"is this sponsor CSV-derived" should check the prefix, not the type.
+
+**3. Both sponsor-form pages gained the same version footer line the main app
+shows.** User: "car show sponsor form needs standard footer with version" — ambiguous
+between `member-sponsor-form.php` and `public-sponsor-form.php` (both are literally
+titled "Become a Car Show Sponsor"), so both were updated for consistency. Neither page
+is part of `build.js`'s bundle, so neither had access to the build-time
+version/timestamp the main app's footer bakes directly into its HTML. Fixed by:
+- `build.js` now writes `deployedAt` (the same `Date` used for the main footer's
+  "Deployed ..." text) into `deploy/version-check.json` alongside `version` — that file
+  was previously version-only, existing solely for `app.js`'s
+  `checkForNewVersion()`/`version-check.php` polling, which only ever reads `.version`
+  and is unaffected by the new field.
+- New `carshow_version_footer_line()` in `lib.php` — reads that same
+  `version-check.json` server-side (same file-read pattern `version-check.php` already
+  uses to get around `.htaccess`'s blanket `.json` deny-all), formats it as
+  `vX.Y · Deployed MM/DD/YYYY HH:MM AM/PM`, and returns `''` if the file is missing/
+  malformed (an old deploy predating this field, or a fresh checkout with no build yet)
+  — callers omit the line entirely rather than showing something broken.
+- Both forms' `<div class="footer">` now call that helper and prepend its output (with
+  a trailing `&middot;`) before the existing copyright line. Both already `require
+  __DIR__ . '/lib.php'`, so no new require was needed.
+- **Verified live** (not just code review): fetched `public-sponsor-form.php` directly
+  and confirmed the footer rendered `v5.139 · Deployed 09/18/2026 09:49 AM · © 2026
+  East Tennessee Corvette Club · ...` — matches the main app's own footer format
+  exactly.
+
+## Known follow-ups / things a new session might need to know (2026-09-18 session,
+continued again)
+
+- **The "sponsorType vs. id-prefix" distinction from item 2 is the load-bearing fact
+  going forward**: `sponsorType === "individual"` means "this sponsor's fee tier is
+  Individual ($100)" — nothing more. Whether that sponsor ALSO has a backing CSV
+  registration row (and therefore a `_sponsorShirtSize` to dedupe against) is a
+  *completely separate* fact, only knowable from the `"csvind_"` id prefix. Any new
+  T-Shirt Report logic, or anything else that needs to reason about "did this shirt
+  already get counted somewhere else," must check the prefix, not the type.
+- Every earlier session's still-open items (T-Shirt Report Individual-Sponsorship fix
+  not re-verified with a live screenshot of the Sages case specifically, browser
+  click-by-ref unreliability, footer-positioning fragility across its four padding
+  reservations, Sponsors tab having no Source column) remain accurate as of this
+  session — none of them were touched here.
+
+## Previous session's work (2026-09-18, earlier the same day — live testing, table defaults, T-Shirt Report sourcing fix)
 
 Picks up right after the previous same-day session (Order T-Shirt overhaul + footer
 fix, v5.129 — see that section below). Several distinct threads:
