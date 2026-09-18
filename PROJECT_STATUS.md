@@ -1,14 +1,147 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-18 (end of session, latest). **Order T-Shirt gained an Edit
-button, a Count/Note field, and a Complimentary reason with a new Gratis payment type;
-the T-Shirt Report now includes Order T-Shirt purchases with a Source column; and a
-real layout bug was found and fixed — the footer was invisible on every full-page
-screen (Reports, Order T-Shirt, Developer, etc.), not just hard to notice.** One
-checkpoint: **`390c745`** (v5.129), deployed and pushed; live site is **v5.129** at
-https://etccapps.com/apps/carshow.
+Last updated: 2026-09-18 (end of session, latest). **Live-tested the Order T-Shirt Edit
+flow on production; fixed a real T-Shirt Report double-counting bug for Individual
+Sponsorship shirts (found via a user screenshot, not speculation); Registration/
+Sponsors tables now default to 80% zoom with a real horizontal scrollbar instead of
+auto-shrinking to avoid one; and a Sponsors tab "Source" column was added, then removed
+again same session at the user's request.** One checkpoint: **`ff79890`** (v5.137),
+deployed and pushed; live site is **v5.137** at https://etccapps.com/apps/carshow.
 
-## This session's work (2026-09-18, Order T-Shirt overhaul + footer visibility bug)
+## This session's work (2026-09-18, continued — live testing, table defaults, T-Shirt Report sourcing fix)
+
+Picks up right after the previous same-day session (Order T-Shirt overhaul + footer
+fix, v5.129 — see that section below). Several distinct threads:
+
+**1. Live-tested the Order T-Shirt Edit flow against production**, at the user's
+explicit request ("test the order t-shirt edit flow live"). Logged into
+https://etccapps.com/apps/carshow with the admin password (see the 2026-09-15 session
+below for how that password was set up), opened Order T-Shirt, clicked Edit on a real
+purchase, changed its Count and Note, saved, and confirmed the row updated **in place**
+(same timestamp, same table position, purchase count unchanged — no duplicate created).
+Then reverted the test edit back to its original values so no test data was left in
+production. Also visually confirmed the footer-visibility fix from the prior session was
+actually working across several screens. **Browser-automation gotcha worth knowing**:
+clicking by `ref` (from `read_page`) was unreliable this session — several clicks by ref
+silently did nothing, while the identical element clicked by pixel `coordinate` (read off
+a fresh screenshot) worked every time. If a future session's browser-driven click
+"succeeds" (no error) but nothing visibly changes, re-screenshot and click by coordinate
+instead of trusting the ref.
+
+**2. Registration/Sponsors tables: default 80% zoom + real horizontal scrollbar,
+default sort Reg Date descending.** User: "add horizinal scroll bar. registration &
+sponsor tabs: default view is 80% zoom. default reg date is descending." Both tables
+used to auto-compute a "Fit" zoom on first load every session
+(`zoomAutoFitDone`/`sponsorZoomAutoFitDone` flags, now deleted entirely — search
+`fitZoom`/`fitSponsorZoom` in `App/src/app.js` for what's left, the manual "Fit" button
+still calls them) — shrinking text as small as needed so no column ever went off-screen,
+which could make a wide table nearly unreadable. Now both default to a flat 80%
+(`state.zoom`/`state.sponsorZoom`, `App/src/app.js` near line 35) and rely on
+`.tablewrap`'s own `overflow: auto` for whatever doesn't fit. Default sort changed from
+"unsorted/CSV order" (`sortCol: null`) to Reg Date descending (`sortCol: "Reg Date"`,
+`sortDir: -1` for Registration; `sponsorSortCol: "regDate"`, `sponsorSortDir: -1` for
+Sponsors) — both on initial page load and after a fresh CSV (re)import (the
+`state.sortCol = null` reset that used to run there is now the same Reg Date descending
+default).
+- **Follow-up bug, found from a user screenshot showing columns clipped with no visible
+  scrollbar**: the horizontal scrollbar WAS being computed correctly (columns did
+  overflow at 80%) but was invisible — hidden underneath the fixed footer bar from the
+  *previous* session's footer-visibility fix. That fix made `footer.app-footer`
+  `position: fixed`, which removed it from `body`'s flex layout
+  (`body:has(.tablewrap.fill)` in `App/src/styles.css`) — so `.tablewrap.fill`'s table
+  silently expanded to fill the vertical space the footer used to reserve as a flex
+  sibling, pushing the table's bottom edge (and its horizontal scrollbar) down
+  underneath the now-fixed footer. Fixed by bumping
+  `body:has(.tablewrap.fill) .wrap`'s `padding-bottom` from `16px` to `60px`, matching
+  the reservation already used everywhere else the fixed footer needed one
+  (`.api-page-body`, `.changelog-page-body`, plain `.wrap`). **Worth remembering**: any
+  future change to the footer's positioning must be checked against all three of those
+  siblings, or this exact "scrollbar hidden under the footer" failure mode can
+  reappear in a new spot.
+
+**3. Sponsors tab "Source" column: added, then removed same session.** User first asked
+to "add new column Source. readonly. indicates whether the sponsor came from the
+Registration (i.e., import) or from the sponsor form" — implemented as a new
+`{key:"source", label:"Source"}` entry in `SPONSOR_COLS`, detected via a CSV-synced
+sponsor's id always being `"csvind_" + csvRegKey(rec)` (see `csvSponsorId()`) vs. every
+other sponsor (public form submission OR the Sponsors tab's own "+ Add Sponsor", which
+opens that same `member-sponsor-form.php` — there is no separate "manual" path) having a
+`submittedAt`. **A build+deploy for this got interrupted mid-session** (user rejected
+the `ftp-deploy.sh` tool call, said "cancel request") — the code stayed in the repo,
+uncommitted, un-deployed. Later, an UNRELATED PHP-only deploy (removing "Individual"
+from the member sponsor form, item 5 below) picked up and shipped that already-built
+`ETCCCarShow.html` as a side effect, since `node build.js` had already run before the
+cancellation and the built file was still sitting on disk — **this was flagged
+transparently to the user at the time** rather than left silent. The user then asked to
+remove the column entirely ("remove the Sponsors tab 'Source' column") — done, along
+with its now-dead `sponsorFieldText()` "source" case (the underlying "csvind_ prefix"
+detection logic was kept in mind and reused for item 4 below, just not as a Sponsors-tab
+column). **Net effect**: Sponsors tab has no Source column as of v5.137 — this was a
+build-then-revert, not a currently-shipped feature.
+
+**4. Real T-Shirt Report bug found and fixed: Individual Sponsorship shirts were
+double-counted.** User first asked (mid-investigation of the above) "t-shirt report: if
+row is from individual sponsor, set source to sponsor" — then, after a first attempted
+fix, came back with a live screenshot: "sages womens medium comes from individual
+sponsor. should be marked as sponsor" (still showing "Registration", not "Sponsor").
+Root cause, traced into `logic.js`: an Individual Sponsorship's bonus shirt
+(`rec._sponsorShirtSize`, set while processing the "Individual Sponsorship" CSV
+activity) is added into the exact same "Free" shirt bucket the registrant's own free
+shirt uses — both go through `CONFIG.freeSizeMap` — so it was already counted once via
+the registration-row bucket loop (Source=Registration) AND counted again via the
+sponsor loop (Source=Sponsor, from that Individual sponsor's `shirtSize`, itself just
+backfilled from the same `_sponsorShirtSize` field). **First attempt was incomplete**:
+it only excluded the double-count when a matching Individual sponsor record still
+existed live in `state.sponsors` — but Robert Sages (the screenshot's example) had no
+such live record (deleted, or never synced), so the exclusion silently didn't fire and
+both units stayed tagged Registration. **Final fix**: source the Sponsor-tagged unit
+directly from `r._sponsorShirtSize` on the registration row itself — the CSV is the
+authority on whether this was an Individual Sponsorship, not whatever the Sponsors tab
+currently happens to contain. One unit of the matching bucket is pulled out and
+re-emitted as its own row with `source: "Sponsor"` (same registration row as the
+underlying record, so Last Name/First Name/Reg #/Status all still resolve correctly via
+the existing `regRowFieldText()` fallback — no new row "kind" was needed). The separate
+sponsor loop now skips `sponsorType === "individual"` entirely, since an Individual
+sponsor's shirt was never an independent data source to begin with — only Premier/
+Corporate sponsors still come from that loop. See `tshirtReportRows()` in
+`App/src/app.js`.
+
+**5. "Individual" removed as a Sponsor Type option from the ETCC-member sponsor
+form.** User, from a screenshot of `member-sponsor-form.php`: "remove individual from
+sponsor type." Scoped to that one file only (not `public-sponsor-form.php`, not
+`CONFIG.SPONSOR_TYPES` in `App/src/config.js`, not the in-app Add/Edit Sponsor modal —
+all three still offer Individual) — reasoning documented in the new comment there: for
+an ETCC member, Individual sponsorship already comes from their own registration's
+Individual Sponsorship fee, so offering it again on this member-facing form invited a
+confusing duplicate entry. Three spots changed in that one file: the `$SPONSOR_TYPES`
+PHP array, `$SPONSOR_DEFAULT_DONATION`, and the matching inline-JS `defaults` object.
+PHP-only change — deployed via `ftp-deploy.sh` without a `node build.js` first (no
+`App/src/` changes needed for it in isolation), though see item 3 above for how that
+particular deploy also carried an unrelated already-built bundle along with it.
+
+## Known follow-ups / things a new session might need to know (2026-09-18 session,
+continued)
+
+- **Browser-automation click-by-ref unreliability** (item 1 above) — if a future
+  session drives the live site via the Browser pane and a click-by-`ref` appears to
+  succeed but nothing changes, switch to click-by-`coordinate` off a fresh screenshot
+  before assuming there's an app bug.
+- **Footer positioning is now load-bearing for three separate bottom-padding
+  reservations** (`.wrap`, `.api-page-body`, `.changelog-page-body`, and now
+  `body:has(.tablewrap.fill) .wrap` — all reserve 60px). Any future change to the
+  footer's own height or position needs to be checked against all four, not just
+  whichever screen prompted the change — this session's horizontal-scrollbar bug was
+  exactly that kind of miss from the *previous* session's footer fix.
+- **T-Shirt Report's Individual Sponsorship fix has not been re-verified against the
+  live Robert Sages example from the user's screenshot** — the reasoning and code were
+  fixed and deployed (v5.136, superseded by v5.137's Sponsors-tab-Source cleanup on
+  top), but no live re-screenshot confirmed the Sages row now actually reads "Sponsor".
+  Worth a quick live check next time the T-Shirt Report is open.
+- Sponsors tab has NO Source column as of v5.137 (see item 3) — don't re-add it without
+  checking whether the user actually wants it back; it was deliberately removed, not
+  lost.
+
+## Previous session's work (2026-09-18, earlier the same day — Order T-Shirt overhaul + footer visibility bug)
 
 A long string of small, related requests against the Order T-Shirt screen and T-Shirt
 Report, ending with an unrelated but significant layout bug found via an explicit
