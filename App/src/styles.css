@@ -163,7 +163,14 @@ footer.app-footer .footer-credit {
   }
   body:has(.tablewrap.fill) .wrap {
     flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
-    padding-bottom: 16px; /* the usual 60px is for page-scroll breathing room */
+    /* footer.app-footer is position:fixed (see its own rule) — no longer a
+       flex sibling reserving its own height here, so this table would
+       otherwise expand to fill that space too, pushing its bottom edge (and
+       with it, the horizontal scrollbar showing any clipped columns) down
+       underneath the fixed footer bar, hidden. 60px matches the footer's
+       own reserved space everywhere else (.wrap's own non-fill padding,
+       .api-page-body, .changelog-page-body). */
+    padding-bottom: 60px;
   }
   body:has(.tablewrap.fill) #app,
   body:has(.tablewrap.fill) #app > .view {

@@ -12,8 +12,8 @@
     reg: null,   // { name, rows }
     act: null,   // { name, rows }
     result: null,
-    sortCol: null,
-    sortDir: 1,
+    sortCol: "Reg Date", // default sort: newest registrations first
+    sortDir: -1,
     search: "",
     statusFilter: { paid: true, notpaid: false, cancelled: false, empty: false },
     // ---- Car shows (one per year) ----
@@ -32,10 +32,11 @@
     inCarShowFilter: false, // Registration tab toolbar's "In Car Show" checkbox — when checked, only rows with In Car Show? = Yes are shown
     tab: "sum",
     detailRow: null,  // registration row currently shown in the detail modal, or null
-    zoom: 1,          // table zoom level (1 = 100%); lets all columns fit without scrolling
-    sponsorZoom: 1,   // sponsor table zoom level
-    zoomAutoFitDone: false,        // both tables default to "Fit" once per session (not
-    sponsorZoomAutoFitDone: false, // on every tab switch, so a manual zoom choice sticks)
+    zoom: 0.8,        // table zoom level (1 = 100%) — default 80%; whatever doesn't fit
+                       // scrolls horizontally (.tablewrap's own overflow:auto) rather than
+                       // auto-shrinking further, which could make text unreadably small on
+                       // a table with this many columns
+    sponsorZoom: 0.8, // sponsor table zoom level, same default/reasoning as zoom above
     payments: [],     // sponsor payment records
     menuOpen: false,      // hamburger dropdown
     settingsOpen: false,  // settings modal
@@ -48,8 +49,8 @@
     sponsorSearch: "",
     sponsorTypeFilter: { premier: true, corporate: true, individual: true },
     sponsorPaidFilter: "all", // "all" | "paid" | "unpaid"
-    sponsorSortCol: null, // one of SPONSOR_COLS[].key, or null for the default (by name)
-    sponsorSortDir: 1,
+    sponsorSortCol: "regDate", // one of SPONSOR_COLS[].key; default sort: newest first
+    sponsorSortDir: -1,
     sponsorEditing: null,  // sponsor record being added/edited in the form modal, or null
     sponsorPaymentOpen: false, // sponsor payment recording modal
     sponsorPaymentSponsorId: null, // which sponsor the payment modal is for
@@ -508,7 +509,7 @@
         })
         .map(fillSpouseFirstNameFromRoster);
     }
-    state.sortCol = null; state.sortDir = 1;
+    state.sortCol = "Reg Date"; state.sortDir = -1;
     syncSponsorsFromRegistrations();
     // A CSV (re)import can introduce brand-new Individual Sponsorship
     // registrants — backfill their payment record (Credit Card/$100/regDate)
@@ -1264,7 +1265,6 @@
     var wrap = el("div", { class: "tablewrap fill" }, [table]);
     setTimeout(function () {
       renderRegBody();
-      if (!state.zoomAutoFitDone) { state.zoomAutoFitDone = true; fitZoom(); }
     }, 0);
     return wrap;
   }
@@ -1294,7 +1294,14 @@
     }
   }
 
-  // ---------- zoom (shrink the table so all columns fit without horizontal scrolling) ----------
+  // ---------- zoom ----------
+  // Both tables default to 80% (see state.zoom/sponsorZoom above) and rely on
+  // .tablewrap's own overflow:auto for whatever doesn't fit at that zoom —
+  // they no longer auto-compute a "Fit" zoom on first load (that used to run
+  // once per session via zoomAutoFitDone/sponsorZoomAutoFitDone, since
+  // removed) so a wide table with many columns doesn't shrink text down to
+  // an unreadable size just to avoid ever showing a horizontal scrollbar.
+  // The "Fit" button below still computes/applies that same zoom on demand.
   function setZoom(z) {
     state.zoom = Math.max(0.3, Math.min(1.5, z));
     renderViews();
@@ -2978,7 +2985,6 @@
     container.appendChild(el("div", { class: "tablewrap fill" }, [table]));
     setTimeout(function () {
       renderSponsorsBody();
-      if (!state.sponsorZoomAutoFitDone) { state.sponsorZoomAutoFitDone = true; fitSponsorZoom(); }
     }, 0);
     return container;
   }
