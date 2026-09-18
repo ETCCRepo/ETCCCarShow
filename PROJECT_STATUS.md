@@ -1,10 +1,121 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-17 (yet another later session). **The T-Shirt Report never
-included sponsors' own shirt orders — fixed.** One checkpoint (**`cd86eb9`**, v5.116),
-deployed and pushed; live site is **v5.116** at https://etccapps.com/apps/carshow.
+Last updated: 2026-09-18 (end of session, latest). **Order T-Shirt gained an Edit
+button, a Count/Note field, and a Complimentary reason with a new Gratis payment type;
+the T-Shirt Report now includes Order T-Shirt purchases with a Source column; and a
+real layout bug was found and fixed — the footer was invisible on every full-page
+screen (Reports, Order T-Shirt, Developer, etc.), not just hard to notice.** One
+checkpoint: **`390c745`** (v5.129), deployed and pushed; live site is **v5.129** at
+https://etccapps.com/apps/carshow.
 
-## This session's work (2026-09-17, latest session — T-Shirt Report gains sponsors)
+## This session's work (2026-09-18, Order T-Shirt overhaul + footer visibility bug)
+
+A long string of small, related requests against the Order T-Shirt screen and T-Shirt
+Report, ending with an unrelated but significant layout bug found via an explicit
+"verify footer is on every page" ask. All in `App/src/app.js` (the T-Shirt-purchase
+functions cluster near `openTshirtPurchasePage()`/`renderTshirtPurchasePage()`) and
+`App/src/styles.css` unless noted. Ran as a rapid sequence of tiny deploys (v5.117
+through v5.129) rather than one batched change — each request was built and pushed
+live individually, so the version-check.json history has a lot of small jumps this
+session; only the end state matters going forward.
+
+**1. Order T-Shirt form field order and content**, several incremental asks landing on:
+Name → Reason → T-Shirt Size → Count → Cost → Payment Type → Note → Check # (Check # is
+still conditionally shown, only for Payment Type = Check). Along the way:
+- Added a **Count** field (`state.tshirtPurchaseCount`, default `"1"`) — how many of
+  that size one purchase transaction covers (e.g. a parent buying for the whole
+  family at once), instead of forcing a separate row per shirt. Validated as a whole
+  number ≥ 1 in `addTshirtPurchase()`. Every place that used to count purchases 1-per-row
+  (`tshirtPurchaseShirtCounts()`, the new `tshirtPurchaseShirtTotal()`, the T-Shirt
+  Report) now sums `p.count || 1` instead of just incrementing — the `|| 1` fallback
+  covers purchases recorded before this field existed.
+- Added **"Complimentary"** as a third Reason option (alongside Walk-in/Member).
+  Selecting it auto-defaults Cost to `"0"` and Payment Type to a new **"Gratis"**
+  payment type option (both still overridable) — see the `reasonSelect` change handler,
+  which now does a full `renderTshirtPurchasePage()` re-render instead of just updating
+  one field, since two other fields' displayed values change together.
+- Added a **Note** free-text field (`state.tshirtPurchaseNote`) and a matching Note
+  column in the purchases table.
+- Added an **Edit** button next to Delete on each purchase row
+  (`editTshirtPurchase(id)`) — loads that purchase's fields back into the form,
+  switches the Add button to "Save Changes" with a Cancel button
+  (`cancelEditTshirtPurchase()`) appearing alongside it, and saving updates the same
+  record in place (**same id, original `purchasedAt` preserved** — read from the
+  existing record in `addTshirtPurchase()`, not regenerated) rather than creating a
+  duplicate. `addTshirtPurchase()` is now shared by both the Add and Save Changes
+  paths, branching only on whether `state.tshirtPurchaseEditId` is set.
+- "Add Purchase" button renamed to **"Add T-Shirt Order"**.
+- The purchases table itself was wrapping Date/Time and Name onto two lines by default
+  (`table.matrix` has no `white-space` rule) — fixed with a new
+  `.tshirt-purchases-table` class + `white-space: nowrap` rule in `styles.css`, applied
+  only to this one table (not every `.matrix` table app-wide, several of which
+  legitimately want to wrap).
+
+**2. T-Shirt Report gained a Source column and now includes Order T-Shirt purchases.**
+`tshirtReportRows()` (search `TSHIRT_REPORT_SPEC`) previously only combined paid
+registrations + sponsors (sponsors were added in a *previous* session, `cd86eb9`); now
+it also pushes one row per Order T-Shirt purchase, each tagged with a `source` field:
+`Registration`, `Sponsor`, `Walkin`, `Member`, or `Complimentary` (mapped from the
+purchase's `reason` via `TSHIRT_PURCHASE_SOURCE_BY_REASON`, falling back to `"Walkin"`
+for any unrecognized/legacy reason value). New "Source" column in
+`TSHIRT_REPORT_ALL_COLS`, on by default.
+
+**3. "Total Shirts Needed For Event" now counts every non-Walk-in purchase reason**,
+not just Complimentary (an earlier ask this same session had it Complimentary-only,
+before the user broadened it to "include all reasons except walk-in"). The shared
+`tshirtPurchaseShirtCounts(filterFn)` helper (already generalized with an optional
+filter in a prior session) is called with `function (p) { return p.reason !==
+"Walk-in"; }` in three places that all needed updating together: `combinedShirtMatrix()`
+(Summary/T-Shirts tab cards), the parallel hand-rolled CSV/Excel export section in
+`exportSummaryCsv()`, and the two card subtitle strings — all three MUST stay in sync
+by hand since the CSV export doesn't call `combinedShirtMatrix()`, it duplicates the
+same logic separately (a pre-existing duplication, not introduced this session, but
+worth knowing if this changes again).
+
+**4. Renamed "Walk-In T-Shirt Purchases" to "Additional T-Shirt Purchases"** on the
+Summary tab card and in the CSV export section header (both updated for consistency,
+even though the user only said "Summary tab" — the CSV export mirrors the same Summary
+tab content).
+
+**5. Real bug found via an explicit "verify footer is on every page" request — the
+footer was invisible on every full-page overlay screen.** Investigation: `.api-page`
+(Reports, Order T-Shirt, T-Shirt Order Form, Developer/API pages) and `.changelog-page`
+(Developer > Change Log) are both `position: fixed; inset: 0; z-index: 300` — they cover
+the ENTIRE viewport, and the footer (`footer.app-footer`) was in normal document flow
+after `#app`'s content, so it sat visually *behind* every one of these overlays,
+completely hidden. **User explicitly chose the fix approach** (asked via AskUserQuestion,
+offering "make it a fixed bar" vs. "duplicate it into every overlay" vs. "don't fix
+now") — went with the fixed-bar approach: `footer.app-footer` is now itself
+`position: fixed; bottom: 0; z-index: 400` (above both overlay types' z-index 300), with
+`background: var(--bg)` so it's opaque. `.api-page-body` and `.changelog-page-body` both
+gained `60px` of bottom padding (matching `.wrap`'s existing bottom padding, which
+happened to already reserve roughly a footer's height) so their own content doesn't sit
+underneath the now-fixed footer. **Not touched**: `.modal-backdrop` (z-index 100, e.g.
+the Detail modal, Sponsor form) — modals were already below `.api-page`/`.changelog-page`
+in the existing z-index order before this session, so a modal's bottom edge can now
+render under the footer bar too if it extends that far down; this wasn't flagged as a
+problem and matches the pre-existing (page-overlays-beat-modals) z-index hierarchy, just
+extended one level further — worth knowing if a modal ever visually clips against the
+footer.
+
+## Known follow-ups / things a new session might need to know (2026-09-18 session)
+
+- **The CSV/Excel export (`exportSummaryCsv()`) duplicates `combinedShirtMatrix()`'s
+  logic by hand** rather than calling it — this is pre-existing, not new this session,
+  but it means any future change to "what counts toward Total Shirts Needed" must be
+  applied in BOTH places (and the two card subtitle strings) or they'll silently
+  diverge. Worth refactoring to share one function if this area gets touched again.
+- **Footer-over-modal interaction was not tested against a real tall modal** — the fix
+  was applied and reasoned through, not visually verified (no browser preview per this
+  session's own working style/memory). If a modal ever looks like its bottom is clipped
+  by the footer bar, that's the fix from item 5 above, not a new bug.
+- T-Shirt Report's `TSHIRT_PURCHASE_SOURCE_BY_REASON` mapping falls back to `"Walkin"`
+  for any purchase reason it doesn't recognize — currently only matters for purchases
+  recorded before the Reason field existed at all (pre-dating even the original
+  Walk-in-only version), which is the same "no reason on old records" fallback already
+  used elsewhere in this file.
+
+## Previous session's work (2026-09-17, T-Shirt Report gains sponsors)
 
 Short, targeted session. The user reported "when a t-shirt size is changed on the
 sponsor or registration pages, the tshirt report needs to be updated."
