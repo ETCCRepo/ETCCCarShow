@@ -7659,15 +7659,43 @@
       var rank = (genderRank[gender] || 0) * CONFIG.SIZES.length + (sizeIndex[sizeKey] || 0);
       out.push({ kind: kind, source: source, row: row, size: label, qty: qty, rank: rank });
     }
+    // An Individual Sponsorship's bonus shirt (r._sponsorShirtSize, set by
+    // LOGIC.generate() — see logic.js's "Individual Sponsorship" activity
+    // handling) is added into the SAME "Free" bucket the registrant's own
+    // free shirt uses (both go through CONFIG.freeSizeMap), so it's already
+    // counted in the per-bucket quantities read below. Sourced straight from
+    // this field — NOT from whether a Sponsors-tab record currently exists
+    // for this person (an earlier version of this exclusion depended on
+    // that, and silently fell back to "Registration" whenever the sponsor
+    // record had been deleted or never existed, e.g. a sync gap — the CSV
+    // itself is the authority on whether this was an Individual Sponsorship,
+    // regardless of the Sponsors tab's current state). One unit of the
+    // matching bucket is pulled out and re-tagged Source=Sponsor; the rest
+    // of that bucket (the registrant's own free shirt, if same size) stays
+    // Registration.
     allRegistrations().filter(function (r) { return classifyStatus(r["Status"]) === "paid"; }).forEach(function (r) {
+      var sponsorBucketKey = r._sponsorShirtSize ? (CONFIG.freeSizeMap[r._sponsorShirtSize] || null) : null;
       CONFIG.SHIRT_BUCKETS.forEach(function (b) {
         var qty = Number(r[b.col]) || 0;
         if (qty <= 0) return;
         var group = CONFIG.GROUPS.filter(function (g) { return g.key === b.groupKey; })[0];
-        push("reg", "Registration", r, group ? group.gender : "", b.sizeKey, qty);
+        var gender = group ? group.gender : "";
+        if (sponsorBucketKey && b.key === sponsorBucketKey) {
+          qty -= 1;
+          sponsorBucketKey = null; // only the first matching bucket loses a unit
+          push("reg", "Sponsor", r, gender, b.sizeKey, 1);
+          if (qty <= 0) return;
+        }
+        push("reg", "Registration", r, gender, b.sizeKey, qty);
       });
     });
+    // Premier/Corporate only — an Individual sponsor's shirt is already
+    // covered above, straight from the registration row's own Individual
+    // Sponsorship data (that sponsor's `shirtSize` is itself just backfilled
+    // from that same field by syncSponsorsFromRegistrations(), so it's not
+    // an independent source); iterating it here too would double-count.
     state.sponsors.forEach(function (sp) {
+      if (sp.sponsorType === "individual") return;
       LOGIC.sponsorShirtSizes(sp).forEach(function (size) {
         var info = CONFIG.SPONSOR_SIZE_INDEX[size];
         if (!info) return;

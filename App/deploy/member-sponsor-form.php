@@ -30,16 +30,21 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 require __DIR__ . '/lib.php';
 
+// "Individual" is deliberately NOT offered here (unlike public-sponsor-form.php,
+// CONFIG.SPONSOR_TYPES in App/src/config.js, and the in-app Add/Edit Sponsor
+// modal, which all still have it) — for an ETCC member, that sponsorship
+// already comes from their own registration's Individual Sponsorship fee
+// (auto-synced into the Sponsors tab from the CSV import), so offering it
+// again here would just invite a confusing duplicate entry.
 $SPONSOR_TYPES = [
     'premier' => 'Premier ($250)',
     'corporate' => 'Corporate ($100)',
-    'individual' => 'Individual ($100)',
 ];
 // Default Donation amount per Sponsor Type — same $ figures as the labels
 // above (and CONFIG.SPONSOR_TYPES' `fee` in App/src/config.js, which the
 // in-app Add/Edit Sponsor modal uses for the same default). The field
 // itself is editable, so a sponsor/officer can still override it.
-$SPONSOR_DEFAULT_DONATION = ['premier' => 250, 'corporate' => 100, 'individual' => 100];
+$SPONSOR_DEFAULT_DONATION = ['premier' => 250, 'corporate' => 100];
 $SHIRT_SIZES = [
     "Men's Small", "Men's Medium", "Men's Large", "Men's Extra Large", "Men's 2XL", "Men's 3XL",
     "Women's Small", "Women's Medium", "Women's Large", "Women's Extra Large", "Women's 2XL", "Women's 3XL",
@@ -301,7 +306,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           var typeSel = document.getElementById('f-type');
           var donationInput = document.getElementById('f-donation');
           // Same $ figures as $SPONSOR_DEFAULT_DONATION server-side.
-          var defaults = { premier: 250, corporate: 100, individual: 100 };
+          var defaults = { premier: 250, corporate: 100 };
           // Only re-applies the default while the visitor hasn't typed into
           // Donation themselves — once they have, switching Sponsor Type
           // must never clobber a value they deliberately chose (e.g. a
