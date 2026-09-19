@@ -9,7 +9,7 @@
 // or manually in-app) are NOT affected by this — they're deleted outright via
 // sponsor-submissions.php and never get re-synced.
 //
-// Actions: list (default), add.
+// Actions: list (default), add, clear.
 //
 // Auth via lib.php's carshow_authed() — same PHP-session-or-password dual
 // check every endpoint here uses.
@@ -75,6 +75,22 @@ if ($action === 'add') {
         exit;
     }
     echo json_encode(['ok' => true, 'ids' => $merged]);
+    exit;
+}
+
+// Forgets every previously-deleted id for this show — an officer-deleted
+// CSV-synced Individual sponsor will reappear the next time
+// syncSponsorsFromRegistrations() runs (next page load/import) as long as
+// the underlying registration's Individual Sponsorship fee is still there.
+// Used to walk back a delete that turned out to be unwanted, without
+// hand-editing deleted-sponsors.json on the server.
+if ($action === 'clear') {
+    if (!carshow_write_json($file, [])) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => 'Could not save.']);
+        exit;
+    }
+    echo json_encode(['ok' => true, 'ids' => []]);
     exit;
 }
 
