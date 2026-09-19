@@ -1,13 +1,89 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-18 (end of session, latest). **"Individual" was re-added to the
-member sponsor form (reversing the previous session's removal), which surfaced — and
-fixed — a real second-order bug in the T-Shirt Report's Individual Sponsorship handling;
-both standalone sponsor-form pages now show the same "vX.Y · Deployed ..." footer line
-the main app does.** One checkpoint: **`b573c04`** (v5.140), deployed and pushed; live
-site is **v5.140** at https://etccapps.com/apps/carshow.
+Last updated: 2026-09-19 (end of session, latest). **Verified live (via a read-only
+console script against `window.__carshow.state`, not speculation) that every 2026
+registration with a $100 Individual Sponsorship fee is correctly represented on the
+Sponsors tab, except two an officer had explicitly deleted in the past** — added a
+`clear` action to `deleted-sponsors.php` and used it to un-delete both. One checkpoint:
+**`d1a5390`** (v5.141), deployed and pushed; live site is **v5.141** at
+https://etccapps.com/apps/carshow.
 
-## This session's work (2026-09-18, continued again — Individual sponsor re-add, T-Shirt Report fix #2, sponsor-form version footer)
+## This session's work (2026-09-19, sponsor-sync verification + deleted-sponsors clear action)
+
+User asked to verify that every registration with an Individual Sponsorship fee appears
+on the Sponsors tab — a data-integrity check, not a code change request, though it did
+lead to one small backend addition.
+
+**1. Live verification method**: logged into https://etccapps.com/apps/carshow (same
+admin password from the 2026-09-15 session), opened the 2026 show, and ran read-only
+`javascript_tool` snippets directly against `window.__carshow.state` in the browser
+console — no UI clicking, no data mutation. Replicated the app's own `csvRegKey()`/
+`csvSponsorId()` key logic exactly (`csvRegKey` is `Reg Date + Last Name + First Name`,
+lowercased and stripped to `[a-z0-9]+` — **NOT `Reg #`**, which was a wrong first guess
+this session that produced 20/20 false "missing" results before being caught and
+corrected against the actual `App/src/app.js` source). Findings:
+- 20 registrations in the CSV have a $100 Individual Sponsorship fee.
+- 18 of 20 are correctly synced onto the Sponsors tab.
+- 2 of 20 — Robert Sages (Reg #556) and Carl Weisser (Reg #248) — were NOT present.
+  Checked `state.deletedSponsorIds`: both were explicitly tombstoned there, meaning an
+  officer had deleted them from the Sponsors tab at some point in the past, and
+  `syncSponsorsFromRegistrations()` was correctly honoring that (by design — see
+  `removeSponsor()`'s own comment in `App/src/app.js`) rather than resurrecting them on
+  every page load.
+- Also confirmed, separately: 5 more "Individual"-type sponsors exist (Bert Burgett,
+  Blake Mayo, Bryan Mayo, Bertha Sparks, Scottie Potter) that are NOT CSV-synced (no
+  `csvind_` id prefix) — added directly through the sponsor form, unrelated to this
+  verification, expected to exist independently.
+
+**2. `deleted-sponsors.php` gained a `clear` action.** User: first said "do not track
+what officer explicitly deleted Sponsors" (sounded like "remove the whole tombstoning
+feature"), then clarified: "do not track sponsors deleted in the past" — a narrower ask,
+just forget the two *existing* historical deletions, not disable the mechanism that
+prevents a *newly*-deleted CSV sponsor from reappearing on the very next sync. Added
+`action === 'clear'` to `App/deploy/deleted-sponsors.php` (mirrors its existing `list`/
+`add`, writes an empty array to that show's `deleted-sponsors.json`), deployed, then
+called it once against the live 2026 show via `curl -X POST
+.../deleted-sponsors.php?year=2026 -d '{"action":"clear","password":"..."}'`. Reloaded
+the live page and re-ran the same read-only console check: `deletedSponsorIdsCount: 0`,
+both Sages and Weisser back on the Sponsors tab with their original shirt sizes intact
+(Women's Medium / Men's Extra Large). **The tombstoning mechanism itself is still fully
+active going forward** — a sponsor deleted today will still be excluded from tomorrow's
+re-sync, exactly as designed. This session only wiped the historical record for those
+two names; nothing about future deletes changed.
+
+**3. FTP deploy hiccup, self-resolved**: this session's checkpoint's `app-bundle.html`
+upload (3.6MB) failed 3 times in a row with curl exit 56 ("response reading failed") —
+a different failure mode than the script's own documented exit-25/550 "stale hidden temp
+file" case (which it auto-recovers from; exit 56 it does not). A small test-file upload
+succeeded immediately, confirming credentials/connectivity were fine and this was a
+transient mid-transfer drop on the large file specifically — consistent with the
+script's own header-comment history of exactly this host having FTPS/schannel
+reliability issues on big transfers. Simply re-running `ftp-deploy.sh` a second time
+succeeded outright. **Also**: a throwaway `_probe2.txt` file used to confirm
+connectivity during that diagnosis was uploaded to the live server root and then
+explicitly deleted afterward (via `curl -Q "-DELE _probe2.txt"`, confirmed gone via a
+fresh directory listing) — nothing test-related was left behind.
+
+## Known follow-ups / things a new session might need to know (2026-09-19 session)
+
+- **`csvRegKey()` is `Reg Date + Last Name + First Name`, lowercased/stripped to
+  `[a-z0-9]+` — it is NOT `Reg #`.** This session got it wrong on the first attempt at a
+  console-based verification script, producing a false "every sponsor is missing"
+  result before being caught. Any future script/tool that needs to compute a sponsor's
+  expected CSV-synced id must replicate this exact logic (see `csvRegKey()`/
+  `csvSponsorId()` in `App/src/app.js`) — using `Reg #` will silently produce wrong
+  results.
+- **The 2025 show's `deleted-sponsors.json` was NOT checked or cleared this session** —
+  only 2026 was in scope (that's the show being actively worked with). If the same
+  "sponsor reappeared/disappeared unexpectedly" question comes up for 2025, the same
+  verification method and the new `clear` action both apply there too via
+  `?year=2025`.
+- Every earlier session's still-open items (T-Shirt Report Individual-Sponsorship
+  sourcing fix, browser click-by-ref unreliability, footer-positioning fragility,
+  Sponsors tab having no Source column) remain accurate as of this session — none of
+  them were touched here.
+
+## Previous session's work (2026-09-18, continued again — Individual sponsor re-add, T-Shirt Report fix #2, sponsor-form version footer)
 
 Picks up right after the previous same-day session (live testing, table defaults,
 T-Shirt Report sourcing fix — v5.137, see that section below). Three requests, the
