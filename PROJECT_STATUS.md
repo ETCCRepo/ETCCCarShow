@@ -1,12 +1,74 @@
 # ETCC Car Show App — Project Status
 
-Last updated: 2026-09-19 (end of session, latest). **Verified live (via a read-only
-console script against `window.__carshow.state`, not speculation) that every 2026
-registration with a $100 Individual Sponsorship fee is correctly represented on the
-Sponsors tab, except two an officer had explicitly deleted in the past** — added a
-`clear` action to `deleted-sponsors.php` and used it to un-delete both. One checkpoint:
-**`d1a5390`** (v5.141), deployed and pushed; live site is **v5.141** at
+Last updated: 2026-09-20 (end of session, latest). **New exports on the Sponsors tab
+and Order T-Shirt page, all three shirt-bearing exports normalized to the same
+12-column size shape, and a real discrepancy fixed: the T-Shirt Order Email was
+undercounting against the (correct) Summary page.** One checkpoint (**`8568ed0`**,
+v5.148), deployed and pushed; live site is **v5.148** at
 https://etccapps.com/apps/carshow.
+
+## This session's work (2026-09-20 — exports on Sponsors/Order T-Shirt, normalized shirt-size columns, T-Shirt Order Email fix)
+
+A chain of small, related requests, each building on the last. All in `App/src/app.js`.
+
+**1. Sponsors tab gained its own "⬇ Export"** (`exportSponsorsTabCsv()`, wired into
+`buildSponsorsToolbar()`) — exports exactly what's on screen right now (current
+search/type/paid filters, sorted the same as the table), same "export what you're
+looking at" pattern `exportRegistrationCsv()` already used on the Registration tab.
+Distinct from the separate Sponsor Report screen's own export
+(`exportSponsorReportCsv()`), which has its own customizable column set — this one uses
+the fixed `SPONSOR_COLS`.
+
+**2. Order T-Shirt page (the walk-in purchase screen, `renderTshirtPurchasePage()`)
+gained "⬇ Export"** (`exportTshirtPurchasesCsv()`) — wired straight into
+`buildPageBanner()`'s existing `exportCallback` parameter (that function already
+supported an Export button, this page just hadn't passed one in). Same
+rows/order/fallbacks as the on-screen purchase history table.
+
+**3. All three shirt-bearing exports normalized to the same 12-column shape** — one
+column per plain gender+size (`Men's Small` … `Men's 3XL`, `Women's Small` … `Women's
+3XL`), replacing whatever collapsed summary each export used to show:
+  - **Registration export**: was outputting 24 raw Free/Xtra bucket columns (e.g.
+    "Men's Free SM", "Men's Xtra SM") after an earlier same-session pass un-collapsed
+    the single "Shirts" summary column. The user then asked to also COMBINE Free/Xtra
+    into one count per size — new `regShirtSizeExportCounts(r)` sums both buckets per
+    gender+size, since Free-vs-Xtra is internal quota bookkeeping (which CSV
+    column/quota a shirt came from), not something an export needs to expose.
+  - **Sponsors export**: was a single comma-joined "T-Shirt" text column
+    ("Men's Large, Women's Medium") — now one column per size, each holding a COUNT
+    (a sponsor can order more than one shirt, so more than one column can be nonzero).
+  - **Order T-Shirt export**: was separate "Size" + "Count" text columns — now the same
+    12 columns, with a single purchase's Count landing in whichever one column matches
+    its Size (0 in the rest, since each purchase only has one size).
+  - All three reuse **`CONFIG.SPONSOR_SHIRT_SIZES`** (already existed, already exactly
+    this shape: `SPONSOR_GENDERS.forEach(g => SIZES.forEach(s => ...))` = Men's
+    Small→3XL then Women's Small→3XL) as the canonical header list, so a future export
+    that needs shirt columns should reuse it too rather than reinventing the labels.
+
+**4. Real bug found while cross-checking: the T-Shirt Order Email undercounted shirts
+compared to the Summary tab (which the user confirmed is correct).** Root cause:
+`tshirtOrderShirtCounts()` (feeds the email body) summed paid registrations +
+`allSponsorShirtCounts()`, but was missing what `combinedShirtMatrix()` (Summary tab's
+"Total Shirts Needed For Event") already includes — non-Walk-in Order T-Shirt purchases
+(`tshirtPurchaseShirtCounts(function (p) { return p.reason !== "Walk-in"; })`, i.e.
+Member/Complimentary-reason purchases; Walk-in stays excluded everywhere since those are
+day-of sales already fulfilled from stock, not something to order ahead of time). Added
+the missing `compCounts` term so the email now agrees with the Summary page exactly.
+**Watch for this pattern**: any FUTURE screen that reports "how many shirts do we need"
+must include all three sources (paid registrations, sponsors, non-Walk-in Order T-Shirt
+purchases) or it will silently drift from the Summary page the same way the email did.
+
+Built, deployed (five incremental deploys as each request landed: v5.142 → v5.148),
+committed as `8568ed0`, pushed.
+
+## Known follow-ups / things a new session might need to know (2026-09-20)
+
+- **The T-Shirt Order Email fix (#4) has not been re-verified against the Summary page
+  by the user yet** — they reported the discrepancy and the fix went out, but hasn't
+  been confirmed fixed. Worth checking the next time the email is generated.
+- Nothing else new. All five deploys this session were incremental (no version-numbering
+  confusion this time — every report used `deploy/version-check.json`, not
+  `App/version.json`, per the standing instruction from 2026-09-17).
 
 ## This session's work (2026-09-19, sponsor-sync verification + deleted-sponsors clear action)
 
