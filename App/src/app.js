@@ -1216,13 +1216,52 @@
   // the table itself renders (the Reports tab's own "Registration Report",
   // REG_REPORT_SPEC, is the separate full-detail/user-configurable export;
   // this one is deliberately just "what I'm looking at right now").
+  // Free vs. Xtra(Purchased) is internal bookkeeping (which quota/CSV column
+  // a shirt came from), not something any export needs to distinguish — this
+  // combines the two, giving one count per plain "Men's/Women's <size>",
+  // same 12-label shape (and CONFIG.SPONSOR_SIZE_INDEX lookup) the Sponsors
+  // and Order T-Shirt exports already use for their own shirt columns, so
+  // all three exports agree on one shirt-size vocabulary.
+  var REG_SHIRT_GENDER_BY_GROUP = null;
+  function regShirtSizeExportCounts(r) {
+    if (!REG_SHIRT_GENDER_BY_GROUP) {
+      REG_SHIRT_GENDER_BY_GROUP = {};
+      CONFIG.GROUPS.forEach(function (g) { REG_SHIRT_GENDER_BY_GROUP[g.key] = g.gender; });
+    }
+    var counts = {}; // "Men's Small" -> qty
+    CONFIG.SPONSOR_SHIRT_SIZES.forEach(function (label) { counts[label] = 0; });
+    CONFIG.SHIRT_BUCKETS.forEach(function (b) {
+      var gender = REG_SHIRT_GENDER_BY_GROUP[b.groupKey];
+      var label = gender + " " + sizeLabel(b.sizeKey);
+      if (label in counts) counts[label] += Number(r[b.col]) || 0;
+    });
+    return counts;
+  }
+  // The on-screen Shirts column collapses every bucket into one compact
+  // summary string ("M Free SM, W Xtra LG ×2") — fine to read, but useless
+  // to a spreadsheet (no way to sum/pivot by size). The export un-collapses
+  // it into one column per plain gender+size (see regShirtSizeExportCounts
+  // above), in place of the single summary column. Every other selected
+  // column is exported exactly as it appears on screen.
   function exportRegistrationCsv() {
     var rows = visibleRows();
     if (!rows.length) return;
     var cols = visibleColumns();
-    var lines = [cols.map(function (c) { return csvField(c === SHIRTS_COL ? "Shirts" : c); }).join(",")];
+    var header = [];
+    cols.forEach(function (c) {
+      if (c === SHIRTS_COL) header = header.concat(CONFIG.SPONSOR_SHIRT_SIZES);
+      else header.push(c);
+    });
+    var lines = [header.map(csvField).join(",")];
     rows.forEach(function (r) {
-      lines.push(cols.map(function (c) { return csvField(regCellText(r, c)); }).join(","));
+      var cells = [];
+      cols.forEach(function (c) {
+        if (c === SHIRTS_COL) {
+          var counts = regShirtSizeExportCounts(r);
+          CONFIG.SPONSOR_SHIRT_SIZES.forEach(function (label) { cells.push(String(counts[label])); });
+        } else cells.push(regCellText(r, c));
+      });
+      lines.push(cells.map(csvField).join(","));
     });
     downloadTextFile("Registrations-" + dateInputValue(new Date()) + ".csv",
       "﻿" + lines.join("\r\n"), "text/csv;charset=utf-8");
@@ -2351,22 +2390,25 @@
 
   // Shirt totals for the T-Shirt Order Email (Developer > 📧 T-Shirt Order
   // Email) — same "registration shirts collapsed to gender, plus every
-  // sponsor's own pick" combination as combinedShirtMatrix() above, but
-  // scoped to only registrations whose Status classifies as "paid" (an
-  // explicit choice — a shirt order shouldn't include people who never
-  // completed payment), and returning plain data rather than a DOM table so
-  // it can feed the email's plain-text body.
+  // sponsor's own pick, plus every non-Walk-in Order T-Shirt purchase"
+  // combination combinedShirtMatrix() (Summary tab's "Total Shirts Needed")
+  // uses. Was previously missing that last piece — the email undercounted
+  // by however many Member/Complimentary Order T-Shirt purchases existed,
+  // since only Walk-in purchases are fulfilled on the spot from stock and
+  // should stay excluded. Returns plain data rather than a DOM table so it
+  // can feed the email's plain-text body.
   function tshirtOrderShirtCounts() {
     var totals = paidRegShirtTotals();
     var sponsorCounts = allSponsorShirtCounts();
+    var compCounts = tshirtPurchaseShirtCounts(function (p) { return p.reason !== "Walk-in"; });
     return CONFIG.SIZES.map(function (sz) {
       var mens = 0, womens = 0;
       CONFIG.GROUPS.forEach(function (g) {
         var val = totals[g.key + sz.key] || 0;
         if (g.gender === "Men's") mens += val; else womens += val;
       });
-      mens += sponsorCounts[sz.key].mens;
-      womens += sponsorCounts[sz.key].womens;
+      mens += sponsorCounts[sz.key].mens + compCounts[sz.key].mens;
+      womens += sponsorCounts[sz.key].womens + compCounts[sz.key].womens;
       return { label: sz.label, mens: mens, womens: womens };
     });
   }
@@ -2956,9 +2998,52 @@
     zoomFit.addEventListener("click", fitSponsorZoom);
     var zoomLabel = el("span", { class: "count", text: Math.round(state.sponsorZoom * 100) + "%" });
     var zoomGroup = el("span", { class: "zoomgroup" }, [zoomOut, zoomLabel, zoomIn, zoomFit]);
+    var exportBtn = el("button", { class: "btn", title: "Export what's currently shown (search/type/paid filters applied)" }, ["⬇ Export"]);
+    exportBtn.addEventListener("click", exportSponsorsTabCsv);
     var kids = [search, typeGroup, paidGroup, count, el("span", { class: "spacer" }), zoomGroup];
-    kids.push(delBtn, addBtn, refreshBtn);
+    kids.push(delBtn, addBtn, refreshBtn, exportBtn);
     return el("div", { class: "toolbar no-print" }, kids);
+  }
+
+  // Sponsors tab's own "⬇ Export" — exactly what's on screen right now
+  // (current search/type/paid filters, sorted the same way the table is),
+  // same "export what you're looking at" pattern the Registration tab's own
+  // toolbar Export uses (exportRegistrationCsv). Distinct from the separate
+  // Sponsor Report screen's own export (exportSponsorReportCsv), which has
+  // its own customizable column set.
+  //
+  // The on-screen T-Shirt column collapses a sponsor's order(s) into one
+  // comma-joined string ("Men's Large, Women's Medium") — fine to read, but
+  // useless to a spreadsheet. The export un-collapses it into one column per
+  // possible size (CONFIG.SPONSOR_SHIRT_SIZES, 12 columns: Men's/Women's ×
+  // 6 sizes), each holding how many of that size this sponsor ordered —
+  // same "normalize the summary column into individual sizes" treatment
+  // exportRegistrationCsv() gives the Registration tab's Shirts column.
+  function exportSponsorsTabCsv() {
+    var rows = visibleSponsors();
+    if (!rows.length) return;
+    var header = [];
+    SPONSOR_COLS.forEach(function (c) {
+      if (c.key === "shirtSize") CONFIG.SPONSOR_SHIRT_SIZES.forEach(function (sz) { header.push(sz); });
+      else header.push(c.label);
+    });
+    var lines = [header.map(csvField).join(",")];
+    rows.forEach(function (s) {
+      var sizes = LOGIC.sponsorShirtSizes(s);
+      var cells = [];
+      SPONSOR_COLS.forEach(function (c) {
+        if (c.key === "shirtSize") {
+          CONFIG.SPONSOR_SHIRT_SIZES.forEach(function (sz) {
+            cells.push(String(sizes.filter(function (x) { return x === sz; }).length));
+          });
+        } else {
+          cells.push(sponsorFieldText(s, c.key));
+        }
+      });
+      lines.push(cells.map(csvField).join(","));
+    });
+    downloadTextFile("Sponsors-" + dateInputValue(new Date()) + ".csv",
+      "﻿" + lines.join("\r\n"), "text/csv;charset=utf-8");
   }
 
   function buildSponsorsView() {
@@ -8646,13 +8731,40 @@
     return fmtDate(d);
   }
 
+  // Order T-Shirt page's own "⬇ Export" (wired via buildPageBanner) — same
+  // rows/order/fallbacks as the on-screen purchase history table above.
+  //
+  // Size + Count collapse one purchase's order into two columns ("Men's
+  // Large" / "2") — fine to read, useless to a spreadsheet. The export
+  // un-collapses them into one column per possible size
+  // (CONFIG.SPONSOR_SHIRT_SIZES, 12 columns), putting this purchase's Count
+  // in whichever single column matches its Size and 0 in the rest — same
+  // "normalize into individual sizes" treatment exportRegistrationCsv() and
+  // exportSponsorsTabCsv() give their own shirt columns.
+  function exportTshirtPurchasesCsv() {
+    var purchases = state.tshirtPurchases.slice().sort(function (a, b) {
+      return String(b.purchasedAt || "").localeCompare(String(a.purchasedAt || ""));
+    });
+    if (!purchases.length) return;
+    var cols = ["Date/Time", "Name", "Reason"].concat(CONFIG.SPONSOR_SHIRT_SIZES, ["Cost", "Payment Type", "Check #", "Note"]);
+    var lines = [cols.map(csvField).join(",")];
+    purchases.forEach(function (p) {
+      var cells = [fmtPurchaseTime(p.purchasedAt), p.name || "", p.reason || "Walk-in"];
+      CONFIG.SPONSOR_SHIRT_SIZES.forEach(function (sz) { cells.push(sz === p.size ? String(p.count || 1) : "0"); });
+      cells.push(fmtMoney(p.cost), p.paymentType || "", p.paymentType === "Check" ? (p.checkNum || "") : "", p.note || "");
+      lines.push(cells.map(csvField).join(","));
+    });
+    downloadTextFile("OrderTshirt-" + dateInputValue(new Date()) + ".csv",
+      "﻿" + lines.join("\r\n"), "text/csv;charset=utf-8");
+  }
+
   function renderTshirtPurchasePage() {
     var host = $("#tshirtPurchaseHost");
     if (!host) return;
     host.innerHTML = "";
     if (!state.tshirtPurchasePageOpen) return;
 
-    var head = buildPageBanner(closeTshirtPurchasePage, "Order T-Shirt");
+    var head = buildPageBanner(closeTshirtPurchasePage, "Order T-Shirt", null, exportTshirtPurchasesCsv);
 
     var body = el("div", { class: "api-page-inner" });
 
